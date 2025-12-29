@@ -21,7 +21,6 @@
   import TorrentSelector from './components/TorrentSelector.svelte';
   import ConfigurationForm from './components/ConfigurationForm.svelte';
   import StopConditions from './components/StopConditions.svelte';
-  import ProgressiveRates from './components/ProgressiveRates.svelte';
   import Controls from './components/Controls.svelte';
   import ProgressBars from './components/ProgressBars.svelte';
   import SessionStats from './components/SessionStats.svelte';
@@ -356,11 +355,16 @@
           statusType: 'success',
         });
 
+        const instanceId = $activeInstance.id;
         setTimeout(() => {
-          instanceActions.updateInstance($activeInstance.id, {
-            statusMessage: 'Ready to start faking',
-            statusType: 'idle',
-          });
+          // Only update status if the instance is not running
+          const instance = $instances.find(i => i.id === instanceId);
+          if (instance && !instance.isRunning) {
+            instanceActions.updateInstance(instanceId, {
+              statusMessage: 'Ready to start faking',
+              statusType: 'idle',
+            });
+          }
         }, 2000);
       } else {
         // User cancelled - only update status if no torrent is loaded
@@ -403,18 +407,16 @@
     }
 
     try {
-      // Preserve total stats from previous session if they exist
-      // This allows total uploaded/downloaded to accumulate across sessions
-      let preservedUploaded = parseInt($activeInstance.initialUploaded ?? 0) * 1024 * 1024;
-      let preservedDownloaded = parseInt($activeInstance.initialDownloaded ?? 0) * 1024 * 1024;
+      // Use the initial uploaded/downloaded values from the form inputs
+      // Do NOT preserve stats from previous session - each session should start fresh
+      // This ensures stop conditions work correctly and don't trigger immediately
+      const initialUploaded = parseInt($activeInstance.initialUploaded ?? 0) * 1024 * 1024;
+      const initialDownloaded = parseInt($activeInstance.initialDownloaded ?? 0) * 1024 * 1024;
 
-      if ($activeInstance.stats) {
-        // Use the totals from the previous session as the new initial values
-        preservedUploaded = $activeInstance.stats.uploaded;
-        preservedDownloaded = $activeInstance.stats.downloaded;
-      }
-
+      // Reset stats and progress bars when starting a new session
+      // This ensures stop conditions and progress indicators start fresh
       instanceActions.updateInstance($activeInstance.id, {
+        stats: null,
         statusMessage: 'Starting ratio faker...',
         statusType: 'running',
       });
@@ -427,8 +429,8 @@
         client_version:
           $activeInstance.selectedClientVersion ||
           clientVersions[$activeInstance.selectedClient || 'qbittorrent'][0],
-        initial_uploaded: preservedUploaded,
-        initial_downloaded: preservedDownloaded,
+        initial_uploaded: initialUploaded,
+        initial_downloaded: initialDownloaded,
         completion_percent: parseFloat($activeInstance.completionPercent ?? 0),
         num_want: 50,
         randomize_rates: $activeInstance.randomizeRates ?? true,
@@ -643,11 +645,16 @@
         statusType: 'success',
       });
 
+      const instanceId = $activeInstance.id;
       setTimeout(() => {
-        instanceActions.updateInstance($activeInstance.id, {
-          statusMessage: 'Ready to start a new session',
-          statusType: 'idle',
-        });
+        // Only update status if the instance is not running
+        const instance = $instances.find(i => i.id === instanceId);
+        if (instance && !instance.isRunning) {
+          instanceActions.updateInstance(instanceId, {
+            statusMessage: 'Ready to start a new session',
+            statusType: 'idle',
+          });
+        }
       }, 2000);
     } catch (error) {
       instanceActions.updateInstance($activeInstance.id, {
@@ -731,11 +738,16 @@
         statusType: 'error',
       });
 
+      const instanceId = $activeInstance.id;
       setTimeout(() => {
-        instanceActions.updateInstance($activeInstance.id, {
-          statusMessage: '🚀 Actively faking ratio...',
-          statusType: 'running',
-        });
+        // Only update status if the instance is still running
+        const instance = $instances.find(i => i.id === instanceId);
+        if (instance && instance.isRunning) {
+          instanceActions.updateInstance(instanceId, {
+            statusMessage: '🚀 Actively faking ratio...',
+            statusType: 'running',
+          });
+        }
       }, 2000);
     }
   }
@@ -764,7 +776,7 @@
   }
 </script>
 
-<main class="min-h-screen p-8 bg-background text-foreground">
+<main class="min-h-screen p-3 bg-background text-foreground">
   {#if !isInitialized}
     <div class="flex flex-col items-center justify-center min-h-[60vh] gap-6">
       <div class="w-15 h-15 border-4 border-muted border-t-primary rounded-full animate-spin"></div>
@@ -795,7 +807,7 @@
 
     <div class="max-w-7xl mx-auto">
       <!-- Torrent Selection & Configuration -->
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
         <TorrentSelector torrent={$activeInstance?.torrent} {selectTorrent} {formatBytes} />
 
         {#if $activeInstance}
@@ -812,6 +824,10 @@
             updateIntervalSeconds={$activeInstance.updateIntervalSeconds}
             randomizeRates={$activeInstance.randomizeRates}
             randomRangePercent={$activeInstance.randomRangePercent}
+            progressiveRatesEnabled={$activeInstance.progressiveRatesEnabled}
+            targetUploadRate={$activeInstance.targetUploadRate}
+            targetDownloadRate={$activeInstance.targetDownloadRate}
+            progressiveDurationHours={$activeInstance.progressiveDurationHours}
             isRunning={$activeInstance.isRunning || false}
             onUpdate={updates => {
               instanceActions.updateInstance($activeInstance.id, updates);
@@ -820,9 +836,16 @@
         {/if}
       </div>
 
-      <!-- Stop Conditions & Progressive Rates -->
+      <!-- Stop Conditions & Progress Bars -->
       {#if $activeInstance}
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+        {@const hasActiveStopCondition =
+          $activeInstance.stopAtRatioEnabled ||
+          $activeInstance.stopAtUploadedEnabled ||
+          $activeInstance.stopAtDownloadedEnabled ||
+          $activeInstance.stopAtSeedTimeEnabled}
+        {@const showProgressBars = hasActiveStopCondition && $activeInstance?.stats}
+
+        <div class="grid grid-cols-1 {showProgressBars ? 'md:grid-cols-2' : ''} gap-3 mb-3">
           <StopConditions
             stopAtRatioEnabled={$activeInstance.stopAtRatioEnabled}
             stopAtRatio={$activeInstance.stopAtRatio}
@@ -838,16 +861,21 @@
             }}
           />
 
-          <ProgressiveRates
-            progressiveRatesEnabled={$activeInstance.progressiveRatesEnabled}
-            targetUploadRate={$activeInstance.targetUploadRate}
-            targetDownloadRate={$activeInstance.targetDownloadRate}
-            progressiveDurationHours={$activeInstance.progressiveDurationHours}
-            isRunning={$activeInstance.isRunning || false}
-            onUpdate={updates => {
-              instanceActions.updateInstance($activeInstance.id, updates);
-            }}
-          />
+          {#if showProgressBars}
+            <ProgressBars
+              stats={$activeInstance.stats}
+              stopAtRatioEnabled={$activeInstance.stopAtRatioEnabled}
+              stopAtRatio={$activeInstance.stopAtRatio}
+              stopAtUploadedEnabled={$activeInstance.stopAtUploadedEnabled}
+              stopAtUploadedGB={$activeInstance.stopAtUploadedGB}
+              stopAtDownloadedEnabled={$activeInstance.stopAtDownloadedEnabled}
+              stopAtDownloadedGB={$activeInstance.stopAtDownloadedGB}
+              stopAtSeedTimeEnabled={$activeInstance.stopAtSeedTimeEnabled}
+              stopAtSeedTimeHours={$activeInstance.stopAtSeedTimeHours}
+              {formatBytes}
+              {formatDuration}
+            />
+          {/if}
         </div>
       {/if}
 
@@ -865,31 +893,14 @@
 
       <!-- Stats -->
       {#if $activeInstance?.stats}
-        <!-- Progress Bars -->
-        {#if $activeInstance.stopAtRatioEnabled || $activeInstance.stopAtUploadedEnabled || $activeInstance.stopAtDownloadedEnabled || $activeInstance.stopAtSeedTimeEnabled}
-          <ProgressBars
-            stats={$activeInstance.stats}
-            stopAtRatioEnabled={$activeInstance.stopAtRatioEnabled}
-            stopAtRatio={$activeInstance.stopAtRatio}
-            stopAtUploadedEnabled={$activeInstance.stopAtUploadedEnabled}
-            stopAtUploadedGB={$activeInstance.stopAtUploadedGB}
-            stopAtDownloadedEnabled={$activeInstance.stopAtDownloadedEnabled}
-            stopAtDownloadedGB={$activeInstance.stopAtDownloadedGB}
-            stopAtSeedTimeEnabled={$activeInstance.stopAtSeedTimeEnabled}
-            stopAtSeedTimeHours={$activeInstance.stopAtSeedTimeHours}
-            {formatBytes}
-            {formatDuration}
-          />
-        {/if}
-
         <!-- Session & Total Stats -->
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
           <SessionStats stats={$activeInstance.stats} {formatBytes} />
           <TotalStats stats={$activeInstance.stats} {formatBytes} />
         </div>
 
         <!-- Performance & Peer Analytics (merged) -->
-        <div class="mb-6">
+        <div class="mb-3">
           <RateGraph stats={$activeInstance.stats} {formatDuration} />
         </div>
       {/if}
