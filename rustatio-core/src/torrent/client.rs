@@ -25,7 +25,7 @@ pub struct ClientConfig {
     pub supports_crypto: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HttpVersion {
     Http10,
     Http11,
@@ -47,11 +47,14 @@ impl ClientConfig {
         let version = version.unwrap_or_else(|| "3.5.5".to_string());
         let version_code = version.replace('.', "");
 
+        // Pad to exactly 4 characters
+        let padded_version = version_code.pad_to_width_with_char(4, '0');
+
         ClientConfig {
             client_type: ClientType::UTorrent,
             version: version.clone(),
-            peer_id_prefix: format!("-UT{}-", &version_code[..4]),
-            user_agent: format!("uTorrent/{}", version_code),
+            peer_id_prefix: format!("-UT{}-", padded_version),
+            user_agent: format!("uTorrent/{}", version),
             http_version: HttpVersion::Http11,
             num_want: 200,
             supports_compact: true,
@@ -173,17 +176,133 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_peer_id_generation() {
+    fn test_peer_id_generation_qbittorrent() {
         let config = ClientConfig::get(ClientType::QBittorrent, None);
         let peer_id = config.generate_peer_id();
+        assert_eq!(peer_id.len(), 20, "Peer ID must be exactly 20 characters");
+        assert!(peer_id.starts_with("-qB"), "qBittorrent peer ID should start with -qB");
+
+        // Test with specific version
+        let config = ClientConfig::get(ClientType::QBittorrent, Some("5.1.4".to_string()));
+        let peer_id = config.generate_peer_id();
+        assert!(peer_id.starts_with("-qB5140-"), "Peer ID should include version 5.1.4");
+    }
+
+    #[test]
+    fn test_peer_id_generation_utorrent() {
+        let config = ClientConfig::get(ClientType::UTorrent, None);
+        let peer_id = config.generate_peer_id();
         assert_eq!(peer_id.len(), 20);
-        assert!(peer_id.starts_with("-qB"));
+        assert!(peer_id.starts_with("-UT"), "µTorrent peer ID should start with -UT");
+
+        // Test with specific version
+        let config = ClientConfig::get(ClientType::UTorrent, Some("3.5.5".to_string()));
+        let peer_id = config.generate_peer_id();
+        assert!(peer_id.starts_with("-UT355"), "Peer ID should include version 3.5.5");
+    }
+
+    #[test]
+    fn test_peer_id_generation_transmission() {
+        let config = ClientConfig::get(ClientType::Transmission, None);
+        let peer_id = config.generate_peer_id();
+        assert_eq!(peer_id.len(), 20);
+        assert!(peer_id.starts_with("-TR"), "Transmission peer ID should start with -TR");
+    }
+
+    #[test]
+    fn test_peer_id_generation_deluge() {
+        let config = ClientConfig::get(ClientType::Deluge, None);
+        let peer_id = config.generate_peer_id();
+        assert_eq!(peer_id.len(), 20);
+        assert!(peer_id.starts_with("-DE"), "Deluge peer ID should start with -DE");
+    }
+
+    #[test]
+    fn test_peer_id_uniqueness() {
+        let config = ClientConfig::get(ClientType::QBittorrent, None);
+        let peer_id1 = config.generate_peer_id();
+        let peer_id2 = config.generate_peer_id();
+
+        // Peer IDs should be different (random suffixes)
+        assert_ne!(peer_id1, peer_id2, "Generated peer IDs should be unique");
+    }
+
+    #[test]
+    fn test_peer_id_valid_characters() {
+        let config = ClientConfig::get(ClientType::QBittorrent, None);
+        let peer_id = config.generate_peer_id();
+
+        // All characters should be valid (alphanumeric or -)
+        assert!(peer_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
     }
 
     #[test]
     fn test_key_generation() {
         let key = ClientConfig::generate_key();
-        assert_eq!(key.len(), 8);
-        assert!(key.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(key.len(), 8, "Key must be exactly 8 characters");
+        assert!(key.chars().all(|c| c.is_ascii_hexdigit()), "Key must be hexadecimal");
+    }
+
+    #[test]
+    fn test_key_uniqueness() {
+        let key1 = ClientConfig::generate_key();
+        let key2 = ClientConfig::generate_key();
+
+        // Keys should be different (random)
+        assert_ne!(key1, key2, "Generated keys should be unique");
+    }
+
+    #[test]
+    fn test_key_uppercase() {
+        let key = ClientConfig::generate_key();
+        // All hex digits should be uppercase
+        assert!(key.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()));
+    }
+
+    #[test]
+    fn test_client_config_qbittorrent() {
+        let config = ClientConfig::get(ClientType::QBittorrent, None);
+        assert_eq!(config.client_type, ClientType::QBittorrent);
+        assert!(config.user_agent.contains("qBittorrent"));
+        assert_eq!(config.http_version, HttpVersion::Http11);
+        assert!(config.supports_compact);
+        assert!(config.supports_crypto);
+    }
+
+    #[test]
+    fn test_client_config_utorrent() {
+        let config = ClientConfig::get(ClientType::UTorrent, None);
+        assert_eq!(config.client_type, ClientType::UTorrent);
+        assert!(config.user_agent.contains("uTorrent") || config.user_agent.contains("µTorrent"));
+        assert_eq!(config.http_version, HttpVersion::Http11);
+    }
+
+    #[test]
+    fn test_client_config_transmission() {
+        let config = ClientConfig::get(ClientType::Transmission, None);
+        assert_eq!(config.client_type, ClientType::Transmission);
+        assert!(config.user_agent.contains("Transmission"));
+    }
+
+    #[test]
+    fn test_client_config_deluge() {
+        let config = ClientConfig::get(ClientType::Deluge, None);
+        assert_eq!(config.client_type, ClientType::Deluge);
+        assert!(config.user_agent.contains("Deluge"));
+    }
+
+    #[test]
+    fn test_client_config_with_version() {
+        let config = ClientConfig::get(ClientType::QBittorrent, Some("4.5.0".to_string()));
+        assert_eq!(config.version, "4.5.0");
+        assert!(config.user_agent.contains("4.5.0"));
+    }
+
+    #[test]
+    fn test_pad_string_trait() {
+        assert_eq!("12".pad_to_width_with_char(4, '0'), "1200");
+        assert_eq!("1234".pad_to_width_with_char(4, '0'), "1234");
+        assert_eq!("12345".pad_to_width_with_char(4, '0'), "1234");
+        assert_eq!("1".pad_to_width_with_char(3, 'x'), "1xx");
     }
 }

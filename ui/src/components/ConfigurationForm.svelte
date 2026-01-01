@@ -194,7 +194,7 @@
       </div>
 
       <div class="flex flex-col gap-2">
-        <Label for="initialUp">Initial Uploaded (MB)</Label>
+        <Label for="initialUp">Uploaded (MB)</Label>
         <Input
           id="initialUp"
           type="number"
@@ -206,7 +206,7 @@
       </div>
 
       <div class="flex flex-col gap-2">
-        <Label for="updateInterval">Update Interval (sec)</Label>
+        <Label for="updateInterval">Interval (sec)</Label>
         <Input
           id="updateInterval"
           type="number"

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import Button from '$lib/components/ui/button.svelte';
+  import { devLog } from '../lib/devLog.js';
 
   let updateAvailable = $state(false);
   let updateVersion = $state('');
@@ -63,14 +64,14 @@
         updateAvailable = true;
         updateVersion = update.version;
         currentVersion = update.currentVersion;
-        console.log(`Update available: ${update.currentVersion} -> ${update.version}`);
+        devLog('log', `Update available: ${update.currentVersion} -> ${update.version}`);
 
         // If not AppImage, prepare download URL for manual download
         if (installMethod !== 'appimage') {
           await prepareManualDownload();
         }
       } else {
-        console.log('No updates available');
+        devLog('log', 'No updates available');
       }
     } catch (e) {
       console.error('Failed to check for updates:', e);
@@ -82,7 +83,7 @@
         errorMsg.includes('invalid updater binary format')
       ) {
         // This means running as .deb/.rpm on Linux - try manual update check
-        console.log('Using manual update check for package installation');
+        devLog('log', 'Using manual update check for package installation');
         await checkManualUpdate();
       } else {
         error = `Failed to check for updates: ${e}`;
@@ -108,7 +109,7 @@
           updateAvailable = true;
           updateVersion = data.version;
           currentVersion = current;
-          console.log(`Manual update available: ${current} -> ${data.version}`);
+          devLog('log', `Manual update available: ${current} -> ${data.version}`);
 
           await prepareManualDownload();
         }
@@ -161,13 +162,13 @@
       const update = await check();
 
       if (update?.available) {
-        console.log('Downloading update...');
+        devLog('log', 'Downloading update...');
 
         await update.downloadAndInstall(progress => {
-          console.log(`Download progress: ${progress.downloaded}/${progress.total} bytes`);
+          devLog('log', `Download progress: ${progress.downloaded}/${progress.total} bytes`);
         });
 
-        console.log('Update downloaded and installed, relaunching...');
+        devLog('log', 'Update downloaded and installed, relaunching...');
         await process.relaunch();
       }
     } catch (e) {

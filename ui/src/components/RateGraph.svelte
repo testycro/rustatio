@@ -1,6 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import * as echarts from 'echarts';
+  import { devLog } from '../lib/devLog.js';
   import Card from '$lib/components/ui/card.svelte';
 
   let { stats, formatDuration } = $props();
@@ -14,7 +15,7 @@
   onMount(() => {
     setTimeout(() => {
       if (chartContainer) {
-        console.log('Initializing ECharts...', { chartContainer, stats });
+        devLog('log', 'Initializing ECharts...', { chartContainer, stats });
         chart = echarts.init(chartContainer);
 
         chart.on('dataZoom', params => {
@@ -69,7 +70,7 @@
 
   function updateChart() {
     if (!chart || !stats || !stats.upload_rate_history || stats.upload_rate_history.length === 0) {
-      console.log('Cannot update chart:', {
+      devLog('log', 'Cannot update chart:', {
         hasChart: !!chart,
         hasStats: !!stats,
         hasHistory: !!stats?.upload_rate_history,
@@ -78,7 +79,7 @@
       return;
     }
 
-    console.log('Updating chart with data points:', stats.upload_rate_history.length);
+    devLog('log', 'Updating chart with data points:', stats.upload_rate_history.length);
 
     const isDark = document.documentElement.classList.contains('dark');
     const textColor = isDark ? '#e5e7eb' : '#1f2937';

@@ -1,7 +1,17 @@
 <script>
   import { cn } from '$lib/utils.js';
 
-  let { statusMessage, statusType } = $props();
+  let {
+    statusMessage,
+    statusType,
+    isRunning = false,
+    isPaused = false,
+    startFaking = null,
+    stopFaking = null,
+    pauseFaking = null,
+    resumeFaking = null,
+    manualUpdate = null,
+  } = $props();
 
   const statusStyles = {
     idle: 'bg-gradient-to-r from-green-600 to-green-500 text-white border-green-500 shadow-lg shadow-green-500/30',
@@ -18,7 +28,7 @@
 
 <div
   class={cn(
-    'max-w-7xl mx-auto mb-3 px-6 py-4 rounded-xl flex items-center gap-3 font-semibold transition-all border-2 backdrop-blur-sm',
+    'px-4 py-3 flex items-center gap-3 font-semibold transition-all border-2 backdrop-blur-sm',
     statusStyles[statusType] || statusStyles.idle
   )}
 >
@@ -27,6 +37,71 @@
     style="background: currentColor;"
   ></div>
   <span class="flex-1 text-[15px]">{statusMessage}</span>
+
+  <!-- Control Buttons -->
+  {#if startFaking && stopFaking}
+    <div class="flex gap-2 items-center">
+      {#if !isRunning}
+        <button
+          onclick={startFaking}
+          class="px-3 py-1.5 rounded-md flex items-center gap-1.5 font-semibold text-sm transition-all bg-green-600 hover:bg-green-700 text-white shadow-lg shadow-green-500/25 border-0 cursor-pointer"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M8 5v14l11-7z" />
+          </svg>
+          <span>Start</span>
+        </button>
+      {:else}
+        {#if !isPaused}
+          <button
+            onclick={pauseFaking}
+            class="px-3 py-1.5 rounded-md flex items-center gap-1.5 font-semibold text-sm transition-all bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-600 hover:to-amber-500 text-white shadow-lg shadow-amber-500/25 border-0 cursor-pointer"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z" />
+            </svg>
+            <span>Pause</span>
+          </button>
+        {:else}
+          <button
+            onclick={resumeFaking}
+            class="px-3 py-1.5 rounded-md flex items-center gap-1.5 font-semibold text-sm transition-all bg-green-600 hover:bg-green-700 text-white shadow-lg shadow-green-500/25 border-0 cursor-pointer"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+            <span>Resume</span>
+          </button>
+        {/if}
+        <button
+          onclick={manualUpdate}
+          class="px-3 py-1.5 rounded-md flex items-center gap-1.5 font-semibold text-sm transition-all bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600 text-white shadow-lg shadow-blue-500/25 border-0 cursor-pointer"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <path d="M1 4v6h6M23 20v-6h-6" />
+            <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15" />
+          </svg>
+          <span>Update</span>
+        </button>
+        <button
+          onclick={stopFaking}
+          class="px-3 py-1.5 rounded-md flex items-center gap-1.5 font-semibold text-sm transition-all bg-gradient-to-r from-red-600 to-red-500 hover:from-red-700 hover:to-red-600 text-white shadow-lg shadow-red-500/25 border-0 cursor-pointer"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+            <rect x="6" y="6" width="12" height="12" />
+          </svg>
+          <span>Stop</span>
+        </button>
+      {/if}
+    </div>
+  {/if}
 </div>
 
 <style>

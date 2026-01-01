@@ -14,7 +14,7 @@
 
   // Import components
   import Header from './components/Header.svelte';
-  import InstanceTabs from './components/InstanceTabs.svelte';
+  import Sidebar from './components/Sidebar.svelte';
   import StatusBar from './components/StatusBar.svelte';
   import TorrentSelector from './components/TorrentSelector.svelte';
   import ConfigurationForm from './components/ConfigurationForm.svelte';
@@ -27,6 +27,8 @@
   import Logs from './components/Logs.svelte';
   import ProxySettings from './components/ProxySettings.svelte';
   import UpdateChecker from './components/UpdateChecker.svelte';
+  import ThemeIcon from './components/ThemeIcon.svelte';
+  import DownloadButton from './components/DownloadButton.svelte';
 
   // Check if running in Tauri
   const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -61,6 +63,10 @@
   // Logs
   let logs = $state([]);
   let showLogs = $state(false);
+
+  // Sidebar state
+  let sidebarOpen = $state(false);
+  let sidebarCollapsed = $state(false);
 
   // Development logging helper - only logs in development mode
   function devLog(level, ...args) {
@@ -214,11 +220,11 @@
           if (effectiveTheme === 'dark') {
             document.documentElement.classList.add('dark');
             document.documentElement.style.colorScheme = 'dark';
-            console.log('🔄 System theme changed to dark mode');
+            devLog('log', '🔄 System theme changed to dark mode');
           } else {
             document.documentElement.classList.remove('dark');
             document.documentElement.style.colorScheme = 'light';
-            console.log('🔄 System theme changed to light mode');
+            devLog('log', '🔄 System theme changed to light mode');
           }
           document.documentElement.setAttribute('data-theme', effectiveTheme);
         }
@@ -245,19 +251,15 @@
     if (effectiveTheme === 'dark') {
       document.documentElement.classList.add('dark');
       document.documentElement.style.colorScheme = 'dark';
-      console.log('✅ Dark mode enabled - added .dark class and color-scheme to <html>');
+      devLog('log', '✅ Dark mode enabled - added .dark class and color-scheme to <html>');
     } else {
       document.documentElement.classList.remove('dark');
       document.documentElement.style.colorScheme = 'light';
-      console.log('☀️ Light mode enabled - removed .dark class and set color-scheme to light');
+      devLog('log', '☀️ Light mode enabled - removed .dark class and set color-scheme to light');
     }
 
     // Keep data-theme for backwards compatibility with remaining components
     document.documentElement.setAttribute('data-theme', effectiveTheme);
-
-    // Debug: Check computed background color
-    const bg = getComputedStyle(document.documentElement).getPropertyValue('--color-background');
-    console.log('Current --color-background value:', bg);
   }
 
   // Theme selection
@@ -772,6 +774,8 @@
     }
 
     try {
+      const isPausedBeforeUpdate = $activeInstance.isPaused;
+
       instanceActions.updateInstance($activeInstance.id, {
         statusMessage: 'Manually updating stats...',
         statusType: 'running',
@@ -779,11 +783,16 @@
 
       await api.updateFaker($activeInstance.id);
       const stats = await api.getStats($activeInstance.id);
+
+      // Restore the correct status message based on paused state
+      const statusMessage = isPausedBeforeUpdate ? '⏸️ Paused' : '🚀 Actively faking ratio...';
+      const statusType = isPausedBeforeUpdate ? 'idle' : 'running';
+
       instanceActions.updateInstance($activeInstance.id, {
         stats,
         nextUpdateIn: $activeInstance.updateIntervalSeconds ?? 5,
-        statusMessage: '🚀 Actively faking ratio...',
-        statusType: 'running',
+        statusMessage,
+        statusType,
       });
     } catch (error) {
       devLog('error', 'Manual update error:', error);
@@ -797,9 +806,11 @@
         // Only update status if the instance is still running
         const instance = $instances.find(i => i.id === instanceId);
         if (instance && instance.isRunning) {
+          const statusMessage = instance.isPaused ? '⏸️ Paused' : '🚀 Actively faking ratio...';
+          const statusType = instance.isPaused ? 'idle' : 'running';
           instanceActions.updateInstance(instanceId, {
-            statusMessage: '🚀 Actively faking ratio...',
-            statusType: 'running',
+            statusMessage,
+            statusType,
           });
         }
       }, 2000);
@@ -830,116 +841,158 @@
   }
 </script>
 
-<main class="min-h-screen p-3 bg-background text-foreground">
-  {#if !isInitialized}
-    <div class="flex flex-col items-center justify-center min-h-[60vh] gap-6">
-      <div class="w-15 h-15 border-4 border-muted border-t-primary rounded-full animate-spin"></div>
-      <p class="text-xl text-muted-foreground">Loading Rustatio...</p>
-    </div>
-  {:else}
-    <Header
-      {theme}
-      {showThemeDropdown}
-      {getThemeName}
-      {toggleThemeDropdown}
-      {selectTheme}
-      isRunning={$activeInstance?.isRunning || false}
-      isPaused={$activeInstance?.isPaused || false}
-      {startFaking}
-      {stopFaking}
-      {pauseFaking}
-      {resumeFaking}
-      {manualUpdate}
+{#if !isInitialized}
+  <div class="flex flex-col items-center justify-center min-h-screen gap-6 bg-background">
+    <div class="w-15 h-15 border-4 border-muted border-t-primary rounded-full animate-spin"></div>
+    <p class="text-xl text-muted-foreground">Loading Rustatio...</p>
+  </div>
+{:else}
+  <div class="flex h-screen bg-background text-foreground">
+    <!-- Sidebar -->
+    <Sidebar
+      bind:isOpen={sidebarOpen}
+      bind:isCollapsed={sidebarCollapsed}
+      onStartAll={startAllInstances}
+      onStopAll={stopAllInstances}
     />
 
-    <InstanceTabs onStartAll={startAllInstances} onStopAll={stopAllInstances} />
+    <!-- Main Content -->
+    <div class="flex-1 flex flex-col overflow-hidden">
+      <!-- Mobile Menu Toggle -->
+      <button
+        class="lg:hidden fixed top-4 left-4 z-30 p-2 bg-primary text-primary-foreground rounded-md shadow-lg"
+        onclick={() => (sidebarOpen = !sidebarOpen)}
+        aria-label="Toggle menu"
+      >
+        <svg
+          width="24"
+          height="24"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+        >
+          <line x1="3" y1="12" x2="21" y2="12"></line>
+          <line x1="3" y1="6" x2="21" y2="6"></line>
+          <line x1="3" y1="18" x2="21" y2="18"></line>
+        </svg>
+      </button>
 
-    <StatusBar
-      statusMessage={$activeInstance?.statusMessage || 'Select a torrent file to begin'}
-      statusType={$activeInstance?.statusType || 'warning'}
-    />
-
-    <div class="max-w-7xl mx-auto">
-      <!-- CORS Proxy Settings -->
-      <ProxySettings />
-      <!-- Torrent Selection & Configuration -->
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
-        <TorrentSelector torrent={$activeInstance?.torrent} {selectTorrent} {formatBytes} />
-
-        {#if $activeInstance}
-          <ConfigurationForm
-            {clients}
-            {clientVersions}
-            selectedClient={$activeInstance.selectedClient}
-            selectedClientVersion={$activeInstance.selectedClientVersion}
-            port={$activeInstance.port}
-            uploadRate={$activeInstance.uploadRate}
-            downloadRate={$activeInstance.downloadRate}
-            completionPercent={$activeInstance.completionPercent}
-            initialUploaded={$activeInstance.initialUploaded}
-            updateIntervalSeconds={$activeInstance.updateIntervalSeconds}
-            randomizeRates={$activeInstance.randomizeRates}
-            randomRangePercent={$activeInstance.randomRangePercent}
-            progressiveRatesEnabled={$activeInstance.progressiveRatesEnabled}
-            targetUploadRate={$activeInstance.targetUploadRate}
-            targetDownloadRate={$activeInstance.targetDownloadRate}
-            progressiveDurationHours={$activeInstance.progressiveDurationHours}
-            isRunning={$activeInstance.isRunning || false}
-            onUpdate={updates => {
-              instanceActions.updateInstance($activeInstance.id, updates);
-            }}
-          />
+      <!-- Theme Toggle (Absolute Top-Right) -->
+      <div class="fixed top-4 right-4 z-30 flex items-center gap-3">
+        {#if !isTauri}
+          <div>
+            <DownloadButton />
+          </div>
         {/if}
-      </div>
-
-      <!-- Stop Conditions & Progress Bars -->
-      {#if $activeInstance}
-        {@const hasActiveStopCondition =
-          $activeInstance.stopAtRatioEnabled ||
-          $activeInstance.stopAtUploadedEnabled ||
-          $activeInstance.stopAtDownloadedEnabled ||
-          $activeInstance.stopAtSeedTimeEnabled}
-        {@const showProgressBars = hasActiveStopCondition && $activeInstance?.stats}
-
-        <div class="grid grid-cols-1 {showProgressBars ? 'md:grid-cols-2' : ''} gap-3 mb-3">
-          <StopConditions
-            stopAtRatioEnabled={$activeInstance.stopAtRatioEnabled}
-            stopAtRatio={$activeInstance.stopAtRatio}
-            stopAtUploadedEnabled={$activeInstance.stopAtUploadedEnabled}
-            stopAtUploadedGB={$activeInstance.stopAtUploadedGB}
-            stopAtDownloadedEnabled={$activeInstance.stopAtDownloadedEnabled}
-            stopAtDownloadedGB={$activeInstance.stopAtDownloadedGB}
-            stopAtSeedTimeEnabled={$activeInstance.stopAtSeedTimeEnabled}
-            stopAtSeedTimeHours={$activeInstance.stopAtSeedTimeHours}
-            isRunning={$activeInstance.isRunning || false}
-            onUpdate={updates => {
-              instanceActions.updateInstance($activeInstance.id, updates);
-            }}
-          />
-
-          {#if showProgressBars}
-            <ProgressBars
-              stats={$activeInstance.stats}
-              stopAtRatioEnabled={$activeInstance.stopAtRatioEnabled}
-              stopAtRatio={$activeInstance.stopAtRatio}
-              stopAtUploadedEnabled={$activeInstance.stopAtUploadedEnabled}
-              stopAtUploadedGB={$activeInstance.stopAtUploadedGB}
-              stopAtDownloadedEnabled={$activeInstance.stopAtDownloadedEnabled}
-              stopAtDownloadedGB={$activeInstance.stopAtDownloadedGB}
-              stopAtSeedTimeEnabled={$activeInstance.stopAtSeedTimeEnabled}
-              stopAtSeedTimeHours={$activeInstance.stopAtSeedTimeHours}
-              {formatBytes}
-              {formatDuration}
-            />
+        <div class="relative theme-selector">
+          <button
+            onclick={toggleThemeDropdown}
+            class="bg-secondary text-secondary-foreground border-2 border-border rounded-lg p-2 flex items-center gap-2 cursor-pointer transition-all hover:bg-primary hover:border-primary hover:text-primary-foreground active:scale-[0.98] shadow-lg"
+            title="Theme: {getThemeName(theme)}"
+            aria-label="Toggle theme menu"
+          >
+            <ThemeIcon {theme} />
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              class="transition-transform {showThemeDropdown ? 'rotate-180' : ''}"
+            >
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+          {#if showThemeDropdown}
+            <div
+              class="absolute top-[calc(100%+0.5rem)] right-0 bg-card text-card-foreground border border-border/50 rounded-xl shadow-2xl p-1.5 min-w-[180px] z-50 backdrop-blur-xl animate-in fade-in slide-in-from-top-2 duration-200"
+            >
+              <button
+                class="w-full flex items-center gap-3 px-3 py-2 border-none cursor-pointer rounded-lg transition-all {theme ===
+                'light'
+                  ? 'bg-primary text-primary-foreground shadow-sm'
+                  : 'bg-transparent text-card-foreground hover:bg-secondary/80'}"
+                onclick={() => selectTheme('light')}
+              >
+                <ThemeIcon theme="light" />
+                <span class="flex-1 text-left text-sm font-medium">Light</span>
+                {#if theme === 'light'}
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.5"
+                  >
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                  </svg>
+                {/if}
+              </button>
+              <button
+                class="w-full flex items-center gap-3 px-3 py-2 border-none cursor-pointer rounded-lg transition-all {theme ===
+                'dark'
+                  ? 'bg-primary text-primary-foreground shadow-sm'
+                  : 'bg-transparent text-card-foreground hover:bg-secondary/80'}"
+                onclick={() => selectTheme('dark')}
+              >
+                <ThemeIcon theme="dark" />
+                <span class="flex-1 text-left text-sm font-medium">Dark</span>
+                {#if theme === 'dark'}
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.5"
+                  >
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                  </svg>
+                {/if}
+              </button>
+              <button
+                class="w-full flex items-center gap-3 px-3 py-2 border-none cursor-pointer rounded-lg transition-all {theme ===
+                'system'
+                  ? 'bg-primary text-primary-foreground shadow-sm'
+                  : 'bg-transparent text-card-foreground hover:bg-secondary/80'}"
+                onclick={() => selectTheme('system')}
+              >
+                <ThemeIcon theme="system" />
+                <span class="flex-1 text-left text-sm font-medium">System</span>
+                {#if theme === 'system'}
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                  </svg>
+                {/if}
+              </button>
+            </div>
           {/if}
         </div>
-      {/if}
+      </div>
 
-      <!-- Controls -->
-      <Controls
+      <!-- Header -->
+      <Header />
+
+      <!-- Full-width border separator -->
+      <div class="border-b-2 border-primary/20"></div>
+
+      <!-- Status Bar -->
+      <StatusBar
+        statusMessage={$activeInstance?.statusMessage || 'Select a torrent file to begin'}
+        statusType={$activeInstance?.statusType || 'warning'}
         isRunning={$activeInstance?.isRunning || false}
         isPaused={$activeInstance?.isPaused || false}
-        nextUpdateIn={$activeInstance?.nextUpdateIn || 0}
         {startFaking}
         {stopFaking}
         {pauseFaking}
@@ -947,38 +1000,130 @@
         {manualUpdate}
       />
 
-      <!-- Stats -->
-      {#if $activeInstance?.stats}
-        <!-- Session & Total Stats -->
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
-          <SessionStats stats={$activeInstance.stats} {formatBytes} />
-          <TotalStats
-            stats={$activeInstance.stats}
-            torrent={$activeInstance.torrent}
-            {formatBytes}
+      <!-- Scrollable Content Area -->
+      <div class="flex-1 overflow-y-auto p-3">
+        <div class="max-w-7xl mx-auto">
+          <!-- CORS Proxy Settings -->
+          <ProxySettings />
+          <!-- Torrent Selection & Configuration -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+            <TorrentSelector torrent={$activeInstance?.torrent} {selectTorrent} {formatBytes} />
+
+            {#if $activeInstance}
+              <ConfigurationForm
+                {clients}
+                {clientVersions}
+                selectedClient={$activeInstance.selectedClient}
+                selectedClientVersion={$activeInstance.selectedClientVersion}
+                port={$activeInstance.port}
+                uploadRate={$activeInstance.uploadRate}
+                downloadRate={$activeInstance.downloadRate}
+                completionPercent={$activeInstance.completionPercent}
+                initialUploaded={$activeInstance.initialUploaded}
+                updateIntervalSeconds={$activeInstance.updateIntervalSeconds}
+                randomizeRates={$activeInstance.randomizeRates}
+                randomRangePercent={$activeInstance.randomRangePercent}
+                progressiveRatesEnabled={$activeInstance.progressiveRatesEnabled}
+                targetUploadRate={$activeInstance.targetUploadRate}
+                targetDownloadRate={$activeInstance.targetDownloadRate}
+                progressiveDurationHours={$activeInstance.progressiveDurationHours}
+                isRunning={$activeInstance.isRunning || false}
+                onUpdate={updates => {
+                  instanceActions.updateInstance($activeInstance.id, updates);
+                }}
+              />
+            {/if}
+          </div>
+
+          <!-- Stop Conditions & Progress Bars -->
+          {#if $activeInstance}
+            {@const hasActiveStopCondition =
+              $activeInstance.stopAtRatioEnabled ||
+              $activeInstance.stopAtUploadedEnabled ||
+              $activeInstance.stopAtDownloadedEnabled ||
+              $activeInstance.stopAtSeedTimeEnabled}
+            {@const showProgressBars = hasActiveStopCondition && $activeInstance?.stats}
+
+            <div class="grid grid-cols-1 {showProgressBars ? 'md:grid-cols-2' : ''} gap-3 mb-3">
+              <StopConditions
+                stopAtRatioEnabled={$activeInstance.stopAtRatioEnabled}
+                stopAtRatio={$activeInstance.stopAtRatio}
+                stopAtUploadedEnabled={$activeInstance.stopAtUploadedEnabled}
+                stopAtUploadedGB={$activeInstance.stopAtUploadedGB}
+                stopAtDownloadedEnabled={$activeInstance.stopAtDownloadedEnabled}
+                stopAtDownloadedGB={$activeInstance.stopAtDownloadedGB}
+                stopAtSeedTimeEnabled={$activeInstance.stopAtSeedTimeEnabled}
+                stopAtSeedTimeHours={$activeInstance.stopAtSeedTimeHours}
+                isRunning={$activeInstance.isRunning || false}
+                onUpdate={updates => {
+                  instanceActions.updateInstance($activeInstance.id, updates);
+                }}
+              />
+
+              {#if showProgressBars}
+                <ProgressBars
+                  stats={$activeInstance.stats}
+                  stopAtRatioEnabled={$activeInstance.stopAtRatioEnabled}
+                  stopAtRatio={$activeInstance.stopAtRatio}
+                  stopAtUploadedEnabled={$activeInstance.stopAtUploadedEnabled}
+                  stopAtUploadedGB={$activeInstance.stopAtUploadedGB}
+                  stopAtDownloadedEnabled={$activeInstance.stopAtDownloadedEnabled}
+                  stopAtDownloadedGB={$activeInstance.stopAtDownloadedGB}
+                  stopAtSeedTimeEnabled={$activeInstance.stopAtSeedTimeEnabled}
+                  stopAtSeedTimeHours={$activeInstance.stopAtSeedTimeHours}
+                  {formatBytes}
+                  {formatDuration}
+                />
+              {/if}
+            </div>
+          {/if}
+
+          <!-- Controls -->
+          <Controls
+            isRunning={$activeInstance?.isRunning || false}
+            isPaused={$activeInstance?.isPaused || false}
+            nextUpdateIn={$activeInstance?.nextUpdateIn || 0}
+            {startFaking}
+            {stopFaking}
+            {pauseFaking}
+            {resumeFaking}
+            {manualUpdate}
+          />
+
+          <!-- Stats -->
+          {#if $activeInstance?.stats}
+            <!-- Session & Total Stats -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+              <SessionStats stats={$activeInstance.stats} {formatBytes} />
+              <TotalStats
+                stats={$activeInstance.stats}
+                torrent={$activeInstance.torrent}
+                {formatBytes}
+              />
+            </div>
+
+            <!-- Performance & Peer Analytics (merged) -->
+            <div class="mb-3">
+              <RateGraph stats={$activeInstance.stats} {formatDuration} />
+            </div>
+          {/if}
+
+          <!-- Logs Section -->
+          <Logs
+            bind:logs
+            bind:showLogs
+            onUpdate={async updates => {
+              if (updates.showLogs !== undefined) {
+                showLogs = updates.showLogs;
+                localStorage.setItem('rustatio-show-logs', JSON.stringify(updates.showLogs));
+              }
+            }}
           />
         </div>
-
-        <!-- Performance & Peer Analytics (merged) -->
-        <div class="mb-3">
-          <RateGraph stats={$activeInstance.stats} {formatDuration} />
-        </div>
-      {/if}
-
-      <!-- Logs Section -->
-      <Logs
-        bind:logs
-        bind:showLogs
-        onUpdate={async updates => {
-          if (updates.showLogs !== undefined) {
-            showLogs = updates.showLogs;
-            localStorage.setItem('rustatio-show-logs', JSON.stringify(updates.showLogs));
-          }
-        }}
-      />
+      </div>
     </div>
-  {/if}
+  </div>
+{/if}
 
-  <!-- Update Checker (only shown in Tauri) -->
-  <UpdateChecker />
-</main>
+<!-- Update Checker (only shown in Tauri) -->
+<UpdateChecker />
