@@ -10,11 +10,6 @@ incremental = true
 linker = "clang"
 rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 
-[target.aarch64-unknown-linux-gnu]
-# Use mold linker (fastest on Linux ARM)
-linker = "clang"
-rustflags = ["-C", "link-arg=-fuse-ld=mold"]
-
 [target.x86_64-pc-windows-msvc]
 # Use lld on Windows
 rustflags = ["-C", "link-arg=-fuse-ld=lld-link"]

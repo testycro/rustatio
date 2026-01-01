@@ -66,10 +66,6 @@
     }
   }
 
-  function getDownloadDisplayText() {
-    return 'Download';
-  }
-
   function getDownloadFormat(os, type) {
     if (os === 'windows') {
       return '.exe';
@@ -86,17 +82,22 @@
     return '';
   }
 
-  function getOSIcon(os) {
-    switch (os) {
-      case 'windows':
-        return '🪟';
-      case 'macos':
-        return '🍎';
-      case 'linux':
-        return '🐧';
-      default:
-        return '💾';
+  function getOSForIcon(os, downloadType) {
+    // Map OS and download type to the correct icon
+    if (os === 'linux') {
+      if (downloadType === 'deb') {
+        return 'debian';
+      } else if (downloadType === 'rpm') {
+        return 'fedora';
+      }
+      return 'linux';
     }
+    return os;
+  }
+  
+  function getCurrentDownloadOS() {
+    // Get the OS type for the current default download
+    return getOSForIcon(os, downloadType);
   }
 
   function toggleDropdown() {
@@ -105,6 +106,28 @@
 
   function handleDownload() {
     window.location.href = downloadUrl;
+  }
+
+  function getOSIconUrl(os) {
+    // Using icons from jsdelivr CDN with devicon (developer icons)
+    // These icons have proper colors and better rendering
+    const baseUrl = 'https://cdn.jsdelivr.net/gh/devicons/devicon/icons';
+    switch (os) {
+      case 'windows':
+        return `${baseUrl}/windows8/windows8-original.svg`; // Windows logo with colors
+      case 'macos':
+        return `${baseUrl}/apple/apple-original.svg`; // Apple logo
+      case 'linux':
+        return `${baseUrl}/linux/linux-original.svg`; // Tux penguin with colors
+      case 'debian':
+        return `${baseUrl}/debian/debian-original.svg`; // Debian red spiral
+      case 'fedora':
+        return `${baseUrl}/fedora/fedora-original.svg`; // Fedora blue logo
+      case 'ubuntu':
+        return `${baseUrl}/ubuntu/ubuntu-plain.svg`; // Ubuntu orange
+      default:
+        return `${baseUrl}/linux/linux-original.svg`;
+    }
   }
 
   function getDownloadOptions() {
@@ -117,27 +140,27 @@
     return [
       {
         label: 'Windows (.exe)',
-        icon: '🪟',
+        os: 'windows',
         url: `${GITHUB_REPO}/releases/download/${latestVersion}/Rustatio_${versionNumber}_x64-setup.exe`,
       },
       {
         label: 'macOS (.dmg)',
-        icon: '🍎',
+        os: 'macos',
         url: `${GITHUB_REPO}/releases/download/${latestVersion}/Rustatio_${versionNumber}_x64.dmg`,
       },
       {
         label: 'Debian/Ubuntu (.deb)',
-        icon: '🐧',
+        os: 'debian',
         url: `${GITHUB_REPO}/releases/download/${latestVersion}/Rustatio_${versionNumber}_amd64.deb`,
       },
       {
         label: 'Fedora/RHEL (.rpm)',
-        icon: '🐧',
+        os: 'fedora',
         url: `${GITHUB_REPO}/releases/download/${latestVersion}/Rustatio_${versionNumber}_x86_64.rpm`,
       },
       {
         label: 'Linux (AppImage)',
-        icon: '🐧',
+        os: 'linux',
         url: `${GITHUB_REPO}/releases/download/${latestVersion}/Rustatio_${versionNumber}_amd64.AppImage`,
       },
     ];
@@ -149,11 +172,26 @@
     onclick={handleDownload}
     variant="default"
     size="sm"
-    class="bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-700 hover:to-purple-600 text-white shadow-lg shadow-purple-500/25 border-0"
+    class="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-lg shadow-blue-500/30 border-0"
   >
     {#snippet children()}
-      <span class="text-base">{getOSIcon(os)}</span>
-      <span>{getDownloadDisplayText()} ({getDownloadFormat(os, downloadType)})</span>
+      <!-- OS Icon -->
+      <img src={getOSIconUrl(getCurrentDownloadOS())} alt={getCurrentDownloadOS()} width="16" height="16" class="inline-block" />
+      <svg
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <polyline points="7 10 12 15 17 10" />
+        <line x1="12" y1="15" x2="12" y2="3" />
+      </svg>
+      <span>({getDownloadFormat(os, downloadType)})</span>
       <button
         onclick={(e) => {
           e.stopPropagation();
@@ -180,7 +218,7 @@
     <div
       class="absolute top-[calc(100%+0.5rem)] right-0 bg-card text-card-foreground border border-border/50 rounded-xl shadow-2xl p-1.5 min-w-[220px] z-50 backdrop-blur-xl animate-in fade-in slide-in-from-top-2 duration-200"
     >
-      {#each downloadOptions as option (option.url)}
+      {#each downloadOptions.filter(opt => opt.os !== getCurrentDownloadOS()) as option (option.url)}
         <a
           href={option.url}
           download
@@ -189,7 +227,7 @@
             showDropdown = false;
           }}
         >
-          <span class="text-lg">{option.icon}</span>
+          <img src={getOSIconUrl(option.os)} alt={option.os} width="16" height="16" class="inline-block flex-shrink-0 opacity-80" />
           <span class="flex-1 text-left text-sm font-medium">{option.label}</span>
           <svg
             width="14"

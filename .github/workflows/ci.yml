@@ -23,6 +23,14 @@ jobs:
         uses: jdx/mise-action@v2
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          cache: true
+
+      - name: Setup mold linker
+        uses: rui314/setup-mold@v1
+
+      - name: Ensure Rust components are installed
+        run: |
+          rustup component add rustfmt clippy
 
       - name: Install system dependencies
         run: |
@@ -33,8 +41,7 @@ jobs:
             libssl-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
-            clang \
-            mold
+            clang
 
       - name: Cache cargo
         uses: actions/cache@v4

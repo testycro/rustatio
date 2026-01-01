@@ -93,6 +93,10 @@ jobs:
         uses: jdx/mise-action@v2
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          cache: true
+
+      - name: Setup mold linker
+        uses: rui314/setup-mold@v1
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -177,13 +181,17 @@ jobs:
             pkg-config \
             libayatana-appindicator3-dev \
             librsvg2-dev \
-            clang \
-            mold
+            clang
+
+      - name: Setup mold linker (Ubuntu)
+        if: matrix.platform == 'ubuntu-24.04'
+        uses: rui314/setup-mold@v1
 
       - name: Install mise
         uses: jdx/mise-action@v2
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          cache: true
 
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown

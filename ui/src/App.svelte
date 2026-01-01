@@ -888,7 +888,13 @@
         <!-- Session & Total Stats -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
           <SessionStats stats={$activeInstance.stats} {formatBytes} />
-          <TotalStats stats={$activeInstance.stats} {formatBytes} />
+          <TotalStats 
+            stats={$activeInstance.stats} 
+            torrent={$activeInstance.torrent}
+            cumulativeUploaded={$activeInstance.cumulativeUploaded}
+            cumulativeDownloaded={$activeInstance.cumulativeDownloaded}
+            {formatBytes} 
+          />
         </div>
 
         <!-- Performance & Peer Analytics (merged) -->
