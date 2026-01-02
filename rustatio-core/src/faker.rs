@@ -87,7 +87,7 @@ pub struct FakerConfig {
     pub num_want: u32,
 
     /// Enable randomization of rates
-    #[serde(default = "default_true")]
+    #[serde(default = "default_randomize_rates")]
     pub randomize_rates: bool,
 
     /// Randomization range percentage (e.g., 20 means ±20%)
@@ -123,7 +123,7 @@ pub struct FakerConfig {
     pub progressive_duration: u64,
 }
 
-fn default_true() -> bool {
+fn default_randomize_rates() -> bool {
     true
 }
 
@@ -172,42 +172,50 @@ pub enum FakerState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FakerStats {
-    pub uploaded: u64,
-    pub downloaded: u64,
-    pub left: u64,
-    pub seeders: i64,
-    pub leechers: i64,
-    pub ratio: f64,
-    pub elapsed_time: Duration,
+    // === CUMULATIVE STATS (lifetime totals for display) ===
+    pub uploaded: u64,   // Total uploaded across all sessions
+    pub downloaded: u64, // Total downloaded across all sessions
+    pub ratio: f64,      // Cumulative ratio: uploaded / downloaded
+
+    // === TORRENT STATE ===
+    pub left: u64,     // Bytes left to download for THIS torrent
+    pub seeders: i64,  // Seeders from tracker
+    pub leechers: i64, // Leechers from tracker
     pub state: FakerState,
-    #[serde(skip)]
-    pub last_announce: Option<Instant>,
-    #[serde(skip)]
-    pub next_announce: Option<Instant>,
 
-    // Session stats
-    pub session_uploaded: u64,
-    pub session_downloaded: u64,
-    pub current_upload_rate: f64,   // KB/s
-    pub current_download_rate: f64, // KB/s
-    pub average_upload_rate: f64,   // KB/s
-    pub average_download_rate: f64, // KB/s
+    // === SESSION STATS (current session only) ===
+    pub session_uploaded: u64,   // Uploaded in current session
+    pub session_downloaded: u64, // Downloaded in current session
+    pub session_ratio: f64,      // Session ratio: session_uploaded / torrent_size
+    pub elapsed_time: Duration,  // Time since session started
 
-    // Progress tracking
-    pub upload_progress: f64,    // 0-100 % (if stop_at_uploaded is set)
-    pub download_progress: f64,  // 0-100 % (if stop_at_downloaded is set)
-    pub ratio_progress: f64,     // 0-100 % (if stop_at_ratio is set)
-    pub seed_time_progress: f64, // 0-100 % (if stop_at_seed_time is set)
+    // === RATES ===
+    pub current_upload_rate: f64,   // Current upload rate KB/s
+    pub current_download_rate: f64, // Current download rate KB/s
+    pub average_upload_rate: f64,   // Average upload rate KB/s (session)
+    pub average_download_rate: f64, // Average download rate KB/s (session)
 
-    // ETA
+    // === PROGRESS (session-based for stop conditions) ===
+    pub upload_progress: f64,    // 0-100% toward stop_at_uploaded
+    pub download_progress: f64,  // 0-100% toward stop_at_downloaded
+    pub ratio_progress: f64,     // 0-100% toward stop_at_ratio
+    pub seed_time_progress: f64, // 0-100% toward stop_at_seed_time
+
+    // === ETA ===
     pub eta_ratio: Option<Duration>,
     pub eta_uploaded: Option<Duration>,
     pub eta_seed_time: Option<Duration>,
 
-    // Rate history (last 60 data points for graphs)
+    // === HISTORY (for graphs) ===
     pub upload_rate_history: Vec<f64>,
     pub download_rate_history: Vec<f64>,
     pub ratio_history: Vec<f64>,
+
+    // === INTERNAL ===
+    #[serde(skip)]
+    pub last_announce: Option<Instant>,
+    #[serde(skip)]
+    pub next_announce: Option<Instant>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -265,42 +273,58 @@ impl RatioFaker {
         let tracker_client =
             TrackerClient::new(client_config.clone()).map_err(|e| FakerError::ConfigError(e.to_string()))?;
 
-        // Calculate initial stats
+        // Calculate how much of THIS torrent is already downloaded
         let completion = config.completion_percent.clamp(0.0, 100.0) / 100.0;
-        let downloaded = config.initial_downloaded + (torrent.total_size as f64 * completion) as u64;
-        let left = torrent.total_size.saturating_sub(downloaded);
+        let torrent_downloaded = (torrent.total_size as f64 * completion) as u64;
+        let left = torrent.total_size.saturating_sub(torrent_downloaded);
 
         let stats = FakerStats {
+            // Cumulative stats from previous sessions
             uploaded: config.initial_uploaded,
-            downloaded,
-            left,
-            seeders: 0,
-            leechers: 0,
-            ratio: if downloaded > 0 {
-                config.initial_uploaded as f64 / downloaded as f64
+            downloaded: config.initial_downloaded,
+            ratio: if config.initial_downloaded > 0 {
+                config.initial_uploaded as f64 / config.initial_downloaded as f64
             } else {
                 0.0
             },
-            elapsed_time: Duration::from_secs(0),
+
+            // Torrent state
+            left,
+            seeders: 0,
+            leechers: 0,
             state: FakerState::Idle,
-            last_announce: None,
-            next_announce: None,
+
+            // Session stats (starts fresh at 0)
             session_uploaded: 0,
             session_downloaded: 0,
+            session_ratio: 0.0,
+            elapsed_time: Duration::from_secs(0),
+
+            // Rates
             current_upload_rate: 0.0,
             current_download_rate: 0.0,
             average_upload_rate: 0.0,
             average_download_rate: 0.0,
+
+            // Progress
             upload_progress: 0.0,
             download_progress: 0.0,
             ratio_progress: 0.0,
             seed_time_progress: 0.0,
+
+            // ETA
             eta_ratio: None,
             eta_uploaded: None,
             eta_seed_time: None,
+
+            // History
             upload_rate_history: Vec::new(),
             download_rate_history: Vec::new(),
             ratio_history: Vec::new(),
+
+            // Internal
+            last_announce: None,
+            next_announce: None,
         };
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -398,115 +422,27 @@ impl RatioFaker {
 
         let mut stats = write_lock!(self.stats);
 
-        // Calculate progressive rates if enabled
-        let base_upload_rate = if self.config.progressive_rates {
-            self.calculate_progressive_rate(
-                self.config.upload_rate,
-                self.config.target_upload_rate.unwrap_or(self.config.upload_rate),
-                stats.elapsed_time.as_secs(),
-                self.config.progressive_duration,
-            )
-        } else {
-            self.config.upload_rate
-        };
+        // Calculate and apply rates
+        let (upload_rate, download_rate) = self.calculate_current_rates(&stats);
+        self.update_rate_stats(&mut stats, upload_rate, download_rate);
 
-        let base_download_rate = if self.config.progressive_rates {
-            self.calculate_progressive_rate(
-                self.config.download_rate,
-                self.config.target_download_rate.unwrap_or(self.config.download_rate),
-                stats.elapsed_time.as_secs(),
-                self.config.progressive_duration,
-            )
-        } else {
-            self.config.download_rate
-        };
-
-        // Apply randomization if enabled
-        let upload_rate = if self.config.randomize_rates {
-            let mut rng = rand::rng();
-            let range = self.config.random_range_percent / 100.0;
-            let variation = 1.0 + (rng.random::<f64>() * (range * 2.0) - range);
-            base_upload_rate * variation
-        } else {
-            base_upload_rate
-        };
-
-        let download_rate = if self.config.randomize_rates {
-            let mut rng = rand::rng();
-            let range = self.config.random_range_percent / 100.0;
-            let variation = 1.0 + (rng.random::<f64>() * (range * 2.0) - range);
-            base_download_rate * variation
-        } else {
-            base_download_rate
-        };
-
-        // Store current rates
-        stats.current_upload_rate = upload_rate;
-        stats.current_download_rate = download_rate;
-
-        // Update rate history (keep last 60 points)
-        stats.upload_rate_history.push(upload_rate);
-        stats.download_rate_history.push(download_rate);
-        if stats.upload_rate_history.len() > 60 {
-            stats.upload_rate_history.remove(0);
-        }
-        if stats.download_rate_history.len() > 60 {
-            stats.download_rate_history.remove(0);
-        }
-
-        // Calculate bytes to add based on rates
+        // Update transfer amounts
         let upload_delta = (upload_rate * 1024.0 * elapsed.as_secs_f64()) as u64;
         let download_delta = (download_rate * 1024.0 * elapsed.as_secs_f64()) as u64;
 
-        // Update uploaded
-        stats.uploaded += upload_delta;
-        stats.session_uploaded += upload_delta;
+        let completed = self.update_transfer_stats(&mut stats, upload_delta, download_delta);
 
-        // Update downloaded (but don't exceed total size)
-        if stats.left > 0 {
-            let actual_download = download_delta.min(stats.left);
-            stats.downloaded += actual_download;
-            stats.session_downloaded += actual_download;
-            stats.left = stats.left.saturating_sub(actual_download);
-
-            // Check if we just completed
-            if stats.left == 0 {
-                drop(stats); // Release lock before async call
-                self.on_completed().await?;
-                stats = write_lock!(self.stats); // Re-acquire
-            }
+        if completed {
+            drop(stats);
+            self.on_completed().await?;
+            stats = write_lock!(self.stats);
         }
 
-        // Update ratio
-        let current_ratio = if self.torrent.total_size > 0 {
-            stats.uploaded as f64 / self.torrent.total_size as f64
-        } else {
-            0.0
-        };
-        stats.ratio = current_ratio;
-
-        // Update ratio history (keep last 60 points)
-        stats.ratio_history.push(current_ratio);
-        if stats.ratio_history.len() > 60 {
-            stats.ratio_history.remove(0);
-        }
-
-        // Update elapsed time
-        stats.elapsed_time = now.duration_since(self.start_time);
-
-        // Calculate average rates
-        let elapsed_secs = stats.elapsed_time.as_secs_f64();
-        if elapsed_secs > 0.0 {
-            stats.average_upload_rate = (stats.session_uploaded as f64 / 1024.0) / elapsed_secs;
-            stats.average_download_rate = (stats.session_downloaded as f64 / 1024.0) / elapsed_secs;
-        }
-
-        // Update progress and ETAs
-        self.update_progress_and_eta(&mut stats);
+        // Update derived stats
+        self.update_derived_stats(&mut stats, now);
 
         // Check stop conditions
-        let should_stop = self.check_stop_conditions(&stats);
-        if should_stop {
+        if self.check_stop_conditions(&stats) {
             log_info!("Stop condition met, stopping faker");
             drop(stats);
             self.stop().await?;
@@ -516,7 +452,7 @@ impl RatioFaker {
         // Check if we need to announce
         if let Some(next_announce) = stats.next_announce {
             if now >= next_announce {
-                drop(stats); // Release lock before async call
+                drop(stats);
                 self.periodic_announce().await?;
             }
         }
@@ -532,115 +468,27 @@ impl RatioFaker {
 
         let mut stats = write_lock!(self.stats);
 
-        // Calculate progressive rates if enabled
-        let base_upload_rate = if self.config.progressive_rates {
-            self.calculate_progressive_rate(
-                self.config.upload_rate,
-                self.config.target_upload_rate.unwrap_or(self.config.upload_rate),
-                stats.elapsed_time.as_secs(),
-                self.config.progressive_duration,
-            )
-        } else {
-            self.config.upload_rate
-        };
+        // Calculate and apply rates
+        let (upload_rate, download_rate) = self.calculate_current_rates(&stats);
+        self.update_rate_stats(&mut stats, upload_rate, download_rate);
 
-        let base_download_rate = if self.config.progressive_rates {
-            self.calculate_progressive_rate(
-                self.config.download_rate,
-                self.config.target_download_rate.unwrap_or(self.config.download_rate),
-                stats.elapsed_time.as_secs(),
-                self.config.progressive_duration,
-            )
-        } else {
-            self.config.download_rate
-        };
-
-        // Apply randomization if enabled
-        let upload_rate = if self.config.randomize_rates {
-            let mut rng = rand::rng();
-            let range = self.config.random_range_percent / 100.0;
-            let variation = 1.0 + (rng.random::<f64>() * (range * 2.0) - range);
-            base_upload_rate * variation
-        } else {
-            base_upload_rate
-        };
-
-        let download_rate = if self.config.randomize_rates {
-            let mut rng = rand::rng();
-            let range = self.config.random_range_percent / 100.0;
-            let variation = 1.0 + (rng.random::<f64>() * (range * 2.0) - range);
-            base_download_rate * variation
-        } else {
-            base_download_rate
-        };
-
-        // Store current rates
-        stats.current_upload_rate = upload_rate;
-        stats.current_download_rate = download_rate;
-
-        // Update rate history (keep last 60 points)
-        stats.upload_rate_history.push(upload_rate);
-        stats.download_rate_history.push(download_rate);
-        if stats.upload_rate_history.len() > 60 {
-            stats.upload_rate_history.remove(0);
-        }
-        if stats.download_rate_history.len() > 60 {
-            stats.download_rate_history.remove(0);
-        }
-
-        // Calculate bytes to add based on rates
+        // Update transfer amounts
         let upload_delta = (upload_rate * 1024.0 * elapsed.as_secs_f64()) as u64;
         let download_delta = (download_rate * 1024.0 * elapsed.as_secs_f64()) as u64;
 
-        // Update uploaded
-        stats.uploaded += upload_delta;
-        stats.session_uploaded += upload_delta;
+        let completed = self.update_transfer_stats(&mut stats, upload_delta, download_delta);
 
-        // Update downloaded (but don't exceed total size)
-        if stats.left > 0 {
-            let actual_download = download_delta.min(stats.left);
-            stats.downloaded += actual_download;
-            stats.session_downloaded += actual_download;
-            stats.left = stats.left.saturating_sub(actual_download);
-
-            // Check if we just completed
-            if stats.left == 0 {
-                drop(stats); // Release lock before async call
-                self.on_completed().await?;
-                stats = write_lock!(self.stats); // Re-acquire
-            }
+        if completed {
+            drop(stats);
+            self.on_completed().await?;
+            stats = write_lock!(self.stats);
         }
 
-        // Update ratio
-        let current_ratio = if self.torrent.total_size > 0 {
-            stats.uploaded as f64 / self.torrent.total_size as f64
-        } else {
-            0.0
-        };
-        stats.ratio = current_ratio;
-
-        // Update ratio history (keep last 60 points)
-        stats.ratio_history.push(current_ratio);
-        if stats.ratio_history.len() > 60 {
-            stats.ratio_history.remove(0);
-        }
-
-        // Update elapsed time
-        stats.elapsed_time = now.duration_since(self.start_time);
-
-        // Calculate average rates
-        let elapsed_secs = stats.elapsed_time.as_secs_f64();
-        if elapsed_secs > 0.0 {
-            stats.average_upload_rate = (stats.session_uploaded as f64 / 1024.0) / elapsed_secs;
-            stats.average_download_rate = (stats.session_downloaded as f64 / 1024.0) / elapsed_secs;
-        }
-
-        // Update progress and ETAs
-        self.update_progress_and_eta(&mut stats);
+        // Update derived stats
+        self.update_derived_stats(&mut stats, now);
 
         // Check stop conditions
-        let should_stop = self.check_stop_conditions(&stats);
-        if should_stop {
+        if self.check_stop_conditions(&stats) {
             log_info!("Stop condition met, stopping faker");
             drop(stats);
             self.stop().await?;
@@ -772,11 +620,124 @@ impl RatioFaker {
     }
 
     /// Check if any stop conditions are met
+    /// Calculate current upload and download rates with progressive and random adjustments
+    fn calculate_current_rates(&self, stats: &FakerStats) -> (f64, f64) {
+        let base_upload_rate = if self.config.progressive_rates {
+            self.calculate_progressive_rate(
+                self.config.upload_rate,
+                self.config.target_upload_rate.unwrap_or(self.config.upload_rate),
+                stats.elapsed_time.as_secs(),
+                self.config.progressive_duration,
+            )
+        } else {
+            self.config.upload_rate
+        };
+
+        let base_download_rate = if self.config.progressive_rates {
+            self.calculate_progressive_rate(
+                self.config.download_rate,
+                self.config.target_download_rate.unwrap_or(self.config.download_rate),
+                stats.elapsed_time.as_secs(),
+                self.config.progressive_duration,
+            )
+        } else {
+            self.config.download_rate
+        };
+
+        let upload_rate = self.apply_randomization(base_upload_rate);
+        let download_rate = self.apply_randomization(base_download_rate);
+
+        (upload_rate, download_rate)
+    }
+
+    /// Apply randomization to a rate if enabled
+    fn apply_randomization(&self, base_rate: f64) -> f64 {
+        if self.config.randomize_rates {
+            let mut rng = rand::rng();
+            let range = self.config.random_range_percent / 100.0;
+            let variation = 1.0 + (rng.random::<f64>() * (range * 2.0) - range);
+            base_rate * variation
+        } else {
+            base_rate
+        }
+    }
+
+    /// Update rate statistics and history
+    fn update_rate_stats(&self, stats: &mut FakerStats, upload_rate: f64, download_rate: f64) {
+        stats.current_upload_rate = upload_rate;
+        stats.current_download_rate = download_rate;
+
+        Self::add_to_history(&mut stats.upload_rate_history, upload_rate, 60);
+        Self::add_to_history(&mut stats.download_rate_history, download_rate, 60);
+    }
+
+    /// Update transfer stats (uploaded, downloaded, left). Returns true if just completed.
+    fn update_transfer_stats(&self, stats: &mut FakerStats, upload_delta: u64, download_delta: u64) -> bool {
+        stats.uploaded += upload_delta;
+        stats.session_uploaded += upload_delta;
+
+        if stats.left > 0 {
+            let actual_download = download_delta.min(stats.left);
+            stats.downloaded += actual_download;
+            stats.session_downloaded += actual_download;
+            stats.left = stats.left.saturating_sub(actual_download);
+
+            stats.left == 0
+        } else {
+            false
+        }
+    }
+
+    /// Update derived statistics (ratio, elapsed time, average rates, progress)
+    fn update_derived_stats(&self, stats: &mut FakerStats, now: Instant) {
+        // Cumulative ratio (for display in Total Stats)
+        // Use uploaded/downloaded if downloaded > 0, otherwise use uploaded/torrent_size
+        let current_ratio = if stats.downloaded > 0 {
+            stats.uploaded as f64 / stats.downloaded as f64
+        } else if self.torrent.total_size > 0 {
+            // For seeders with 100% completion, use torrent size as base
+            stats.uploaded as f64 / self.torrent.total_size as f64
+        } else {
+            0.0
+        };
+        stats.ratio = current_ratio;
+        Self::add_to_history(&mut stats.ratio_history, current_ratio, 60);
+
+        // Session ratio (for stop conditions) = session_uploaded / torrent_size
+        stats.session_ratio = if self.torrent.total_size > 0 {
+            stats.session_uploaded as f64 / self.torrent.total_size as f64
+        } else {
+            0.0
+        };
+
+        stats.elapsed_time = now.duration_since(self.start_time);
+
+        let elapsed_secs = stats.elapsed_time.as_secs_f64();
+        if elapsed_secs > 0.0 {
+            stats.average_upload_rate = (stats.session_uploaded as f64 / 1024.0) / elapsed_secs;
+            stats.average_download_rate = (stats.session_downloaded as f64 / 1024.0) / elapsed_secs;
+        }
+
+        self.update_progress_and_eta(stats);
+    }
+
+    /// Add a value to a history vec, keeping only the last `max_len` items
+    fn add_to_history(history: &mut Vec<f64>, value: f64, max_len: usize) {
+        history.push(value);
+        if history.len() > max_len {
+            history.remove(0);
+        }
+    }
+
     fn check_stop_conditions(&self, stats: &FakerStats) -> bool {
-        // Check ratio target (use a small epsilon for floating point comparison)
+        // Check ratio target (use session ratio, not cumulative)
         if let Some(target_ratio) = self.config.stop_at_ratio {
-            if stats.ratio >= target_ratio - 0.001 {
-                log_info!("Target ratio reached: {:.3} >= {:.3}", stats.ratio, target_ratio);
+            if stats.session_ratio >= target_ratio - 0.001 {
+                log_info!(
+                    "Target ratio reached: {:.3} >= {:.3} (session)",
+                    stats.session_ratio,
+                    target_ratio
+                );
                 return true;
             }
         }
@@ -860,14 +821,14 @@ impl RatioFaker {
             stats.download_progress = 0.0;
         }
 
-        // Ratio progress
+        // Ratio progress (use session ratio for progress tracking)
         if let Some(target_ratio) = self.config.stop_at_ratio {
-            stats.ratio_progress = ((stats.ratio / target_ratio) * 100.0).min(100.0);
+            stats.ratio_progress = ((stats.session_ratio / target_ratio) * 100.0).min(100.0);
 
-            // Calculate ETA for ratio
-            if stats.average_upload_rate > 0.0 && stats.downloaded > 0 {
-                let target_uploaded = (target_ratio * stats.downloaded as f64) as u64;
-                let remaining = target_uploaded.saturating_sub(stats.uploaded);
+            // Calculate ETA for ratio (based on session stats)
+            if stats.average_upload_rate > 0.0 && self.torrent.total_size > 0 {
+                let target_session_uploaded = (target_ratio * self.torrent.total_size as f64) as u64;
+                let remaining = target_session_uploaded.saturating_sub(stats.session_uploaded);
                 let eta_secs = (remaining as f64 / 1024.0) / stats.average_upload_rate;
                 stats.eta_ratio = Some(Duration::from_secs_f64(eta_secs));
             }

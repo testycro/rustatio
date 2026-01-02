@@ -23,7 +23,8 @@
       <div>
         <div class="flex justify-between items-center mb-2 flex-wrap gap-2">
           <span class="font-semibold text-foreground text-sm">Ratio</span>
-          <span class="text-xs text-muted-foreground">{stats.ratio.toFixed(2)} / {stopAtRatio}</span
+          <span class="text-xs text-muted-foreground"
+            >{stats.session_ratio.toFixed(2)} / {stopAtRatio}</span
           >
           {#if stats.eta_ratio}
             <span class="text-xs text-muted-foreground italic"

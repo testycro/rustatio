@@ -3,20 +3,27 @@
 
   let { stats, torrent, formatBytes } = $props();
 
-  // Total stats should show the current total from stats.uploaded/downloaded
-  // These values already include initial values (cumulative from previous sessions)
+  // Total stats from backend (cumulative across all sessions)
   let totalUploaded = $derived(() => {
-    return stats.uploaded || 0;
+    return stats?.uploaded || 0;
   });
 
   let totalDownloaded = $derived(() => {
-    return stats.downloaded || 0;
+    return stats?.downloaded || 0;
   });
 
-  // Ratio = total_uploaded / torrent_total_size (not downloaded!)
+  // Use ratio from backend, or calculate as uploaded/torrent_size if downloaded is 0
   let cumulativeRatio = $derived(() => {
-    const torrentSize = torrent?.total_size || 1;
-    return totalUploaded() / torrentSize;
+    // If backend provides ratio, use it
+    if (stats?.ratio !== undefined && stats.ratio > 0) {
+      return stats.ratio;
+    }
+    // Fallback: calculate as uploaded / torrent_size (common for seeders)
+    const torrentSize = torrent?.total_size || 0;
+    if (torrentSize > 0) {
+      return totalUploaded() / torrentSize;
+    }
+    return 0;
   });
 </script>
 

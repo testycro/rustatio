@@ -24,3 +24,5 @@ Thumbs.db
 
 # Config (optional - uncomment if you don't want to commit user configs)
 # rustatio.toml
+
+flatpak

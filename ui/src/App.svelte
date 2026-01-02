@@ -392,6 +392,11 @@
     }
 
     try {
+      // Calculate downloaded from completion percentage and torrent size
+      const torrentSize = $activeInstance.torrent?.total_size || 0;
+      const completionPercent = parseFloat($activeInstance.completionPercent ?? 0);
+      const calculatedDownloaded = Math.floor((completionPercent / 100) * torrentSize);
+
       // Use cumulative stats if available (preserved across sessions), otherwise use form input values
       // Cumulative stats take precedence to maintain lifetime totals
       const hasCumulativeStats =
@@ -401,12 +406,69 @@
         : parseInt($activeInstance.initialUploaded ?? 0) * 1024 * 1024;
       const initialDownloaded = hasCumulativeStats
         ? parseInt($activeInstance.cumulativeDownloaded ?? 0) * 1024 * 1024
-        : parseInt($activeInstance.initialDownloaded ?? 0) * 1024 * 1024;
+        : calculatedDownloaded;
 
-      // Reset stats and progress bars when starting a new session
-      // This ensures stop conditions and progress indicators start fresh
+      // Preserve cumulative stats display while starting
+      // Create initial stats object to show cumulative values immediately
+      const calculatedLeft = torrentSize - calculatedDownloaded;
+
+      // Calculate initial progress values to avoid jumps
+      // Use uploaded/downloaded if downloaded > 0, otherwise use uploaded/torrent_size
+      const initialRatio =
+        initialDownloaded > 0
+          ? initialUploaded / initialDownloaded
+          : torrentSize > 0
+            ? initialUploaded / torrentSize
+            : 0;
+
+      // Ratio progress is based on session ratio (starts at 0), not cumulative ratio
+      // So initial ratio progress should always be 0 when starting a new session
+
+      const placeholderStats = hasCumulativeStats
+        ? {
+            // Cumulative (from previous sessions)
+            uploaded: initialUploaded,
+            downloaded: initialDownloaded,
+            ratio: initialRatio,
+
+            // Torrent state
+            left: calculatedLeft,
+            seeders: 0,
+            leechers: 0,
+            state: 'Starting',
+
+            // Session (starts fresh)
+            session_uploaded: 0,
+            session_downloaded: 0,
+            session_ratio: 0.0,
+            elapsed_time: { secs: 0, nanos: 0 },
+
+            // Rates
+            current_upload_rate: 0,
+            current_download_rate: 0,
+            average_upload_rate: 0,
+            average_download_rate: 0,
+
+            // Progress (session-based)
+            upload_progress: 0,
+            download_progress: 0,
+            ratio_progress: 0,
+            seed_time_progress: 0,
+
+            // ETA
+            eta_ratio: null,
+            eta_uploaded: null,
+            eta_seed_time: null,
+
+            // History
+            upload_rate_history: [],
+            download_rate_history: [],
+            ratio_history: [],
+          }
+        : null;
+
       instanceActions.updateInstance($activeInstance.id, {
-        stats: null,
+        stats: placeholderStats,
         statusMessage: 'Starting ratio faker...',
         statusType: 'running',
       });
@@ -486,7 +548,12 @@
           });
 
           if (stats.state === 'Stopped' || stats.state === 'Completed') {
-            devLog('log', 'Faker stopped automatically:', stats.state);
+            // Stop the backend faker (same as manual stop)
+            try {
+              await api.stopFaker(instanceId);
+            } catch (error) {
+              console.warn('Failed to stop faker on backend:', error);
+            }
 
             const instance = $instances.find(i => i.id === instanceId);
             if (instance) {
@@ -494,6 +561,10 @@
               if (instance.countdownInterval) clearInterval(instance.countdownInterval);
               if (instance.liveStatsInterval) clearInterval(instance.liveStatsInterval);
             }
+
+            // Save cumulative stats (convert bytes to MB)
+            const cumulativeUploaded = Math.round(stats.uploaded / (1024 * 1024));
+            const cumulativeDownloaded = Math.round(stats.downloaded / (1024 * 1024));
 
             instanceActions.updateInstance(instanceId, {
               isRunning: false,
@@ -503,6 +574,8 @@
               liveStatsInterval: null,
               statusMessage: 'Stopped automatically - condition met',
               statusType: 'success',
+              cumulativeUploaded,
+              cumulativeDownloaded,
             });
           }
         } catch (error) {
@@ -540,7 +613,12 @@
             instanceActions.updateInstance(instanceId, { stats: latestStats });
 
             if (latestStats.state === 'Stopped' || latestStats.state === 'Completed') {
-              devLog('log', 'Faker stopped (detected in live stats):', latestStats.state);
+              // Stop the backend faker (same as manual stop)
+              try {
+                await api.stopFaker(instanceId);
+              } catch (error) {
+                console.warn('Failed to stop faker on backend:', error);
+              }
 
               const instance = $instances.find(i => i.id === instanceId);
               if (instance) {
@@ -548,6 +626,10 @@
                 if (instance.countdownInterval) clearInterval(instance.countdownInterval);
                 if (instance.liveStatsInterval) clearInterval(instance.liveStatsInterval);
               }
+
+              // Save cumulative stats (convert bytes to MB)
+              const cumulativeUploaded = Math.round(latestStats.uploaded / (1024 * 1024));
+              const cumulativeDownloaded = Math.round(latestStats.downloaded / (1024 * 1024));
 
               instanceActions.updateInstance(instanceId, {
                 isRunning: false,
@@ -557,6 +639,8 @@
                 liveStatsInterval: null,
                 statusMessage: 'Stopped automatically - condition met',
                 statusType: 'success',
+                cumulativeUploaded,
+                cumulativeDownloaded,
               });
             }
           }
@@ -607,8 +691,14 @@
         statusType: 'running',
       });
 
-      // Get final stats before stopping to save cumulative totals
-      const finalStats = $activeInstance.stats;
+      // Get final stats from backend before stopping to save cumulative totals
+      let finalStats = null;
+      try {
+        finalStats = await api.getStats($activeInstance.id);
+      } catch (error) {
+        console.warn('Failed to get final stats before stopping:', error);
+        finalStats = $activeInstance.stats; // Fallback to current stats
+      }
 
       await api.stopFaker($activeInstance.id);
 
@@ -1029,6 +1119,14 @@
                 progressiveDurationHours={$activeInstance.progressiveDurationHours}
                 isRunning={$activeInstance.isRunning || false}
                 onUpdate={updates => {
+                  // Reset cumulative stats if user changes initial values
+                  if (
+                    updates.initialUploaded !== undefined ||
+                    updates.completionPercent !== undefined
+                  ) {
+                    updates.cumulativeUploaded = 0;
+                    updates.cumulativeDownloaded = 0;
+                  }
                   instanceActions.updateInstance($activeInstance.id, updates);
                 }}
               />
