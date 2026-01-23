@@ -126,7 +126,10 @@ jobs:
       - name: Install UI dependencies
         working-directory: ui
         run: npm ci
-      
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
       - name: Build WASM
         working-directory: ui
         run: npm run build:wasm
