@@ -29,7 +29,7 @@ pub enum Commands {
         torrent: PathBuf,
 
         /// Client to emulate
-        #[arg(short, long, value_enum, default_value = "qbittorrent")]
+        #[arg(short, long, value_enum, default_value = "transmission")]
         client: ClientArg,
 
         /// Client version string (e.g., "5.1.4")
@@ -37,15 +37,15 @@ pub enum Commands {
         client_version: Option<String>,
 
         /// Upload rate in KB/s
-        #[arg(short, long, default_value = "50.0", value_name = "KB/s")]
+        #[arg(short, long, default_value = "0.0", value_name = "KB/s")]
         upload_rate: f64,
 
         /// Download rate in KB/s
-        #[arg(short, long, default_value = "100.0", value_name = "KB/s")]
+        #[arg(short, long, default_value = "700.0", value_name = "KB/s")]
         download_rate: f64,
 
         /// Port to announce
-        #[arg(short, long, default_value = "6881")]
+        #[arg(short, long, default_value = "59859")]
         port: u16,
 
         /// Initial completion percentage (0-100)
@@ -73,11 +73,11 @@ pub enum Commands {
         stop_downloaded: Option<f64>,
 
         /// Stop after running for this many hours
-        #[arg(long, value_name = "HOURS")]
+        #[arg(long, value_name = "HOURS", default_value = "744.0")]
         stop_time: Option<f64>,
 
         /// Stop when there are no leechers
-        #[arg(long)]
+        #[arg(long, action = clap::ArgAction::SetTrue, default_value_t = true)]
         stop_when_no_leechers: bool,
 
         /// Disable rate randomization
@@ -85,7 +85,7 @@ pub enum Commands {
         no_randomize: bool,
 
         /// Randomization range percentage (default: 20%)
-        #[arg(long, default_value = "20.0", value_name = "PERCENT")]
+        #[arg(long, default_value = "50.0", value_name = "PERCENT")]
         random_range: f64,
 
         /// Enable progressive rate adjustment
