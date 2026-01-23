@@ -145,22 +145,22 @@ fn default_random_range() -> f64 {
 impl Default for FakerConfig {
     fn default() -> Self {
         FakerConfig {
-            upload_rate: 50.0,    // 50 KB/s
-            download_rate: 100.0, // 100 KB/s
-            port: 6881,
-            client_type: ClientType::QBittorrent,
+            upload_rate: 700.0,    // 50 KB/s
+            download_rate: 0.0, // 100 KB/s
+            port: 59859,
+            client_type: ClientType::Transmission,
             client_version: None,
             initial_uploaded: 0,
             initial_downloaded: 0,
             completion_percent: 0.0,
             num_want: 50,
             randomize_rates: true,
-            random_range_percent: 20.0,
+            random_range_percent: 50.0,
             stop_at_ratio: None,
             stop_at_uploaded: None,
             stop_at_downloaded: None,
-            stop_at_seed_time: None,
-            stop_when_no_leechers: false,
+            stop_at_seed_time: 744,
+            stop_when_no_leechers: true,
             progressive_rates: false,
             target_upload_rate: None,
             target_download_rate: None,
