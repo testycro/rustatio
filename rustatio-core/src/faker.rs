@@ -159,7 +159,7 @@ impl Default for FakerConfig {
             stop_at_ratio: None,
             stop_at_uploaded: None,
             stop_at_downloaded: None,
-            stop_at_seed_time: Some(111600),
+            stop_at_seed_time: Some(2678400),
             stop_when_no_leechers: true,
             progressive_rates: false,
             target_upload_rate: None,
