@@ -86,19 +86,19 @@ async fn main() -> Result<()> {
             };
 
             // Apply config defaults where CLI args use defaults
-            let effective_upload_rate = if upload_rate == 50.0 {
+            let effective_upload_rate = if upload_rate == 700.0 {
                 app_config.faker.default_upload_rate
             } else {
                 upload_rate
             };
 
-            let effective_download_rate = if download_rate == 100.0 {
+            let effective_download_rate = if download_rate == 0.0 {
                 app_config.faker.default_download_rate
             } else {
                 download_rate
             };
 
-            let effective_port = if port == 6881 {
+            let effective_port = if port == 59859 {
                 app_config.client.default_port
             } else {
                 port
@@ -212,10 +212,10 @@ async fn main() -> Result<()> {
                 stop_ratio: stop_ratio.or(session.stop_at_ratio),
                 stop_uploaded: stop_uploaded.or(session.stop_at_uploaded_gb),
                 stop_downloaded: None,
-                stop_time: None,
-                stop_when_no_leechers: false,
+                stop_time: 744.0,
+                stop_when_no_leechers: true,
                 no_randomize: false,
-                random_range: 20.0,
+                random_range: 50.0,
                 progressive: false,
                 target_upload: None,
                 target_download: None,
