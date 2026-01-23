@@ -95,7 +95,7 @@ impl Session {
             upload_rate: 700.0,
             download_rate: 0.0,
             port: 59859,
-            completion_percent: 0.0,
+            completion_percent: 100.0,
             total_seed_time_secs: 0,
             created_at: now,
             updated_at: now,
