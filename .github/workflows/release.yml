@@ -428,8 +428,6 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
         with:
           projectPath: rustatio-desktop
           tagName: ${{ needs.prepare-release.outputs.tag }}
@@ -437,7 +435,7 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
-          includeUpdaterJson: true
+          includeUpdaterJson: false
           updaterJsonKeepUniversal: false
 
   publish-release:
