@@ -328,7 +328,7 @@ fn determine_stop_reason(config: &RunnerConfig, stats: &rustatio_core::FakerStat
         }
     }
 
-    if config.stop_when_no_leechers && stats.leechers == 0 && stats.announce_count > 0 {
+    if config.stop_when_no_leechers && stats.leechers == 0 {
         return StopReason::NoLeechers;
     }
 
