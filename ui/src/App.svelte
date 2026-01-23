@@ -757,7 +757,7 @@
         // The server will handle using cumulative stats internally for the RatioFaker
         initial_uploaded: parseInt($activeInstance.initialUploaded ?? 0) * 1024 * 1024,
         initial_downloaded: calculatedDownloaded,
-        completion_percent: parseFloat($activeInstance.completionPercent ?? 0),
+        completion_percent: parseFloat($activeInstance.completionPercent ?? 100),
         num_want: 50,
         randomize_rates: $activeInstance.randomizeRates ?? true,
         random_range_percent: parseFloat($activeInstance.randomRangePercent ?? 50),
