@@ -941,7 +941,7 @@ mod tests {
     #[test]
     fn test_faker_config_default() {
         let config = FakerConfig::default();
-        assert_eq!(config.upload_rate, 50.0);
-        assert_eq!(config.download_rate, 100.0);
+        assert_eq!(config.upload_rate, 0.0);
+        assert_eq!(config.download_rate, 700.0);
     }
 }
