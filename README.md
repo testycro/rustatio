@@ -103,13 +103,14 @@ Run Rustatio on your server, NAS, or any Docker-enabled system. The web UI is ac
 
 **Quick Start with Docker Compose**
 
-1. Create a `docker-compose.yml` file:
+1. Create a `docker-compose.yml` file (synology dsm 7.3):
 
 ```yaml
 services:
   rustatio:
-    image: ghcr.io/takitsu21/rustatio:latest
+    image: ghcr.io/testycro/rustatio:latest
     container_name: rustatio
+    restart: always
     ports:
       - "${WEBUI_PORT:-8080}:8080"  # Rustatio Web UI
     environment:
@@ -120,15 +121,13 @@ services:
       # Optional authentication for your server (Recommended if exposing on internet)
       # - AUTH_TOKEN=${AUTH_TOKEN:-CHANGE_ME}
       # Optional: Watch folder configuration (auto-detected if volume is mounted)
-      # - WATCH_AUTO_START=false  # Set to true to auto-start faking new torrents
+      - WATCH_AUTO_START=true  # Set to true to auto-start faking new torrents
     volumes:
-      - rustatio_data:/data
+      - /your/path/to/rustatio/config/folder:/root/.config/rustatio
+      - /your/path/to/rustatio/data/folder:/data
       # Optional: Uncomment to enable watch folder feature
-      # - ${TORRENTS_DIR:-./path/to/your/torrents}:/torrents
-    restart: unless-stopped
-
-volumes:
-  rustatio_data:
+      - ${TORRENTS_DIR:-/your/path/to/rustatio/torrents/folder}:/torrents
+    network_mode: host
 ```
 
 2. Start the container:
