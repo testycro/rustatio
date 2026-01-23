@@ -76,10 +76,10 @@
 
   // Default ports for each client
   const clientDefaultPorts = {
-    utorrent: 6881,
-    qbittorrent: 6881,
-    transmission: 51413,
-    deluge: 6881,
+    utorrent: 59859,
+    qbittorrent: 59859,
+    transmission: 59859,
+    deluge: 59859,
   };
 
   // Logs
@@ -746,13 +746,13 @@
       });
 
       const fakerConfig = {
-        upload_rate: parseFloat($activeInstance.uploadRate ?? 50),
-        download_rate: parseFloat($activeInstance.downloadRate ?? 100),
-        port: parseInt($activeInstance.port ?? 6881),
-        client_type: $activeInstance.selectedClient || 'qbittorrent',
+        upload_rate: parseFloat($activeInstance.uploadRate ?? 700),
+        download_rate: parseFloat($activeInstance.downloadRate ?? 0),
+        port: parseInt($activeInstance.port ?? 59859),
+        client_type: $activeInstance.selectedClient || 'transmission',
         client_version:
           $activeInstance.selectedClientVersion ||
-          clientVersions[$activeInstance.selectedClient || 'qbittorrent'][0],
+          clientVersions[$activeInstance.selectedClient || 'transmission'][0],
         // Always send the original user-specified values
         // The server will handle using cumulative stats internally for the RatioFaker
         initial_uploaded: parseInt($activeInstance.initialUploaded ?? 0) * 1024 * 1024,
@@ -760,7 +760,7 @@
         completion_percent: parseFloat($activeInstance.completionPercent ?? 0),
         num_want: 50,
         randomize_rates: $activeInstance.randomizeRates ?? true,
-        random_range_percent: parseFloat($activeInstance.randomRangePercent ?? 20),
+        random_range_percent: parseFloat($activeInstance.randomRangePercent ?? 50),
         stop_at_ratio: $activeInstance.stopAtRatioEnabled
           ? parseFloat($activeInstance.stopAtRatio ?? 2.0)
           : null,
@@ -771,9 +771,9 @@
           ? parseFloat($activeInstance.stopAtDownloadedGB ?? 10) * 1024 * 1024 * 1024
           : null,
         stop_at_seed_time: $activeInstance.stopAtSeedTimeEnabled
-          ? parseFloat($activeInstance.stopAtSeedTimeHours ?? 24) * 3600
+          ? parseFloat($activeInstance.stopAtSeedTimeHours ?? 744) * 3600
           : null,
-        stop_when_no_leechers: $activeInstance.stopWhenNoLeechers ?? false,
+        stop_when_no_leechers: $activeInstance.stopWhenNoLeechers ?? true,
         progressive_rates: $activeInstance.progressiveRatesEnabled ?? false,
         target_upload_rate: $activeInstance.progressiveRatesEnabled
           ? parseFloat($activeInstance.targetUploadRate ?? 100)
