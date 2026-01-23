@@ -125,7 +125,7 @@ fn default_client_type() -> ClientType {
 }
 
 fn default_port() -> u16 {
-    6881
+    59859
 }
 
 fn default_num_want() -> u32 {
@@ -133,11 +133,11 @@ fn default_num_want() -> u32 {
 }
 
 fn default_upload_rate() -> f64 {
-    50.0
+    700.0
 }
 
 fn default_download_rate() -> f64 {
-    100.0
+    0.0
 }
 
 fn default_announce_interval() -> u64 {
@@ -161,7 +161,7 @@ fn default_dark_mode() -> bool {
 }
 
 fn default_show_logs() -> bool {
-    false
+    true
 }
 
 impl Default for ClientSettings {
@@ -279,8 +279,8 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = AppConfig::default();
-        assert_eq!(config.faker.default_upload_rate, 50.0);
-        assert_eq!(config.faker.default_download_rate, 100.0);
+        assert_eq!(config.faker.default_upload_rate, 700.0);
+        assert_eq!(config.faker.default_download_rate, 0.0);
     }
 
     #[test]
