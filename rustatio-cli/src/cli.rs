@@ -49,7 +49,7 @@ pub enum Commands {
         port: u16,
 
         /// Initial completion percentage (0-100)
-        #[arg(long, default_value = "0.0", value_name = "PERCENT")]
+        #[arg(long, default_value = "100.0", value_name = "PERCENT")]
         completion: f64,
 
         /// Initial uploaded bytes (for continuing sessions)
