@@ -126,6 +126,10 @@ jobs:
       - name: Install UI dependencies
         working-directory: ui
         run: npm ci
+      
+      - name: Build WASM
+        working-directory: ui
+        run: npm run build:wasm
 
       - name: Build Web Version for Docker (no base path)
         run: |
