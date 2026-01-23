@@ -151,7 +151,7 @@ impl Default for FakerConfig {
             client_type: ClientType::Transmission,
             client_version: None,
             initial_uploaded: 0,
-            initial_downloaded: 0,
+            initial_downloaded: 100,
             completion_percent: 0.0,
             num_want: 50,
             randomize_rates: true,
