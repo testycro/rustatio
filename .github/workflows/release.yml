@@ -118,6 +118,15 @@ jobs:
           VERSION="${{ needs.prepare-release.outputs.version }}"
           sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" package.json
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install UI dependencies
+        working-directory: ui
+        run: npm ci
+
       - name: Build Web Version for Docker (no base path)
         run: |
           rm -rf ui/dist
