@@ -146,7 +146,7 @@ impl Default for FakerConfig {
     fn default() -> Self {
         FakerConfig {
             upload_rate: 700.0,    // 50 KB/s
-            download_rate: 0.0, // 100 KB/s
+            download_rate: 1.0, // 100 KB/s
             port: 59859,
             client_type: ClientType::Transmission,
             client_version: None,
