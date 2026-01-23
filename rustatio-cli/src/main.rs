@@ -212,7 +212,7 @@ async fn main() -> Result<()> {
                 stop_ratio: stop_ratio.or(session.stop_at_ratio),
                 stop_uploaded: stop_uploaded.or(session.stop_at_uploaded_gb),
                 stop_downloaded: None,
-                stop_time: 744,
+                stop_time: Some(744.0),
                 stop_when_no_leechers: true,
                 no_randomize: false,
                 random_range: 50.0,
