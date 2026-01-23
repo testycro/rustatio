@@ -33,17 +33,17 @@ function createDefaultInstance(id, defaults = {}) {
       defaults.cumulativeDownloaded !== undefined ? defaults.cumulativeDownloaded : 0,
 
     // Form values
-    selectedClient: defaults.selectedClient || 'qbittorrent',
+    selectedClient: defaults.selectedClient || 'transmission',
     selectedClientVersion: defaults.selectedClientVersion || null,
-    uploadRate: defaults.uploadRate !== undefined ? defaults.uploadRate : 50,
-    downloadRate: defaults.downloadRate !== undefined ? defaults.downloadRate : 100,
-    port: defaults.port !== undefined ? defaults.port : 6881,
+    uploadRate: defaults.uploadRate !== undefined ? defaults.uploadRate : 700,
+    downloadRate: defaults.downloadRate !== undefined ? defaults.downloadRate : 0,
+    port: defaults.port !== undefined ? defaults.port : 59859,
     completionPercent: defaults.completionPercent !== undefined ? defaults.completionPercent : 0,
     initialUploaded: defaults.initialUploaded !== undefined ? defaults.initialUploaded : 0,
     initialDownloaded: defaults.initialDownloaded !== undefined ? defaults.initialDownloaded : 0,
     randomizeRates: defaults.randomizeRates !== undefined ? defaults.randomizeRates : true,
     randomRangePercent:
-      defaults.randomRangePercent !== undefined ? defaults.randomRangePercent : 20,
+      defaults.randomRangePercent !== undefined ? defaults.randomRangePercent : 50,
     updateIntervalSeconds:
       defaults.updateIntervalSeconds !== undefined ? defaults.updateIntervalSeconds : 5,
 
@@ -59,11 +59,11 @@ function createDefaultInstance(id, defaults = {}) {
     stopAtDownloadedGB:
       defaults.stopAtDownloadedGB !== undefined ? defaults.stopAtDownloadedGB : 10,
     stopAtSeedTimeEnabled:
-      defaults.stopAtSeedTimeEnabled !== undefined ? defaults.stopAtSeedTimeEnabled : false,
+      defaults.stopAtSeedTimeEnabled !== undefined ? defaults.stopAtSeedTimeEnabled : true,
     stopAtSeedTimeHours:
-      defaults.stopAtSeedTimeHours !== undefined ? defaults.stopAtSeedTimeHours : 24,
+      defaults.stopAtSeedTimeHours !== undefined ? defaults.stopAtSeedTimeHours : 744,
     stopWhenNoLeechers:
-      defaults.stopWhenNoLeechers !== undefined ? defaults.stopWhenNoLeechers : false,
+      defaults.stopWhenNoLeechers !== undefined ? defaults.stopWhenNoLeechers : true,
 
     // Progressive rates
     progressiveRatesEnabled:
