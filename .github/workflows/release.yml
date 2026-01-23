@@ -15,7 +15,6 @@ on:
 
 permissions:
   contents: write
-  pages: write
   id-token: write
   packages: write
 
@@ -118,18 +117,6 @@ jobs:
         run: |
           VERSION="${{ needs.prepare-release.outputs.version }}"
           sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" package.json
-
-      - name: Build Web Version for GitHub Pages
-        env:
-          GITHUB_PAGES: true
-        run: mise run build:web
-
-      - name: Upload GitHub Pages artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: web-dist-pages
-          path: ui/dist
-          retention-days: 1
 
       - name: Build Web Version for Docker (no base path)
         run: |
@@ -437,25 +424,6 @@ jobs:
           includeUpdaterJson: true
           updaterJsonKeepUniversal: false
 
-  prepare-pages:
-    name: Prepare GitHub Pages
-    needs: [prepare-release, build-web-assets]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download web dist artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: web-dist-pages
-          path: ./ui/dist
-
-      - name: Setup Pages
-        uses: actions/configure-pages@v4
-
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: './ui/dist'
-
   publish-release:
     name: Publish Release
     needs: [prepare-release, build-tauri, build-cli, merge-docker]
@@ -477,20 +445,3 @@ jobs:
         run: |
           echo "✅ Release ${{ needs.prepare-release.outputs.tag }} has been published!"
           echo "🎉 Binaries are now available on GitHub Releases"
-
-  deploy-pages:
-    name: Deploy to GitHub Pages
-    needs: [prepare-release, prepare-pages]
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
-
-      - name: Pages deployed
-        run: |
-          echo "✅ Web version deployed to GitHub Pages!"
-          echo "🌐 URL: ${{ steps.deployment.outputs.page_url }}"
