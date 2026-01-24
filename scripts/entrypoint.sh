@@ -1,6 +1,12 @@
 #!/bin/bash
 set -e
 
+# Healthcheck mode
+if [ "$1" = "healthcheck" ]; then
+    curl -f "http://localhost:${PORT}/health" || exit 1
+    exit 0
+fi
+
 # Allows users to specify the UID/GID the container should run as
 # This ensures mounted volumes have correct permissions
 
