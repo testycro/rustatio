@@ -1085,7 +1085,7 @@
       try {
         // Build FakerConfig from instance state
         const torrentSize = instance.torrent?.total_size || 0;
-        const completionPercent = parseFloat(instance.completionPercent ?? 0);
+        const completionPercent = parseFloat(instance.completionPercent ?? 100);
         const calculatedDownloaded = Math.floor((completionPercent / 100) * torrentSize);
 
         const config = {
