@@ -700,6 +700,11 @@ impl RatioFaker {
             download_rate = 0.0;
         }
 
+        // Can't upload if there are no leechers
+        if stats.leechers <= 0 {
+            upload_rate = 0.0;
+        }
+
         (upload_rate, download_rate)
     }
 
