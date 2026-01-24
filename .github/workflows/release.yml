@@ -8,6 +8,7 @@ on:
         required: true
         type: choice
         options:
+          - beta
           - patch
           - minor
           - major
@@ -65,9 +66,12 @@ jobs:
             patch)
               PATCH=$((PATCH + 1))
               ;;
+              beta)
+              SUFFIX="b"
+              ;;
           esac
 
-          NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+          NEW_VERSION="$MAJOR.$MINOR.$PATCH$SUFFIX"
           echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
           echo "tag=v$NEW_VERSION" >> $GITHUB_OUTPUT
           echo "New version: $NEW_VERSION"
