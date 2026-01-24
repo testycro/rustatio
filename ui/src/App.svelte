@@ -773,7 +773,7 @@
         stop_at_seed_time: $activeInstance.stopAtSeedTimeEnabled
           ? parseFloat($activeInstance.stopAtSeedTimeHours ?? 744) * 3600
           : null,
-        stop_when_no_leechers: $activeInstance.stopWhenNoLeechers ?? true,
+        stop_when_no_leechers: $activeInstance.stopWhenNoLeechers ?? false,
         progressive_rates: $activeInstance.progressiveRatesEnabled ?? false,
         target_upload_rate: $activeInstance.progressiveRatesEnabled
           ? parseFloat($activeInstance.targetUploadRate ?? 100)
@@ -1114,7 +1114,7 @@
           stop_at_seed_time: instance.stopAtSeedTimeEnabled
             ? parseFloat(instance.stopAtSeedTimeHours ?? 744) * 3600
             : null,
-          stop_when_no_leechers: instance.stopWhenNoLeechers ?? true,
+          stop_when_no_leechers: instance.stopWhenNoLeechers ?? false,
           progressive_rates: instance.progressiveRatesEnabled ?? false,
           target_upload_rate: instance.progressiveRatesEnabled
             ? parseFloat(instance.targetUploadRate ?? 100)
