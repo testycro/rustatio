@@ -38,7 +38,7 @@ function createDefaultInstance(id, defaults = {}) {
     uploadRate: defaults.uploadRate !== undefined ? defaults.uploadRate : 700,
     downloadRate: defaults.downloadRate !== undefined ? defaults.downloadRate : 0,
     port: defaults.port !== undefined ? defaults.port : 59859,
-    completionPercent: defaults.completionPercent !== undefined ? defaults.completionPercent : 0,
+    completionPercent: defaults.completionPercent !== undefined ? defaults.completionPercent : 100,
     initialUploaded: defaults.initialUploaded !== undefined ? defaults.initialUploaded : 0,
     initialDownloaded: defaults.initialDownloaded !== undefined ? defaults.initialDownloaded : 0,
     randomizeRates: defaults.randomizeRates !== undefined ? defaults.randomizeRates : true,
