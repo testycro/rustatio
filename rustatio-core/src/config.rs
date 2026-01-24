@@ -121,7 +121,7 @@ pub struct UiSettings {
 
 // Default values
 fn default_client_type() -> ClientType {
-    ClientType::QBittorrent
+    ClientType::Transmission
 }
 
 fn default_port() -> u16 {
