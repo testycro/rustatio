@@ -63,7 +63,7 @@ function createDefaultInstance(id, defaults = {}) {
     stopAtSeedTimeHours:
       defaults.stopAtSeedTimeHours !== undefined ? defaults.stopAtSeedTimeHours : 744,
     stopWhenNoLeechers:
-      defaults.stopWhenNoLeechers !== undefined ? defaults.stopWhenNoLeechers : true,
+      defaults.stopWhenNoLeechers !== undefined ? defaults.stopWhenNoLeechers : false,
 
     // Progressive rates
     progressiveRatesEnabled:
