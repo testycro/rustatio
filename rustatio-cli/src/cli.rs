@@ -77,7 +77,7 @@ pub enum Commands {
         stop_time: Option<f64>,
 
         /// Stop when there are no leechers
-        #[arg(long, action = clap::ArgAction::SetTrue, default_value_t = true)]
+        #[arg(long, action = clap::ArgAction::SetTrue, default_value_t = false)]
         stop_when_no_leechers: bool,
 
         /// Disable rate randomization
