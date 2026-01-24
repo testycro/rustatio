@@ -666,7 +666,7 @@
     try {
       // Calculate downloaded from completion percentage and torrent size
       const torrentSize = $activeInstance.torrent?.total_size || 0;
-      const completionPercent = parseFloat($activeInstance.completionPercent ?? 0);
+      const completionPercent = parseFloat($activeInstance.completionPercent ?? 100);
       const calculatedDownloaded = Math.floor((completionPercent / 100) * torrentSize);
 
       // For display purposes (placeholder stats), use cumulative values if available
