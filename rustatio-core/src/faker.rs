@@ -855,19 +855,10 @@ impl RatioFaker {
             }
         }
 
-        // Pause spoofing when no leechers remain
-        if self.config.stop_when_no_leechers && stats.leechers == 0 {
-            if self.state != FakerState::Paused {
-                log_info!("No leechers remaining, pausing spoof");
-                self.state = FakerState::Paused;
-            }
-            return false; // continue announces
-        }
-
-        // Resume spoofing automatically when leechers return
-        if self.state == FakerState::Paused && stats.leechers > 0 {
-            log_info!("Leecher detected, resuming spoof");
-            self.state = FakerState::Running;
+        // Check no leechers condition (only after at least one announce)
+        if self.config.stop_when_no_leechers && stats.leechers == 0 && stats.announce_count > 0 {
+            log_info!("No leechers remaining, stopping");
+            return true;
         }
 
         false
