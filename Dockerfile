@@ -61,8 +61,7 @@ ENV PGID=1000
 EXPOSE 8080
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:8080/health || exit 1
+HEALTHCHECK CMD /app/entrypoint.sh healthcheck
 
 # Use entrypoint for PUID/PGID handling
 ENTRYPOINT ["/app/entrypoint.sh"]
