@@ -293,8 +293,8 @@ mod tests {
             "Test Torrent",
             "/path/to/test.torrent",
             1024 * 1024 * 100, // 100 MB
-            "qbittorrent",
-            Some("5.1.4".to_string()),
+            "transmission",
+            Some("4.0.5".to_string()),
         );
 
         session.save(&path).unwrap();
