@@ -861,7 +861,7 @@ impl RatioFaker {
         }
 
         // Check no leechers condition (only after at least one announce)
-        if self.config.stop_when_no_leechers && stats.leechers == 0 && stats.announce_count > 0 {
+        if self.config.stop_when_no_leechers && stats.leechers == 0 {
             log_info!("No leechers remaining, stopping");
             return true;
         }
