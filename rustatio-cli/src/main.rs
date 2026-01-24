@@ -213,7 +213,7 @@ async fn main() -> Result<()> {
                 stop_uploaded: stop_uploaded.or(session.stop_at_uploaded_gb),
                 stop_downloaded: None,
                 stop_time: Some(744.0),
-                stop_when_no_leechers: true,
+                stop_when_no_leechers: false,
                 no_randomize: false,
                 random_range: 50.0,
                 progressive: false,
