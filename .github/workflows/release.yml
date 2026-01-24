@@ -71,7 +71,7 @@ jobs:
               PATCH=$(echo "$PATCH" | sed 's/[^0-9].*//')
               DATE=$(date +%Y%m%d)
               SHA=$(git rev-parse --short HEAD)
-              SUFFIX="-nightly.$DATE+$SHA"
+              SUFFIX="-nightly.$DATE-build.$SHA"
               ;;
           esac
 
