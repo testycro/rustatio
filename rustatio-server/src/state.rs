@@ -379,7 +379,32 @@ impl AppState {
         };
 
         // Start the faker (sends "started" announce)
-        faker_arc.write().await.start().await.map_err(|e| e.to_string())?;
+        let max_retries = 3;
+        let delay = std::time::Duration::from_secs(30);
+
+        for attempt in 1..=max_retries {
+            match faker_arc.write().await.start().await {
+                Ok(()) => {
+                    tracing::info!(
+                        "Instance {id} started successfully on attempt {attempt}/{max_retries}"
+                    );
+                    break;
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        "Start attempt {attempt}/{max_retries} failed for {id}: {err}"
+                    );
+
+                    if attempt == max_retries {
+                        return Err(format!(
+                            "Failed to start instance {id} after {max_retries} attempts: {err}"
+                        ));
+                    }
+
+                    tokio::time::sleep(delay).await;
+                }
+            }
+        }
 
         // Spawn background update task
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
