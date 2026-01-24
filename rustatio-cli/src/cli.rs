@@ -113,7 +113,7 @@ pub enum Commands {
         json: bool,
 
         /// Stats update interval in seconds (JSON mode only)
-        #[arg(long, default_value = "1", value_name = "SECONDS")]
+        #[arg(long, default_value = "1800", value_name = "SECONDS")]
         interval: u64,
 
         /// Resume from saved session (if exists for this torrent)
