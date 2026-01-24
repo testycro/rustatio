@@ -294,26 +294,7 @@ async fn start_faker(
     // Start the faker
     match state.app.start_instance(&id).await {
         Ok(()) => ApiSuccess::response(()),
-
-        Err(e) => {
-            tracing::warn!("Start failed for {id}: {e}. Retrying in 30s…");
-
-            // Retry en tâche de fond
-            let app = state.app.clone();
-            let id_clone = id.clone();
-
-            tokio::spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-
-                if let Err(err2) = app.start_instance(&id_clone).await {
-                    tracing::error!("Retry failed for {id_clone}: {err2}");
-                } else {
-                    tracing::info!("Retry succeeded for {id_clone}");
-                }
-            });
-
-            ApiError::response(StatusCode::INTERNAL_SERVER_ERROR, e)
-        }
+        Err(e) => ApiError::response(StatusCode::INTERNAL_SERVER_ERROR, e),
     }
 }
 
