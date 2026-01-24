@@ -1089,19 +1089,19 @@
         const calculatedDownloaded = Math.floor((completionPercent / 100) * torrentSize);
 
         const config = {
-          upload_rate: parseFloat(instance.uploadRate ?? 50),
-          download_rate: parseFloat(instance.downloadRate ?? 100),
-          port: parseInt(instance.port ?? 6881),
-          client_type: instance.selectedClient || 'qbittorrent',
+          upload_rate: parseFloat(instance.uploadRate ?? 700),
+          download_rate: parseFloat(instance.downloadRate ?? 0),
+          port: parseInt(instance.port ?? 59859),
+          client_type: instance.selectedClient || 'transmission',
           client_version:
             instance.selectedClientVersion ||
-            clientVersions[instance.selectedClient || 'qbittorrent'][0],
+            clientVersions[instance.selectedClient || 'transmission'][0],
           initial_uploaded: parseInt(instance.initialUploaded ?? 0) * 1024 * 1024,
           initial_downloaded: calculatedDownloaded,
           completion_percent: completionPercent,
           num_want: 50,
           randomize_rates: instance.randomizeRates ?? true,
-          random_range_percent: parseFloat(instance.randomRangePercent ?? 20),
+          random_range_percent: parseFloat(instance.randomRangePercent ?? 50),
           stop_at_ratio: instance.stopAtRatioEnabled
             ? parseFloat(instance.stopAtRatio ?? 2.0)
             : null,
@@ -1112,9 +1112,9 @@
             ? parseFloat(instance.stopAtDownloadedGB ?? 10) * 1024 * 1024 * 1024
             : null,
           stop_at_seed_time: instance.stopAtSeedTimeEnabled
-            ? parseFloat(instance.stopAtSeedTimeHours ?? 24) * 3600
+            ? parseFloat(instance.stopAtSeedTimeHours ?? 744) * 3600
             : null,
-          stop_when_no_leechers: instance.stopWhenNoLeechers ?? false,
+          stop_when_no_leechers: instance.stopWhenNoLeechers ?? true,
           progressive_rates: instance.progressiveRatesEnabled ?? false,
           target_upload_rate: instance.progressiveRatesEnabled
             ? parseFloat(instance.targetUploadRate ?? 100)
