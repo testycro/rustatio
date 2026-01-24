@@ -8,7 +8,7 @@ on:
         required: true
         type: choice
         options:
-          - beta
+          - nightly
           - patch
           - minor
           - major
@@ -66,8 +66,9 @@ jobs:
             patch)
               PATCH=$((PATCH + 1))
               ;;
-              beta)
-              SUFFIX="-b"
+              nightly)
+              DATE=$(date +%Y%m%d)
+              SUFFIX="-nightly.$DATE"
               ;;
           esac
 
