@@ -67,7 +67,7 @@ jobs:
               PATCH=$((PATCH + 1))
               ;;
               beta)
-              SUFFIX="b"
+              SUFFIX="-b"
               ;;
           esac
 
