@@ -692,7 +692,7 @@ impl RatioFaker {
         };
 
         // Apply randomization
-        let upload_rate = self.apply_randomization(base_upload_rate);
+        let mut upload_rate = self.apply_randomization(base_upload_rate);
         let mut download_rate = self.apply_randomization(base_download_rate);
 
         // Can't download if there are no seeders (and we still have data left to download)
