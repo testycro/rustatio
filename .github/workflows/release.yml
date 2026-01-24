@@ -64,14 +64,13 @@ jobs:
               PATCH=0
               ;;
             patch)
-              PATCH=$(echo "$PATCH" | sed 's/[^0-9].*//')
               PATCH=$((PATCH + 1))
               ;;
             nightly)
-              PATCH=$(echo "$PATCH" | sed 's/[^0-9].*//')
-              DATE=$(date +%Y%m%d)
-              SHA=$(git rev-parse --short HEAD)
-              SUFFIX="-nightly.$DATE-build.$SHA"
+              PATCH=${PATCH:0:1}
+              DAY=$(date +%d)
+              MIN=$(date +%M)
+              SUFFIX="${DAY}${MIN}"
               ;;
           esac
 
