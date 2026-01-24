@@ -552,6 +552,7 @@ async function fetchNetworkStatusWithFallbacks() {
           org: org,
           is_vpn: !!vpnProvider,
           vpn_provider: vpnProvider,
+          detection_method: 'heuristic',
         };
       }
     }
@@ -575,6 +576,7 @@ async function fetchNetworkStatusWithFallbacks() {
         org: data.org,
         is_vpn: !!vpnProvider,
         vpn_provider: vpnProvider,
+        detection_method: 'heuristic',
       };
     }
   } catch (e) {
@@ -595,6 +597,7 @@ async function fetchNetworkStatusWithFallbacks() {
         org: null,
         is_vpn: false,
         vpn_provider: null,
+        detection_method: 'heuristic',
       };
     }
   } catch (e) {
