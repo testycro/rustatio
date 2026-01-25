@@ -303,6 +303,7 @@ pub fn create_faker_config(config: &RunnerConfig) -> FakerConfig {
         progressive_duration: (config.progressive_duration * 3600.0) as u64,
         announce_max_retries: config.announce_max_retries,
         announce_retry_delay_ms: config.announce_retry_delay_ms,
+        ..FakerConfig::default()
     }
 }
 
