@@ -122,8 +122,16 @@ services:
       # - AUTH_TOKEN=${AUTH_TOKEN:-CHANGE_ME}
       # Optional: Watch folder configuration (auto-detected if volume is mounted)
       - WATCH_AUTO_START=true  # Set to true to auto-start faking new torrents
+
+      - CLIENT_DEFAULT_TYPE="transmission"
+      - CLIENT_DEFAULT_PORT="59859"
+      - CLIENT_DEFAULT_NUM_WANT="50"
+
+      - FAKER_DEFAULT_UPLOAD_RATE="700"
+      - FAKER_DEFAULT_DOWNLOAD_RATE="0"
+      - FAKER_DEFAULT_ANNOUNCE_INTERVAL="1800"
+      - FAKER_UPDATE_INTERVAL="5"
     volumes:
-      - /your/path/to/rustatio/config/folder:/root/.config/rustatio
       - /your/path/to/rustatio/data/folder:/data
       # Optional: Uncomment to enable watch folder feature
       - ${TORRENTS_DIR:-/your/path/to/rustatio/torrents/folder}:/torrents
@@ -224,10 +232,10 @@ services:
       - SERVER_COUNTRIES=${SERVER_COUNTRIES:-Switzerland}
     ports:
       - "${WEBUI_PORT:-8080}:8080"  # Rustatio Web UI
-    restart: unless-stopped
+    restart: always
 
   rustatio:
-    image: ghcr.io/takitsu21/rustatio:latest
+    image: ghcr.io/testycro/rustatio:latest
     container_name: rustatio
     environment:
       - PORT=8080
@@ -237,19 +245,26 @@ services:
       # Optional authentication for your server (Recommended if exposing on internet)
       # - AUTH_TOKEN=${AUTH_TOKEN:-CHANGE_ME}
       # Optional: Watch folder configuration (auto-detected if volume is mounted)
-      # - WATCH_AUTO_START=false  # Set to true to auto-start faking new torrents
+      - WATCH_AUTO_START=true  # Set to true to auto-start faking new torrents
+
+      - CLIENT_DEFAULT_TYPE="transmission"
+      - CLIENT_DEFAULT_PORT="59859"
+      - CLIENT_DEFAULT_NUM_WANT="50"
+
+      - FAKER_DEFAULT_UPLOAD_RATE="700"
+      - FAKER_DEFAULT_DOWNLOAD_RATE="0"
+      - FAKER_DEFAULT_ANNOUNCE_INTERVAL="1800"
+      - FAKER_UPDATE_INTERVAL="5"
     volumes:
-      - rustatio_data:/data
+      - /your/path/to/rustatio/data/folder:/data
       # Optional: Uncomment to enable watch folder feature
-      # - ${TORRENTS_DIR:-./torrents}:/torrents
-    restart: unless-stopped
+      - ${TORRENTS_DIR:-/your/path/to/rustatio/torrents/folder}:/torrents
+    restart: always
     network_mode: service:gluetun
     depends_on:
       gluetun:
         condition: service_healthy
 
-volumes:
-  rustatio_data:
 ```
 
 > **Note**: The `ports` are defined on the `gluetun` container since Rustatio uses its network stack. See the [gluetun wiki](https://github.com/qdm12/gluetun-wiki) for VPN provider-specific configuration.
