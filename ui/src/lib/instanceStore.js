@@ -271,9 +271,6 @@ export const instanceActions = {
       config = await api.getConfig();
       globalConfig.set(config);
 
-      // IMPORTANT : attendre que Svelte mette à jour le store
-      await Promise.resolve();
-
       // For server mode, try to fetch existing instances from backend first
       // This handles the case where instances are running and user refreshes or opens new tab
       const isServerMode = !isTauri && typeof api.listInstances === 'function';
@@ -356,65 +353,72 @@ export const instanceActions = {
       // Fall back to localStorage/config restoration
       const savedSession = loadSessionFromStorage(config);
 
-      // If no session or empty session → create first instance
-      if (!savedSession || !savedSession.instances || savedSession.instances.length === 0) {
+      if (savedSession && savedSession.instances && savedSession.instances.length > 0) {
+        // Restore from saved session
+        const restoredInstances = [];
+        for (const savedInst of savedSession.instances) {
+          // Create backend instance
+          const instanceId = await api.createInstance();
+
+          // Create frontend instance with saved settings
+          const instance = createDefaultInstance(instanceId, savedInst);
+
+          // Try to restore torrent file
+          if (savedInst.torrentPath) {
+            if (isTauri) {
+              // Desktop: Try to reload from path
+              try {
+                const torrent = await api.loadTorrent(savedInst.torrentPath);
+                instance.torrent = torrent;
+                instance.torrentPath = savedInst.torrentPath;
+                instance.statusMessage = 'Ready to start faking';
+                instance.statusType = 'idle';
+              } catch {
+                instance.statusMessage = 'Torrent file not found - please select again';
+                instance.statusType = 'warning';
+              }
+            } else {
+              // Web: Restore from saved torrent data
+              if (savedInst.torrent) {
+                instance.torrent = savedInst.torrent;
+                instance.torrentPath = savedInst.torrentPath;
+                instance.statusMessage = 'Ready to start faking';
+                instance.statusType = 'idle';
+              } else {
+                instance.statusMessage = 'Please re-upload your torrent file';
+                instance.statusType = 'warning';
+              }
+            }
+          }
+
+          restoredInstances.push(instance);
+        }
+
+        instances.set(restoredInstances);
+
+        // Set active instance based on saved index
+        if (
+          savedSession.activeInstanceIndex !== null &&
+          savedSession.activeInstanceIndex >= 0 &&
+          savedSession.activeInstanceIndex < restoredInstances.length
+        ) {
+          activeInstanceId.set(restoredInstances[savedSession.activeInstanceIndex].id);
+        } else {
+          activeInstanceId.set(restoredInstances[0].id);
+        }
+
+        updateActiveInstanceStore();
+        return restoredInstances[0].id;
+      } else {
+        // No saved session - create first instance with defaults
         const instanceId = await api.createInstance();
+
         const newInstance = createDefaultInstance(instanceId, {});
         instances.set([newInstance]);
         activeInstanceId.set(instanceId);
         updateActiveInstanceStore();
         return instanceId;
       }
-
-      // Otherwise restore from saved session
-      const restoredInstances = [];
-
-      for (const savedInst of savedSession.instances) {
-        const instanceId = await api.createInstance();
-        const instance = createDefaultInstance(instanceId, savedInst);
-
-        if (savedInst.torrentPath) {
-          if (isTauri) {
-            try {
-              const torrent = await api.loadTorrent(savedInst.torrentPath);
-              instance.torrent = torrent;
-              instance.torrentPath = savedInst.torrentPath;
-              instance.statusMessage = 'Ready to start faking';
-              instance.statusType = 'idle';
-            } catch {
-              instance.statusMessage = 'Torrent file not found - please select again';
-              instance.statusType = 'warning';
-            }
-          } else {
-            if (savedInst.torrent) {
-              instance.torrent = savedInst.torrent;
-              instance.torrentPath = savedInst.torrentPath;
-              instance.statusMessage = 'Ready to start faking';
-              instance.statusType = 'idle';
-            } else {
-              instance.statusMessage = 'Please re-upload your torrent file';
-              instance.statusType = 'warning';
-            }
-          }
-        }
-
-        restoredInstances.push(instance);
-      }
-
-      instances.set(restoredInstances);
-
-      if (
-        savedSession.activeInstanceIndex !== null &&
-        savedSession.activeInstanceIndex >= 0 &&
-        savedSession.activeInstanceIndex < restoredInstances.length
-      ) {
-        activeInstanceId.set(restoredInstances[savedSession.activeInstanceIndex].id);
-      } else {
-        activeInstanceId.set(restoredInstances[0].id);
-      }
-
-      updateActiveInstanceStore();
-      return restoredInstances[0].id;
     } catch (error) {
       console.error('Failed to initialize:', error);
       throw error;
