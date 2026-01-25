@@ -9,6 +9,8 @@ const bytesToMB = bytes => Math.round((bytes || 0) / (1024 * 1024));
 
 // Create default instance state
 function createDefaultInstance(id, defaults = {}) {
+  const cfg = get(globalConfig);
+
   return {
     id,
 
@@ -33,19 +35,18 @@ function createDefaultInstance(id, defaults = {}) {
       defaults.cumulativeDownloaded !== undefined ? defaults.cumulativeDownloaded : 0,
 
     // Form values
-    selectedClient: defaults.selectedClient || 'transmission',
+    selectedClient: defaults.selectedClient || cfg.client_default_type,
     selectedClientVersion: defaults.selectedClientVersion || null,
-    uploadRate: defaults.uploadRate !== undefined ? defaults.uploadRate : 700,
-    downloadRate: defaults.downloadRate !== undefined ? defaults.downloadRate : 0,
-    port: defaults.port !== undefined ? defaults.port : 59859,
+    uploadRate: defaults.uploadRate ?? cfg.faker_default_upload_rate,
+    downloadRate: defaults.downloadRate ?? cfg.faker_default_download_rate,
+    port: defaults.port ?? cfg.client_default_port,
     completionPercent: defaults.completionPercent !== undefined ? defaults.completionPercent : 100,
     initialUploaded: defaults.initialUploaded !== undefined ? defaults.initialUploaded : 0,
     initialDownloaded: defaults.initialDownloaded !== undefined ? defaults.initialDownloaded : 0,
     randomizeRates: defaults.randomizeRates !== undefined ? defaults.randomizeRates : true,
-    randomRangePercent:
-      defaults.randomRangePercent !== undefined ? defaults.randomRangePercent : 50,
-    updateIntervalSeconds:
-      defaults.updateIntervalSeconds !== undefined ? defaults.updateIntervalSeconds : 5,
+    randomRangePercent: defaults.randomRangePercent !== undefined ? defaults.randomRangePercent : 50,
+    updateIntervalSeconds: defaults.updateIntervalSeconds ?? cfg.faker_update_interval,
+    announceInterval: defaults.announceInterval ?? cfg.faker_default_announce_interval,
 
     // Stop conditions
     stopAtRatioEnabled:
@@ -148,6 +149,7 @@ async function saveSession(instances, activeId) {
           randomize_rates: inst.randomizeRates,
           random_range_percent: parseFloat(inst.randomRangePercent),
           update_interval_seconds: parseInt(inst.updateIntervalSeconds),
+          announce_interval: inst.announceInterval,
           stop_at_ratio_enabled: inst.stopAtRatioEnabled,
           stop_at_ratio: parseFloat(inst.stopAtRatio),
           stop_at_uploaded_enabled: inst.stopAtUploadedEnabled,
@@ -177,6 +179,8 @@ async function saveSession(instances, activeId) {
 
 // Load session from storage (localStorage for web, Tauri config for desktop)
 function loadSessionFromStorage(config = null) {
+  const cfg = get(globalConfig);
+
   try {
     let sessionData;
 
@@ -210,7 +214,8 @@ function loadSessionFromStorage(config = null) {
         cumulativeDownloaded: bytesToMB(inst.cumulative_downloaded),
         randomizeRates: inst.randomize_rates,
         randomRangePercent: inst.random_range_percent,
-        updateIntervalSeconds: inst.update_interval_seconds,
+        announceInterval: inst.announce_interval ?? cfg.faker_default_announce_interval,
+        updateIntervalSeconds: inst.update_interval_seconds ?? cfg.faker_update_interval,
         stopAtRatioEnabled: inst.stop_at_ratio_enabled,
         stopAtRatio: inst.stop_at_ratio,
         stopAtUploadedEnabled: inst.stop_at_uploaded_enabled,
@@ -261,12 +266,10 @@ export const instanceActions = {
   // Initialize - create first instance or restore from storage/server
   initialize: async () => {
     try {
-      // Load config if in Tauri mode
+      // Load config (both Web and Tauri)
       let config = null;
-      if (isTauri) {
-        config = await api.getConfig();
-        globalConfig.set(config);
-      }
+      config = await api.getConfig();
+      globalConfig.set(config);
 
       // For server mode, try to fetch existing instances from backend first
       // This handles the case where instances are running and user refreshes or opens new tab
@@ -291,6 +294,8 @@ export const instanceActions = {
                 cumulativeDownloaded: bytesToMB(serverInst.stats.downloaded),
                 randomizeRates: serverInst.config.randomize_rates,
                 randomRangePercent: serverInst.config.random_range_percent,
+                announceInterval: serverInst.config.announce_interval,
+                updateIntervalSeconds: serverInst.config.update_interval,
                 stopAtRatioEnabled: serverInst.config.stop_at_ratio !== null,
                 stopAtRatio: serverInst.config.stop_at_ratio || 2.0,
                 stopAtUploadedEnabled: serverInst.config.stop_at_uploaded !== null,
@@ -577,6 +582,8 @@ export const instanceActions = {
       cumulativeDownloaded: bytesToMB(serverInst.stats.downloaded),
       randomizeRates: serverInst.config.randomize_rates,
       randomRangePercent: serverInst.config.random_range_percent,
+      announceInterval: serverInst.config.announce_interval,
+      updateIntervalSeconds: serverInst.config.update_interval,
       stopAtRatioEnabled: serverInst.config.stop_at_ratio !== null,
       stopAtRatio: serverInst.config.stop_at_ratio || 2.0,
       stopAtUploadedEnabled: serverInst.config.stop_at_uploaded !== null,
