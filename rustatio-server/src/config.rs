@@ -62,14 +62,22 @@ impl ServerConfig {
         }
     }
 
+    fn parse_client_type(s: &str) -> ClientType {
+        match s.to_lowercase().as_str() {
+            "utorrent" | "µtorrent" | "u-torrent" => ClientType::UTorrent,
+            "qbittorrent" | "qb" => ClientType::QBittorrent,
+            "transmission" | "tr" => ClientType::Transmission,
+            "deluge" => ClientType::Deluge,
+            _ => ClientType::Transmission, // fallback safe
+        }
+    }
+
     pub fn to_faker_defaults(&self) -> FakerConfig {
         FakerConfig {
             upload_rate: self.faker_default_upload_rate,
             download_rate: self.faker_default_download_rate,
             port: self.client_default_port,
-            client_type: self.client_default_type
-                .parse::<ClientType>()
-                .unwrap_or(ClientType::Transmission),
+            client_type: Self::parse_client_type(&self.client_default_type),
             client_version: None,
             initial_uploaded: 0,
             initial_downloaded: 0,
