@@ -632,20 +632,10 @@ impl RatioFaker {
                     // Note: this allows up to `max_retries` retries after the first attempt,
                     // resulting in up to `max_retries + 1` total attempts.
                     if attempt > max_retries {
-                        log_info!(
-                            "Announce failed after {} attempts: {}",
-                            attempt - 1,
-                            e.to_string()
-                        );
+                        log_info!("Announce failed after {} attempts: {}",attempt - 1,e.to_string());
                         return Err(FakerError::TrackerError(e));
                     } else {
-                        log_info!(
-                            "Announce attempt {}/{} failed: {}. Retrying in {} ms",
-                            attempt,
-                            max_retries,
-                            e.to_string(),
-                            delay_ms
-                        );
+                        log_info!("Announce attempt {}/{} failed: {}. Retrying in {} ms",attempt,max_retries,e.to_string(),delay_ms);
 
                         #[cfg(not(target_arch = "wasm32"))]
                         {
