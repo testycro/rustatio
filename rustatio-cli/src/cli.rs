@@ -104,6 +104,14 @@ pub enum Commands {
         #[arg(long, default_value = "1.0", value_name = "HOURS")]
         progressive_duration: f64,
 
+        /// Announce interval in seconds
+        #[arg(long, default_value = "1800", value_name = "SECONDS")]
+        announce_interval: u64,
+
+        /// Stats update interval in seconds (background loop)
+        #[arg(long, default_value = "5", value_name = "SECONDS")]
+        update_interval: u64,
+
         /// Path to config file
         #[arg(long, value_name = "FILE")]
         config: Option<PathBuf>,
