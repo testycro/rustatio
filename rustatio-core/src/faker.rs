@@ -19,6 +19,9 @@ use std::cell::RefCell;
 #[cfg(target_arch = "wasm32")]
 use js_sys;
 
+#[cfg(target_arch = "wasm32")]
+use gloo_timers::future::sleep as wasm_sleep;
+
 // Macros for platform-specific lock access
 #[cfg(not(target_arch = "wasm32"))]
 macro_rules! read_lock {
@@ -666,10 +669,7 @@ impl RatioFaker {
 
                         #[cfg(target_arch = "wasm32")]
                         {
-                            // WASM: no tokio::time::sleep by default in this codebase.
-                            // If you need a delay in wasm, replace this with a wasm-compatible async sleep
-                            // (e.g., gloo_timers::future::sleep) or adjust the code to retry immediately.
-                            // For now, we retry immediately in wasm builds.
+                            wasm_sleep(Duration::from_millis(delay_ms)).await;
                         }
                     }
                 }
