@@ -125,6 +125,46 @@ async fn verify_auth() -> Response {
 }
 
 #[derive(Serialize)]
+struct ApiServerConfig {
+    client_default_type: String,
+    client_default_port: u16,
+    client_default_num_want: u32,
+
+    faker_default_upload_rate: f64,
+    faker_default_download_rate: f64,
+    faker_default_announce_interval: u64,
+    faker_update_interval: u64,
+    faker_default_announce_max_retries: u32,
+    faker_default_announce_retry_ms: u64,
+
+    ui_window_width: u32,
+    ui_window_height: u32,
+    ui_dark_mode: bool,
+}
+
+async fn get_server_config(State(state): State<ServerState>) -> Response {
+    let cfg = &state.server_config;
+
+    ApiSuccess::response(ApiServerConfig {
+        client_default_type: cfg.client_default_type.clone(),
+        client_default_port: cfg.client_default_port,
+        client_default_num_want: cfg.client_default_num_want,
+
+        faker_default_upload_rate: cfg.faker_default_upload_rate,
+        faker_default_download_rate: cfg.faker_default_download_rate,
+        faker_default_announce_interval: cfg.faker_default_announce_interval,
+        faker_update_interval: cfg.faker_update_interval,
+        faker_default_announce_max_retries: cfg.faker_default_announce_max_retries,
+        faker_default_announce_retry_ms: cfg.faker_default_announce_retry_ms,
+
+        ui_window_width: cfg.ui_window_width,
+        ui_window_height: cfg.ui_window_height,
+        ui_dark_mode: cfg.ui_dark_mode,
+    })
+}
+
+
+#[derive(Serialize)]
 struct ServerConfigResponse {
     config: crate::config::ServerConfig,
 }
