@@ -46,6 +46,8 @@ async fn main() -> Result<()> {
             resume,
             save_session,
             no_save_session,
+            announce_interval,
+            update_interval,
         } => {
             // Validate torrent file exists
             if !torrent.exists() {
