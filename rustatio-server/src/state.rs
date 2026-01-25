@@ -249,7 +249,7 @@ impl AppState {
 
     /// Create a new faker instance (manual creation via API)
     pub async fn create_instance(&self, id: &str, torrent: TorrentInfo, mut config: FakerConfig) -> Result<(), String> {
-        let defaults = FakerConfig::from_env_defaults(&self.config);
+        let defaults = self.config.to_faker_defaults();
 
         if config.upload_rate == FakerConfig::default().upload_rate {
             config.upload_rate = defaults.upload_rate;
@@ -275,7 +275,7 @@ impl AppState {
     /// Used when user loads a torrent via UI - creates server-side instance so it persists on refresh
     pub async fn create_idle_instance(&self, id: &str, torrent: TorrentInfo) -> Result<(), String> {
         // Use default config for idle instance
-        let config = FakerConfig::from_env_defaults(&self.config);
+        let config = self.config.to_faker_defaults();
 
         self.create_instance_internal(id, torrent.clone(), config, InstanceSource::Manual)
             .await?;
@@ -300,7 +300,7 @@ impl AppState {
         mut config: FakerConfig,
         auto_started: bool,
     ) -> Result<(), String> {
-        let defaults = FakerConfig::from_env_defaults(&self.config);
+        let defaults = self.config.to_faker_defaults();
 
         if config.upload_rate == FakerConfig::default().upload_rate {
             config.upload_rate = defaults.upload_rate;
