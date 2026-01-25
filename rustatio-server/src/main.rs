@@ -39,7 +39,7 @@ async fn main() {
     tracing::info!("Loaded server config: {:?}", server_config);
 
     // Create shared application state
-    let state = AppState::new(&data_dir);
+    let state = AppState::new(&data_dir, server_config.clone());
 
     // Initialize tracing subscriber with EnvFilter and broadcast layer
     // Default: show info for server, trace for rustatio_core/log (for UI filtering)
