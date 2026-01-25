@@ -48,6 +48,8 @@ pub struct RunnerConfig {
     pub announce_max_retries: u32,
     /// Base delay in milliseconds for announce retry exponential backoff (default 500ms)
     pub announce_retry_delay_ms: u64,
+    pub announce_interval: u64,
+    pub update_interval: u64,
 }
 
 /// Internal command for controlling the runner
@@ -303,7 +305,8 @@ pub fn create_faker_config(config: &RunnerConfig) -> FakerConfig {
         progressive_duration: (config.progressive_duration * 3600.0) as u64,
         announce_max_retries: config.announce_max_retries,
         announce_retry_delay_ms: config.announce_retry_delay_ms,
-        ..FakerConfig::default()
+        announce_interval: config.announce_interval,
+        update_interval: config.update_interval,
     }
 }
 
