@@ -271,6 +271,9 @@ export const instanceActions = {
       config = await api.getConfig();
       globalConfig.set(config);
 
+      // IMPORTANT : attendre que Svelte mette à jour le store
+      await Promise.resolve();
+
       // For server mode, try to fetch existing instances from backend first
       // This handles the case where instances are running and user refreshes or opens new tab
       const isServerMode = !isTauri && typeof api.listInstances === 'function';
