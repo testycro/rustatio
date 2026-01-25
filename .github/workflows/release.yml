@@ -116,9 +116,6 @@ jobs:
             target/
           key: ${{ runner.os }}-cargo-web-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Install wasm32 target
-        run: rustup target add wasm32-unknown-unknown
-
       - name: Update version in package.json
         working-directory: ui
         run: |
@@ -374,9 +371,6 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           cache: true
-
-      - name: Install wasm32 target
-        run: rustup target add wasm32-unknown-unknown
 
       - name: Build UI for Desktop (without GitHub Pages base path)
         run: mise run build:web
