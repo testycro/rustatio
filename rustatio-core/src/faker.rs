@@ -188,35 +188,6 @@ impl Default for FakerConfig {
     }
 }
 
-impl FakerConfig {
-    pub fn from_env_defaults(env: &crate::config::ServerConfig) -> Self {
-        Self {
-            upload_rate: env.faker_default_upload_rate,
-            download_rate: env.faker_default_download_rate,
-            port: env.client_default_port,
-            client_type: env.client_default_type.clone(),
-            client_version: None,
-            initial_uploaded: 0,
-            initial_downloaded: 0,
-            completion_percent: 100.0,
-            num_want: env.client_default_num_want,
-            randomize_rates: true,
-            random_range_percent: 50.0,
-            stop_at_ratio: None,
-            stop_at_uploaded: None,
-            stop_at_downloaded: None,
-            stop_at_seed_time: Some(2678400),
-            stop_when_no_leechers: false,
-            progressive_rates: false,
-            target_upload_rate: None,
-            target_download_rate: None,
-            progressive_duration: 3600,
-            announce_max_retries: env.faker_default_announce_max_retries,
-            announce_retry_delay_ms: env.faker_default_announce_retry_ms,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FakerState {
     Idle,
