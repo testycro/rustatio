@@ -46,6 +46,8 @@ async fn main() -> Result<()> {
             resume,
             save_session,
             no_save_session,
+            announce_max_retries,
+            announce_retry_delay_ms,
             announce_interval,
             update_interval,
         } => {
