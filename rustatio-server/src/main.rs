@@ -5,6 +5,7 @@ mod persistence;
 mod state;
 mod static_files;
 mod watch;
+mod config;
 
 use axum::{middleware, routing::get, Router};
 use std::net::SocketAddr;
@@ -33,6 +34,9 @@ async fn main() {
 
     // Get data directory from environment or use default
     let data_dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "/data".to_string());
+
+    let server_config = config::ServerConfig::from_env();
+    tracing::info!("Loaded server config: {:?}", server_config);
 
     // Create shared application state
     let state = AppState::new(&data_dir);
