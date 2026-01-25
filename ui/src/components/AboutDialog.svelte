@@ -8,7 +8,7 @@
   let version = $state(__APP_VERSION__);
   const author = 'Dylann Batisse';
   const license = 'MIT';
-  const repository = 'https://github.com/takitsu21/rustatio';
+  const repository = 'https://github.com/testycro/rustatio';
 
   // Check if running in Tauri
   const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
