@@ -104,6 +104,14 @@ pub enum Commands {
         #[arg(long, default_value = "1.0", value_name = "HOURS")]
         progressive_duration: f64,
 
+        /// How many times to retry an announce on failure
+        #[arg(long, default_value = "10", value_name = "COUNT")]
+        announce_max_retries: u32,
+
+        /// Delay between announce retries (ms)
+        #[arg(long, default_value = "5000", value_name = "MILLISECONDS")]
+        announce_retry_delay_ms: u64,
+
         /// Announce interval in seconds
         #[arg(long, default_value = "1800", value_name = "SECONDS")]
         announce_interval: u64,
