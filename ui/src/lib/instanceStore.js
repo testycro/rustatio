@@ -7,9 +7,25 @@ const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 // Helper to convert bytes to MB (rounded to integer)
 const bytesToMB = bytes => Math.round((bytes || 0) / (1024 * 1024));
 
+const DEFAULT_CONFIG = {
+  client_default_type: 'transmission',
+  client_default_port: 59859,
+  faker_default_upload_rate: 700,
+  faker_default_download_rate: 0,
+  faker_update_interval: 5,
+  faker_default_announce_interval: 1800,
+  faker_default_randomize: true,
+  faker_default_random_range: 50,
+};
+
+function getCfg() {
+  const cfg = get(globalConfig);
+  return cfg ?? DEFAULT_CONFIG;
+}
+
 // Create default instance state
 function createDefaultInstance(id, defaults = {}) {
-  const cfg = get(globalConfig);
+  const cfg = getCfg();
 
   return {
     id,
@@ -179,7 +195,7 @@ async function saveSession(instances, activeId) {
 
 // Load session from storage (localStorage for web, Tauri config for desktop)
 function loadSessionFromStorage(config = null) {
-  const cfg = get(globalConfig);
+  const cfg = getCfg();
 
   try {
     let sessionData;
