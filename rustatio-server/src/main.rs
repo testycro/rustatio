@@ -103,19 +103,31 @@ async fn main() {
     // Build CORS layer
     let cors = CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any);
 
+    // Build API routes depending on whether auth is enabled
+    let api_routes = if auth::is_auth_enabled() {
+        // Auth activée → routes publiques + routes protégées
+        Router::new()
+            .merge(api::public_router())
+            .merge(
+                api::router()
+                    .layer(middleware::from_fn(auth::auth_middleware))
+            )
+    } else {
+        // Auth désactivée → tout est public
+        Router::new()
+            .merge(api::public_router())
+            .merge(api::router())
+    };
+
     // Build router
     let app = Router::new()
-        // Health check (no auth required)
         .route("/health", get(|| async { "OK" }))
-        // Public API routes (no auth required)
-        .nest("/api", api::public_router())
-        // Protected API routes (auth required when AUTH_TOKEN is set)
-        .nest("/api", api::router().layer(middleware::from_fn(auth::auth_middleware)))
-        // Static files (web UI) - must be last as it catches all other routes (no auth)
-        .fallback(static_files::static_handler)
+        .nest("/api", api_routes)
+        .fallback(static_files::static_handler) // UI fallback, mais APRES les routes API
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(server_state);
+
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     tracing::info!("Rustatio server starting on http://{}", addr);
