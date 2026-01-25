@@ -186,6 +186,8 @@ impl Default for FakerConfig {
             progressive_duration: 3600,
             announce_max_retries: default_announce_max_retries(),
             announce_retry_delay_ms: default_announce_retry_ms(),
+            announce_interval: 1800,
+            update_interval: 5,
         }
     }
 }
@@ -387,7 +389,7 @@ impl RatioFaker {
                 tracker_id: None,
                 start_time: Instant::now(),
                 last_update: Instant::now(),
-                announce_interval: Duration::from_secs(1800), // Default 30 minutes
+                announce_interval: Duration::from_secs(config.announce_interval), // Default 30 minutes
             })
         }
 
@@ -404,7 +406,7 @@ impl RatioFaker {
                 tracker_id: None,
                 start_time: Instant::now(),
                 last_update: Instant::now(),
-                announce_interval: Duration::from_secs(1800), // Default 30 minutes
+                announce_interval: Duration::from_secs(config.announce_interval), // Default 30 minutes
             })
         }
     }
