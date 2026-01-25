@@ -128,6 +128,15 @@ pub struct FakerConfig {
     /// Time in seconds to reach target rates
     #[serde(default = "default_progressive_duration")]
     pub progressive_duration: u64,
+
+    // Announce retry configuration
+    /// How many times to retry an announce on failure (default 3)
+    #[serde(default = "default_announce_max_retries")]
+    pub announce_max_retries: u32,
+
+    /// Base delay in milliseconds for announce retry exponential backoff (default 500ms)
+    #[serde(default = "default_announce_retry_base_ms")]
+    pub announce_retry_base_delay_ms: u64,
 }
 
 fn default_randomize_rates() -> bool {
@@ -140,6 +149,14 @@ fn default_progressive_duration() -> u64 {
 
 fn default_random_range() -> f64 {
     20.0
+}
+
+fn default_announce_max_retries() -> u32 {
+    3
+}
+
+fn default_announce_retry_base_ms() -> u64 {
+    5000
 }
 
 impl Default for FakerConfig {
@@ -165,6 +182,8 @@ impl Default for FakerConfig {
             target_upload_rate: None,
             target_download_rate: None,
             progressive_duration: 3600,
+            announce_max_retries: default_announce_max_retries(),
+            announce_retry_base_delay_ms: default_announce_retry_base_ms(),
         }
     }
 }
@@ -547,19 +566,9 @@ impl RatioFaker {
         &self.torrent
     }
 
-    /// Send an announce to the tracker
-    async fn announce(&mut self, event: TrackerEvent) -> Result<AnnounceResponse> {
-        let stats = read_lock!(self.stats);
-
-        log_debug!(
-            "Preparing announce: event={:?}, uploaded={}, downloaded={}, left={}",
-            event,
-            stats.uploaded,
-            stats.downloaded,
-            stats.left
-        );
-
-        let request = AnnounceRequest {
+    /// Build announce request (helper)
+    fn build_announce_request(&self, stats: &FakerStats, event: TrackerEvent) -> AnnounceRequest {
+        AnnounceRequest {
             info_hash: self.torrent.info_hash,
             peer_id: self.peer_id.clone(),
             port: self.config.port,
@@ -573,16 +582,87 @@ impl RatioFaker {
             numwant: Some(self.config.num_want),
             key: Some(self.key.clone()),
             tracker_id: self.tracker_id.clone(),
-        };
+        }
+    }
+
+    /// Send an announce to the tracker with retries on failure
+    async fn announce(&mut self, event: TrackerEvent) -> Result<AnnounceResponse> {
+        let stats = read_lock!(self.stats);
+
+        log_debug!(
+            "Preparing announce: event={:?}, uploaded={}, downloaded={}, left={}",
+            event,
+            stats.uploaded,
+            stats.downloaded,
+            stats.left
+        );
+
+        let request = self.build_announce_request(&stats, event);
 
         drop(stats); // Release lock before async call
 
-        let response = self
-            .tracker_client
-            .announce(self.torrent.get_tracker_url(), &request)
-            .await?;
+        // Use retry-capable announcer
+        let response = self.send_announce_with_retry(request).await?;
 
         Ok(response)
+    }
+
+    /// Send announce with retry/fixed-delay (non-wasm uses tokio::time::sleep)
+    async fn send_announce_with_retry(&mut self, request: AnnounceRequest) -> Result<AnnounceResponse> {
+        // Number of retries after the initial attempt
+        let max_retries = self.config.announce_max_retries;
+        let delay_ms = self.config.announce_retry_delay_ms;
+
+        // Attempt counter starts at 1 for the first attempt
+        let mut attempt: u32 = 0;
+
+        loop {
+            attempt += 1;
+
+            match self
+                .tracker_client
+                .announce(self.torrent.get_tracker_url(), &request)
+                .await
+            {
+                Ok(resp) => {
+                    return Ok(resp);
+                }
+                Err(e) => {
+                    // If we've exhausted retries (attempt > max_retries), return the error.
+                    // Note: this allows up to `max_retries` retries after the first attempt,
+                    // resulting in up to `max_retries + 1` total attempts.
+                    if attempt > max_retries {
+                        log_info!(
+                            "Announce failed after {} attempts: {}",
+                            attempt - 1,
+                            e.to_string()
+                        );
+                        return Err(FakerError::TrackerError(e));
+                    } else {
+                        log_info!(
+                            "Announce attempt {}/{} failed: {}. Retrying in {} ms",
+                            attempt,
+                            max_retries,
+                            e.to_string(),
+                            delay_ms
+                        );
+
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                        }
+
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            // WASM: no tokio::time::sleep by default in this codebase.
+                            // If you need a delay in wasm, replace this with a wasm-compatible async sleep
+                            // (e.g., gloo_timers::future::sleep) or adjust the code to retry immediately.
+                            // For now, we retry immediately in wasm builds.
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Periodic announce (no event)
