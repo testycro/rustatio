@@ -98,6 +98,7 @@ pub fn public_router() -> Router<ServerState> {
     Router::new()
         // Auth status check (no auth required - tells UI if auth is enabled)
         .route("/auth/status", get(auth_status))
+        .route("/config", get(get_server_config))
 }
 
 // =============================================================================
@@ -121,6 +122,17 @@ async fn auth_status() -> Response {
 async fn verify_auth() -> Response {
     // If we reach here, the auth middleware already validated the token
     ApiSuccess::response(())
+}
+
+#[derive(Serialize)]
+struct ServerConfigResponse {
+    config: crate::config::ServerConfig,
+}
+
+async fn get_server_config(State(state): State<ServerState>) -> Response {
+    ApiSuccess::response(ServerConfigResponse {
+        config: state.app.server_config.clone(),
+    })
 }
 
 /// Create a new instance ID
