@@ -1,4 +1,5 @@
 use crate::persistence::{now_timestamp, InstanceSource, PersistedInstance, PersistedState, Persistence};
+use crate::config::ServerConfig;
 use rustatio_core::logger::set_instance_context_str;
 use rustatio_core::{FakerConfig, FakerState, FakerStats, RatioFaker, TorrentInfo};
 use serde::Serialize;
@@ -75,10 +76,12 @@ pub struct AppState {
     pub instance_sender: broadcast::Sender<InstanceEvent>,
     /// Persistence manager
     persistence: Arc<Persistence>,
+    /// Server env configuration
+    pub config: ServerConfig,
 }
 
 impl AppState {
-    pub fn new(data_dir: &str) -> Self {
+    pub fn new(data_dir: &str, config: ServerConfig) -> Self {
         let (log_sender, _) = broadcast::channel(256);
         let (instance_sender, _) = broadcast::channel(64);
         Self {
@@ -87,6 +90,7 @@ impl AppState {
             log_sender,
             instance_sender,
             persistence: Arc::new(Persistence::new(data_dir)),
+            config,
         }
     }
 
@@ -253,7 +257,17 @@ impl AppState {
     /// Used when user loads a torrent via UI - creates server-side instance so it persists on refresh
     pub async fn create_idle_instance(&self, id: &str, torrent: TorrentInfo) -> Result<(), String> {
         // Use default config for idle instance
-        let config = FakerConfig::default();
+        let mut config = FakerConfig::default();
+
+         // Inject ENV defaults
+        config.upload_rate = self.config.faker_default_upload_rate;
+        config.download_rate = self.config.faker_default_download_rate;
+        config.num_want = self.config.client_default_num_want;
+        config.port = self.config.client_default_port;
+        config.client_type = self.config.client_default_type.clone();
+        config.announce_interval = self.config.faker_default_announce_interval;
+        config.update_interval = self.config.faker_update_interval;
+
         self.create_instance_internal(id, torrent.clone(), config, InstanceSource::Manual)
             .await?;
 
