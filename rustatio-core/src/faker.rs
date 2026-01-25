@@ -135,8 +135,8 @@ pub struct FakerConfig {
     pub announce_max_retries: u32,
 
     /// Base delay in milliseconds for announce retry exponential backoff (default 500ms)
-    #[serde(default = "default_announce_retry_base_ms")]
-    pub announce_retry_base_delay_ms: u64,
+    #[serde(default = "default_announce_retry_ms")]
+    pub announce_retry_delay_ms: u64,
 }
 
 fn default_randomize_rates() -> bool {
@@ -155,7 +155,7 @@ fn default_announce_max_retries() -> u32 {
     3
 }
 
-fn default_announce_retry_base_ms() -> u64 {
+fn default_announce_retry_ms() -> u64 {
     5000
 }
 
@@ -183,7 +183,7 @@ impl Default for FakerConfig {
             target_download_rate: None,
             progressive_duration: 3600,
             announce_max_retries: default_announce_max_retries(),
-            announce_retry_base_delay_ms: default_announce_retry_base_ms(),
+            announce_retry_delay_ms: default_announce_retry_ms(),
         }
     }
 }
