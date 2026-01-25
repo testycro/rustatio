@@ -84,10 +84,8 @@ impl ServerConfig {
             progressive_duration: 3600,
             announce_max_retries: self.faker_default_announce_max_retries,
             announce_retry_delay_ms: self.faker_default_announce_retry_ms,
-
-            // Si tu ajoutes ces champs :
-            // announce_interval: self.faker_default_announce_interval,
-            // update_interval: self.faker_update_interval,
+            announce_interval: self.faker_default_announce_interval,
+            update_interval: self.faker_update_interval,
         }
     }
 }
