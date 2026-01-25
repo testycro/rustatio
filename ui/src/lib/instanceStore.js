@@ -210,7 +210,8 @@ function loadSessionFromStorage(config = null) {
       sessionData = JSON.parse(stored);
     }
 
-    if (!sessionData || !sessionData.instances || sessionData.instances.length === 0) {
+    if (!sessionData || !Array.isArray(sessionData.instances) || sessionData.instances.length === 0) {
+      localStorage.removeItem('rustatio-session');
       return null;
     }
 
@@ -369,7 +370,8 @@ export const instanceActions = {
       // Fall back to localStorage/config restoration
       const savedSession = loadSessionFromStorage(config);
 
-      if (savedSession && savedSession.instances && savedSession.instances.length > 0) {
+      if (savedSession && Array.isArray(savedSession.instances) && savedSession.instances.length > 0) {
+
         // Restore from saved session
         const restoredInstances = [];
         for (const savedInst of savedSession.instances) {
