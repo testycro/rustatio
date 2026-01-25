@@ -43,6 +43,11 @@ pub struct RunnerConfig {
     pub info_hash: String,
     pub torrent_name: String,
     pub torrent_size: u64,
+    // Announce retry configuration
+    /// How many times to retry an announce on failure (default 3)
+    pub announce_max_retries: u32,
+    /// Base delay in milliseconds for announce retry exponential backoff (default 500ms)
+    pub announce_retry_delay_ms: u64,
 }
 
 /// Internal command for controlling the runner
@@ -296,6 +301,8 @@ pub fn create_faker_config(config: &RunnerConfig) -> FakerConfig {
         target_upload_rate: config.target_upload,
         target_download_rate: config.target_download,
         progressive_duration: (config.progressive_duration * 3600.0) as u64,
+        announce_max_retries: config.announce_max_retries,
+        announce_retry_delay_ms: config.announce_retry_delay_ms,
     }
 }
 
