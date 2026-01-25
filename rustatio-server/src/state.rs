@@ -458,7 +458,7 @@ impl AppState {
         state: AppState,
         mut shutdown_rx: mpsc::Receiver<()>,
     ) {
-        let update_interval = Duration::from_secs(5);
+        let update_interval = Duration::from_secs(state.config.faker_update_interval);
         let save_interval = Duration::from_secs(30);
         let mut last_save = std::time::Instant::now();
 
