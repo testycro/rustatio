@@ -12,6 +12,8 @@ pub struct ServerConfig {
     pub faker_default_download_rate: f64,
     pub faker_default_announce_interval: u64,
     pub faker_update_interval: u64,
+    pub faker_default_announce_max_retries: u32,
+    pub faker_default_announce_retry_ms: u64,
 
     // [ui]
     pub ui_window_width: u32,
@@ -48,11 +50,44 @@ impl ServerConfig {
             faker_default_download_rate: env_or("FAKER_DEFAULT_DOWNLOAD_RATE", 0.0),
             faker_default_announce_interval: env_or("FAKER_DEFAULT_ANNOUNCE_INTERVAL", 1800),
             faker_update_interval: env_or("FAKER_UPDATE_INTERVAL", 5),
+            faker_default_announce_max_retries: env_or("FAKER_DEFAULT_ANNOUNCE_MAX_RETRIES", 10),
+            faker_default_announce_retry_ms: env_or("FAKER_DEFAULT_ANNOUNCE_RETRY_MS", 5000),
 
             // [ui]
             ui_window_width: env_or("UI_WINDOW_WIDTH", 1200),
             ui_window_height: env_or("UI_WINDOW_HEIGHT", 800),
             ui_dark_mode: env_bool("UI_DARK_MODE", true),
+        }
+    }
+
+    pub fn to_faker_defaults(&self) -> FakerConfig {
+        FakerConfig {
+            upload_rate: self.faker_default_upload_rate,
+            download_rate: self.faker_default_download_rate,
+            port: self.client_default_port,
+            client_type: self.client_default_type.clone(),
+            client_version: None,
+            initial_uploaded: 0,
+            initial_downloaded: 0,
+            completion_percent: 100.0,
+            num_want: self.client_default_num_want,
+            randomize_rates: true,
+            random_range_percent: 50.0,
+            stop_at_ratio: None,
+            stop_at_uploaded: None,
+            stop_at_downloaded: None,
+            stop_at_seed_time: Some(2678400),
+            stop_when_no_leechers: false,
+            progressive_rates: false,
+            target_upload_rate: None,
+            target_download_rate: None,
+            progressive_duration: 3600,
+            announce_max_retries: self.faker_default_announce_max_retries,
+            announce_retry_delay_ms: self.faker_default_announce_retry_ms,
+
+            // Si tu ajoutes ces champs :
+            // announce_interval: self.faker_default_announce_interval,
+            // update_interval: self.faker_update_interval,
         }
     }
 }
