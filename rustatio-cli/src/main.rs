@@ -131,6 +131,8 @@ async fn main() -> Result<()> {
                 info_hash: info_hash.clone(),
                 torrent_name: torrent_info.name.clone(),
                 torrent_size: torrent_info.total_size,
+                announce_max_retries,
+                announce_retry_delay_ms,
             };
 
             if json {
@@ -226,6 +228,8 @@ async fn main() -> Result<()> {
                 info_hash: session.info_hash.clone(),
                 torrent_name: session.torrent_name.clone(),
                 torrent_size: session.torrent_size,
+                announce_max_retries: 3,
+                announce_retry_delay_ms: 5000,
             };
 
             if json {
