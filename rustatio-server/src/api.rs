@@ -143,9 +143,9 @@ struct ApiServerConfig {
 }
 
 async fn get_server_config(State(state): State<ServerState>) -> Response {
-    let cfg = &state.server_config;
+    let cfg = &state.app.config;
 
-    ApiSuccess::response(ApiServerConfig {
+    ApiSuccess::response(ServerConfigResponse {
         client_default_type: cfg.client_default_type.clone(),
         client_default_port: cfg.client_default_port,
         client_default_num_want: cfg.client_default_num_want,
@@ -163,11 +163,24 @@ async fn get_server_config(State(state): State<ServerState>) -> Response {
     })
 }
 
-
 #[derive(Serialize)]
 struct ServerConfigResponse {
-    config: crate::config::ServerConfig,
+    client_default_type: String,
+    client_default_port: u16,
+    client_default_num_want: u32,
+
+    faker_default_upload_rate: f64,
+    faker_default_download_rate: f64,
+    faker_default_announce_interval: u64,
+    faker_update_interval: u64,
+    faker_default_announce_max_retries: u32,
+    faker_default_announce_retry_ms: u64,
+
+    ui_window_width: u32,
+    ui_window_height: u32,
+    ui_dark_mode: bool,
 }
+
 
 async fn get_server_config(State(state): State<ServerState>) -> Response {
     ApiSuccess::response(ServerConfigResponse {
