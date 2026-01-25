@@ -137,6 +137,8 @@ pub struct FakerConfig {
     /// Base delay in milliseconds for announce retry exponential backoff (default 5000ms)
     #[serde(default = "default_announce_retry_ms")]
     pub announce_retry_delay_ms: u64,
+    pub announce_interval: u64,
+    pub update_interval: u64,
 }
 
 fn default_randomize_rates() -> bool {
