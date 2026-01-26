@@ -303,7 +303,7 @@ impl Default for FakerSettings {
             default_stop_uploaded_enabled: default_stop_uploaded_enabled(),
             default_stop_downloaded_enabled: default_stop_downloaded_enabled(),
             default_stop_seed_time_enabled: default_stop_seed_time_enabled(),
-            default_random_range_percent: default_random_range_percent(), 
+            default_random_range_percent: default_random_range_percent(),
         }
     }
 }
