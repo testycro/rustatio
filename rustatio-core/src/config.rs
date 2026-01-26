@@ -144,7 +144,6 @@ pub struct FakerSettings {
 
     #[serde(default = "default_random_range_percent")]
     pub default_random_range_percent: f64,
-
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -304,7 +303,6 @@ impl Default for FakerSettings {
             default_stop_downloaded_enabled: default_stop_downloaded_enabled(),
             default_stop_seed_time_enabled: default_stop_seed_time_enabled(),
             default_random_range_percent: default_random_range_percent(),
-
         }
     }
 }
