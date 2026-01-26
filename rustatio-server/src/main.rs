@@ -25,7 +25,6 @@ use crate::watch::{WatchConfig, WatchDisabledReason, WatchService};
 pub struct ServerState {
     pub app: AppState,
     pub watch: Arc<RwLock<WatchService>>,
-    pub config: AppConfig,
 }
 
 #[tokio::main]
@@ -36,8 +35,11 @@ async fn main() {
     // Get data directory from environment or use default
     let data_dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "/data".to_string());
 
+    let core_config = AppConfig::load_or_default();
+    tracing::info!("Configuration chargée : {} instances", core_config.instances.len());
+
     // Create shared application state
-    let state = AppState::new(&data_dir);
+    let state = AppState::new(&data_dir, core_config.clone());
 
     // Initialize tracing subscriber with EnvFilter and broadcast layer
     // Default: show info for server, trace for rustatio_core/log (for UI filtering)
@@ -62,11 +64,6 @@ async fn main() {
             tracing::error!("Failed to load saved state: {}", e);
         }
     }
-
-    // Charge la config depuis ~/.config/rustatio/config.toml
-    let config = AppConfig::load_or_default();
-
-    tracing::info!("Configuration chargée : {} instances", config.instances.len());
 
     // Initialize and start watch folder service
     let (watch_config, disabled_reason) = WatchConfig::from_env();
@@ -98,7 +95,6 @@ async fn main() {
     let server_state = ServerState {
         app: state.clone(),
         watch: watch_service.clone(),
-        config: config.clone(),
     };
 
     // Get port from environment or use default
