@@ -453,14 +453,12 @@ const serverApi = {
   getNetworkStatus: async () => {
     return serverFetch('/network/status', { method: 'GET' });
   },
-  getConfig: async () => {
-    return serverFetch('/config', { method: 'GET' });
+  getConfig: () => {
+    const stored = localStorage.getItem('rustatio-config');
+    return stored ? JSON.parse(stored) : null;
   },
-  updateConfig: async config => {
-    return serverFetch('/config', {
-      method: 'PATCH',
-      body: JSON.stringify(config),
-    });
+  updateConfig: config => {
+    localStorage.setItem('rustatio-config', JSON.stringify(config));
   },
   // Watch folder endpoints (server mode only)
   getWatchStatus: async () => {
