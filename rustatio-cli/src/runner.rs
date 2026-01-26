@@ -43,10 +43,7 @@ pub struct RunnerConfig {
     pub info_hash: String,
     pub torrent_name: String,
     pub torrent_size: u64,
-    // Announce retry configuration
-    /// How many times to retry an announce on failure (default 3)
     pub announce_max_retries: u32,
-    /// Base delay in milliseconds for announce retry exponential backoff (default 500ms)
     pub announce_retry_delay_ms: u64,
     pub announce_interval: u64,
     pub update_interval: u64,
