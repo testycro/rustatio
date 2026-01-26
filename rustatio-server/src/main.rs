@@ -68,11 +68,6 @@ async fn main() {
 
     tracing::info!("Configuration chargée : {} instances", config.instances.len());
 
-    // Passe la config au serveur
-    if let Err(e) = rustatio_server::run(config).await {
-        tracing::error!("Erreur serveur : {}", e);
-    }
-
     // Initialize and start watch folder service
     let (watch_config, disabled_reason) = WatchConfig::from_env();
 
