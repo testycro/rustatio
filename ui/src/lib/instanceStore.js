@@ -54,7 +54,7 @@ function createDefaultInstance(id, defaults = {}) {
     stopAtDownloadedEnabled: defaults.stopAtDownloadedEnabled ?? cfg?.faker?.default_stop_downloaded_enabled ?? false,
     stopAtDownloadedGB: defaults.stopAtDownloadedGB ?? cfg?.faker?.default_stop_downloaded_gb ?? 10,
     stopAtSeedTimeEnabled: defaults.stopAtSeedTimeEnabled ?? cfg?.faker?.default_stop_seed_time_enabled ?? true,
-    stopAtSeedTimeHours: defaults.stopAtSeedTimeHours ?? cfg?.faker?.default_stop_seed_time_hours ?? : 744,
+    stopAtSeedTimeHours: defaults.stopAtSeedTimeHours ?? cfg?.faker?.default_stop_seed_time_hours ?? 744,
     stopWhenNoLeechers: defaults.stopWhenNoLeechers ?? cfg?.faker?.default_stop_when_no_leechers ?? false,
 
     // Progressive rates
