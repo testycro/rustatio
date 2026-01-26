@@ -98,6 +98,53 @@ pub struct FakerSettings {
     /// Auto-update stats interval in seconds
     #[serde(default = "default_update_interval")]
     pub update_interval: u64,
+
+    // NEW DEFAULTS
+    #[serde(default = "default_completion_percent")]
+    pub default_completion_percent: f64,
+
+    #[serde(default = "default_stop_ratio")]
+    pub default_stop_ratio: f64,
+
+    #[serde(default = "default_stop_uploaded_gb")]
+    pub default_stop_uploaded_gb: f64,
+
+    #[serde(default = "default_stop_downloaded_gb")]
+    pub default_stop_downloaded_gb: f64,
+
+    #[serde(default = "default_stop_seed_time_hours")]
+    pub default_stop_seed_time_hours: f64,
+
+    #[serde(default = "default_stop_when_no_leechers")]
+    pub default_stop_when_no_leechers: bool,
+
+    #[serde(default = "default_progressive_rates_enabled")]
+    pub default_progressive_rates_enabled: bool,
+
+    #[serde(default = "default_target_upload_rate")]
+    pub default_target_upload_rate: f64,
+
+    #[serde(default = "default_target_download_rate")]
+    pub default_target_download_rate: f64,
+
+    #[serde(default = "default_progressive_duration_hours")]
+    pub default_progressive_duration_hours: f64,
+
+    #[serde(default = "default_stop_ratio_enabled")]
+    pub default_stop_ratio_enabled: bool,
+
+    #[serde(default = "default_stop_uploaded_enabled")]
+    pub default_stop_uploaded_enabled: bool,
+
+    #[serde(default = "default_stop_downloaded_enabled")]
+    pub default_stop_downloaded_enabled: bool,
+
+    #[serde(default = "default_stop_seed_time_enabled")]
+    pub default_stop_seed_time_enabled: bool,
+
+    #[serde(default = "default_random_range_percent")]
+    pub default_random_range_percent: f64,
+
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -164,6 +211,66 @@ fn default_show_logs() -> bool {
     true
 }
 
+fn default_completion_percent() -> f64 {
+    100.0
+}
+
+fn default_stop_ratio() -> f64 {
+    2.0
+}
+
+fn default_stop_uploaded_gb() -> f64 {
+    10.0
+}
+
+fn default_stop_downloaded_gb() -> f64 {
+    10.0
+}
+
+fn default_stop_seed_time_hours() -> f64 {
+    744.0
+}
+
+fn default_stop_when_no_leechers() -> bool {
+    false
+}
+
+fn default_progressive_rates_enabled() -> bool {
+    false
+}
+
+fn default_target_upload_rate() -> f64 {
+    100.0
+}
+
+fn default_target_download_rate() -> f64 {
+    200.0
+}
+
+fn default_progressive_duration_hours() -> f64 {
+    1.0
+}
+
+fn default_stop_ratio_enabled() -> bool {
+    false
+}
+
+fn default_stop_uploaded_enabled() -> bool {
+    false
+}
+
+fn default_stop_downloaded_enabled() -> bool {
+    false
+}
+
+fn default_stop_seed_time_enabled() -> bool {
+    true
+}
+
+fn default_random_range_percent() -> f64 {
+    50.0
+}
+
 impl Default for ClientSettings {
     fn default() -> Self {
         ClientSettings {
@@ -182,6 +289,21 @@ impl Default for FakerSettings {
             default_download_rate: default_download_rate(),
             default_announce_interval: default_announce_interval(),
             update_interval: default_update_interval(),
+            default_completion_percent: default_completion_percent(),
+            default_stop_ratio: default_stop_ratio(),
+            default_stop_uploaded_gb: default_stop_uploaded_gb(),
+            default_stop_downloaded_gb: default_stop_downloaded_gb(),
+            default_stop_seed_time_hours: default_stop_seed_time_hours(),
+            default_stop_when_no_leechers: default_stop_when_no_leechers(),
+            default_progressive_rates_enabled: default_progressive_rates_enabled(),
+            default_target_upload_rate: default_target_upload_rate(),
+            default_target_download_rate: default_target_download_rate(),
+            default_progressive_duration_hours: default_progressive_duration_hours(),
+            default_stop_ratio_enabled: default_stop_ratio_enabled(),
+            default_stop_uploaded_enabled: default_stop_uploaded_enabled(),
+            default_stop_downloaded_enabled: default_stop_downloaded_enabled(),
+            default_stop_seed_time_enabled: default_stop_seed_time_enabled(),
+            default_random_range_percent: default_random_range_percent(), 
         }
     }
 }
