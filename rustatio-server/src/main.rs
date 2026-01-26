@@ -5,7 +5,6 @@ mod persistence;
 mod state;
 mod static_files;
 mod watch;
-mod config;
 
 use axum::{middleware, routing::get, Router};
 use std::net::SocketAddr;
@@ -35,11 +34,8 @@ async fn main() {
     // Get data directory from environment or use default
     let data_dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "/data".to_string());
 
-    let server_config = config::ServerConfig::from_env();
-    tracing::info!("Loaded server config: {:?}", server_config);
-
     // Create shared application state
-    let state = AppState::new(&data_dir, server_config.clone());
+    let state = AppState::new(&data_dir);
 
     // Initialize tracing subscriber with EnvFilter and broadcast layer
     // Default: show info for server, trace for rustatio_core/log (for UI filtering)
@@ -103,31 +99,19 @@ async fn main() {
     // Build CORS layer
     let cors = CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any);
 
-    // Build API routes depending on whether auth is enabled
-    let api_routes = if auth::is_auth_enabled() {
-        // Auth activée → routes publiques + routes protégées
-        Router::new()
-            .merge(api::public_router())
-            .merge(
-                api::router()
-                    .layer(middleware::from_fn(auth::auth_middleware))
-            )
-    } else {
-        // Auth désactivée → tout est public
-        Router::new()
-            .merge(api::public_router())
-            .merge(api::router())
-    };
-
     // Build router
     let app = Router::new()
+        // Health check (no auth required)
         .route("/health", get(|| async { "OK" }))
-        .nest("/api", api_routes)
-        .fallback(static_files::static_handler) // UI fallback, mais APRES les routes API
+        // Public API routes (no auth required)
+        .nest("/api", api::public_router())
+        // Protected API routes (auth required when AUTH_TOKEN is set)
+        .nest("/api", api::router().layer(middleware::from_fn(auth::auth_middleware)))
+        // Static files (web UI) - must be last as it catches all other routes (no auth)
+        .fallback(static_files::static_handler)
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(server_state);
-
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     tracing::info!("Rustatio server starting on http://{}", addr);
