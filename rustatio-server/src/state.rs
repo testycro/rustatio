@@ -1,6 +1,6 @@
 use crate::persistence::{now_timestamp, InstanceSource, PersistedInstance, PersistedState, Persistence};
 use rustatio_core::logger::set_instance_context_str;
-use rustatio_core::{FakerConfig, FakerState, FakerStats, RatioFaker, TorrentInfo};
+use rustatio_core::{FakerConfig, FakerState, FakerStats, RatioFaker, TorrentInfo, AppConfig};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -75,10 +75,12 @@ pub struct AppState {
     pub instance_sender: broadcast::Sender<InstanceEvent>,
     /// Persistence manager
     persistence: Arc<Persistence>,
+    /// Core Config
+    pub config: AppConfig,
 }
 
 impl AppState {
-    pub fn new(data_dir: &str) -> Self {
+    pub fn new(data_dir: &str, config: AppConfig) -> Self {
         let (log_sender, _) = broadcast::channel(256);
         let (instance_sender, _) = broadcast::channel(64);
         Self {
@@ -87,6 +89,7 @@ impl AppState {
             log_sender,
             instance_sender,
             persistence: Arc::new(Persistence::new(data_dir)),
+            config,
         }
     }
 
@@ -244,16 +247,92 @@ impl AppState {
     }
 
     /// Create a new faker instance (manual creation via API)
-    pub async fn create_instance(&self, id: &str, torrent: TorrentInfo, config: FakerConfig) -> Result<(), String> {
-        self.create_instance_internal(id, torrent, config, InstanceSource::Manual)
-            .await
+    pub async fn create_instance(&self, id: &str, torrent: TorrentInfo, mut config: FakerConfig) -> Result<(), String> {
+        let defaults = &self.config.faker;
+
+        // Apply defaults from TOML when values are still at their Rust defaults
+        if config.upload_rate == FakerConfig::default().upload_rate {
+            config.upload_rate = defaults.default_upload_rate;
+        }
+
+        if config.download_rate == FakerConfig::default().download_rate {
+            config.download_rate = defaults.default_download_rate;
+        }
+
+        if config.port == FakerConfig::default().port {
+            config.port = defaults.default_port;
+        }
+
+        if config.num_want == FakerConfig::default().num_want {
+            config.num_want = defaults.default_num_want;
+        }
+
+        if config.client_type == FakerConfig::default().client_type {
+            config.client_type = defaults.default_type.clone();
+        }
+
+        if config.completion_percent == FakerConfig::default().completion_percent {
+            config.completion_percent = defaults.default_completion_percent;
+        }
+
+        if config.stop_at_ratio == FakerConfig::default().stop_at_ratio {
+            config.stop_at_ratio = defaults.default_stop_ratio;
+        }
+
+        if config.stop_at_uploaded_gb == FakerConfig::default().stop_at_uploaded_gb {
+            config.stop_at_uploaded_gb = defaults.default_stop_uploaded_gb;
+        }
+
+        if config.stop_at_downloaded_gb == FakerConfig::default().stop_at_downloaded_gb {
+            config.stop_at_downloaded_gb = defaults.default_stop_downloaded_gb;
+        }
+
+        if config.stop_at_seed_time_hours == FakerConfig::default().stop_at_seed_time_hours {
+            config.stop_at_seed_time_hours = defaults.default_stop_seed_time_hours;
+        }
+
+        config.stop_at_ratio_enabled = defaults.default_stop_ratio_enabled;
+        config.stop_at_uploaded_enabled = defaults.default_stop_uploaded_enabled;
+        config.stop_at_downloaded_enabled = defaults.default_stop_downloaded_enabled;
+        config.stop_at_seed_time_enabled = defaults.default_stop_seed_time_enabled;
+        config.stop_when_no_leechers = defaults.default_stop_when_no_leechers;
+        config.progressive_rates_enabled = defaults.default_progressive_rates_enabled;
+        config.target_upload_rate = defaults.default_target_upload_rate;
+        config.target_download_rate = defaults.default_target_download_rate;
+        config.progressive_duration_hours = defaults.default_progressive_duration_hours;
+        config.random_range_percent = defaults.default_random_range_percent;
+
+        self.create_instance_internal(id, torrent, config, InstanceSource::Manual).await
     }
 
     /// Create a new idle faker instance (torrent loaded but not started)
     /// Used when user loads a torrent via UI - creates server-side instance so it persists on refresh
     pub async fn create_idle_instance(&self, id: &str, torrent: TorrentInfo) -> Result<(), String> {
         // Use default config for idle instance
-        let config = FakerConfig::default();
+        let d = &self.config.faker;
+        let mut config = FakerConfig::default();
+
+        config.upload_rate = d.default_upload_rate;
+        config.download_rate = d.default_download_rate;
+        config.port = d.default_port;
+        config.num_want = d.default_num_want;
+        config.client_type = d.default_type.clone();
+        config.completion_percent = d.default_completion_percent;
+        config.stop_at_ratio = d.default_stop_ratio;
+        config.stop_at_uploaded_gb = d.default_stop_uploaded_gb;
+        config.stop_at_downloaded_gb = d.default_stop_downloaded_gb;
+        config.stop_at_seed_time_hours = d.default_stop_seed_time_hours;
+        config.stop_at_ratio_enabled = d.default_stop_ratio_enabled;
+        config.stop_at_uploaded_enabled = d.default_stop_uploaded_enabled;
+        config.stop_at_downloaded_enabled = d.default_stop_downloaded_enabled;
+        config.stop_at_seed_time_enabled = d.default_stop_seed_time_enabled;
+        config.stop_when_no_leechers = d.default_stop_when_no_leechers;
+        config.progressive_rates_enabled = d.default_progressive_rates_enabled;
+        config.target_upload_rate = d.default_target_upload_rate;
+        config.target_download_rate = d.default_target_download_rate;
+        config.progressive_duration_hours = d.default_progressive_duration_hours;
+        config.random_range_percent = d.default_random_range_percent;
+
         self.create_instance_internal(id, torrent.clone(), config, InstanceSource::Manual)
             .await?;
 
@@ -274,9 +353,63 @@ impl AppState {
         &self,
         id: &str,
         torrent: TorrentInfo,
-        config: FakerConfig,
+        mut config: FakerConfig,
         auto_started: bool,
     ) -> Result<(), String> {
+        let d = &self.config.faker;
+
+        // Apply TOML defaults when values are still at their Rust defaults
+        if config.upload_rate == FakerConfig::default().upload_rate {
+            config.upload_rate = d.default_upload_rate;
+        }
+
+        if config.download_rate == FakerConfig::default().download_rate {
+            config.download_rate = d.default_download_rate;
+        }
+
+        if config.port == FakerConfig::default().port {
+            config.port = d.default_port;
+        }
+
+        if config.num_want == FakerConfig::default().num_want {
+            config.num_want = d.default_num_want;
+        }
+
+        if config.client_type == FakerConfig::default().client_type {
+            config.client_type = d.default_type.clone();
+        }
+
+        if config.completion_percent == FakerConfig::default().completion_percent {
+            config.completion_percent = d.default_completion_percent;
+        }
+
+        if config.stop_at_ratio == FakerConfig::default().stop_at_ratio {
+            config.stop_at_ratio = d.default_stop_ratio;
+        }
+
+        if config.stop_at_uploaded_gb == FakerConfig::default().stop_at_uploaded_gb {
+            config.stop_at_uploaded_gb = d.default_stop_uploaded_gb;
+        }
+
+        if config.stop_at_downloaded_gb == FakerConfig::default().stop_at_downloaded_gb {
+            config.stop_at_downloaded_gb = d.default_stop_downloaded_gb;
+        }
+
+        if config.stop_at_seed_time_hours == FakerConfig::default().stop_at_seed_time_hours {
+            config.stop_at_seed_time_hours = d.default_stop_seed_time_hours;
+        }
+
+        config.stop_at_ratio_enabled = d.default_stop_ratio_enabled;
+        config.stop_at_uploaded_enabled = d.default_stop_uploaded_enabled;
+        config.stop_at_downloaded_enabled = d.default_stop_downloaded_enabled;
+        config.stop_at_seed_time_enabled = d.default_stop_seed_time_enabled;
+        config.stop_when_no_leechers = d.default_stop_when_no_leechers;
+        config.progressive_rates_enabled = d.default_progressive_rates_enabled;
+        config.target_upload_rate = d.default_target_upload_rate;
+        config.target_download_rate = d.default_target_download_rate;
+        config.progressive_duration_hours = d.default_progressive_duration_hours;
+        config.random_range_percent = d.default_random_range_percent;
+
         self.create_instance_internal(id, torrent.clone(), config, InstanceSource::WatchFolder)
             .await?;
 
