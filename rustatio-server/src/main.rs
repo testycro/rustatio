@@ -14,6 +14,7 @@ use tokio::sync::{oneshot, RwLock};
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::layer::SubscriberExt;
+use rustatio_core::AppConfig;
 
 use crate::log_layer::BroadcastLayer;
 use crate::state::AppState;
@@ -24,6 +25,7 @@ use crate::watch::{WatchConfig, WatchDisabledReason, WatchService};
 pub struct ServerState {
     pub app: AppState,
     pub watch: Arc<RwLock<WatchService>>,
+    pub config: AppConfig,
 }
 
 #[tokio::main]
@@ -61,6 +63,16 @@ async fn main() {
         }
     }
 
+    // Charge la config depuis ~/.config/rustatio/config.toml
+    let config = AppConfig::load_or_default();
+
+    tracing::info!("Configuration chargée : {} instances", config.instances.len());
+
+    // Passe la config au serveur
+    if let Err(e) = rustatio_server::run(config).await {
+        tracing::error!("Erreur serveur : {}", e);
+    }
+
     // Initialize and start watch folder service
     let (watch_config, disabled_reason) = WatchConfig::from_env();
 
@@ -91,6 +103,7 @@ async fn main() {
     let server_state = ServerState {
         app: state.clone(),
         watch: watch_service.clone(),
+        config: config.clone(),
     };
 
     // Get port from environment or use default
