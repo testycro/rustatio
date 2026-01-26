@@ -129,14 +129,19 @@ pub struct FakerConfig {
     #[serde(default = "default_progressive_duration")]
     pub progressive_duration: u64,
 
-    // Announce retry configuration
     /// How many times to retry an announce on failure (default 10)
     #[serde(default = "default_announce_max_retries")]
     pub announce_max_retries: u32,
 
-    /// Base delay in milliseconds for announce retry exponential backoff (default 5000ms)
+    /// Base delay in milliseconds for announce retry (default 5000ms)
     #[serde(default = "default_announce_retry_ms")]
     pub announce_retry_delay_ms: u64,
+
+    #[serde(default = "default_announce_interval")]
+    pub announce_interval: u64,
+
+    #[serde(default = "default_update_interval")]
+    pub update_interval: u64,
 }
 
 fn default_randomize_rates() -> bool {
@@ -157,6 +162,14 @@ fn default_announce_max_retries() -> u32 {
 
 fn default_announce_retry_ms() -> u64 {
     5000
+}
+
+fn default_announce_interval() -> u64 {
+    1800
+}
+
+fn default_update_interval() -> u64 {
+    5
 }
 
 impl Default for FakerConfig {
