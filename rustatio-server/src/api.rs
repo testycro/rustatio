@@ -98,6 +98,7 @@ pub fn public_router() -> Router<ServerState> {
     Router::new()
         // Auth status check (no auth required - tells UI if auth is enabled)
         .route("/auth/status", get(auth_status))
+        .route("/config", get(get_config))
 }
 
 // =============================================================================
@@ -139,6 +140,12 @@ async fn list_instances(State(state): State<ServerState>) -> Response {
     let instances: Vec<InstanceInfo> = state.app.list_instances().await;
     ApiSuccess::response(instances)
 }
+
+/// Return full application config (public endpoint)
+async fn get_config(State(state): State<ServerState>) -> Response {
+    ApiSuccess::response(&state.config)
+}
+
 
 /// Query parameters for delete instance
 #[derive(Deserialize)]
