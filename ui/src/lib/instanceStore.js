@@ -7,26 +7,8 @@ const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 // Helper to convert bytes to MB (rounded to integer)
 const bytesToMB = bytes => Math.round((bytes || 0) / (1024 * 1024));
 
-const DEFAULT_CONFIG = {
-  client_default_type: 'transmission',
-  client_default_port: 59859,
-  faker_default_upload_rate: 700,
-  faker_default_download_rate: 0,
-  faker_update_interval: 5,
-  faker_default_announce_interval: 1800,
-  faker_default_randomize: true,
-  faker_default_random_range: 50,
-};
-
-function getCfg() {
-  const cfg = get(globalConfig);
-  return cfg ?? DEFAULT_CONFIG;
-}
-
 // Create default instance state
 function createDefaultInstance(id, defaults = {}) {
-  const cfg = getCfg();
-
   return {
     id,
 
@@ -51,18 +33,19 @@ function createDefaultInstance(id, defaults = {}) {
       defaults.cumulativeDownloaded !== undefined ? defaults.cumulativeDownloaded : 0,
 
     // Form values
-    selectedClient: defaults.selectedClient || cfg.client_default_type,
+    selectedClient: defaults.selectedClient || 'transmission',
     selectedClientVersion: defaults.selectedClientVersion || null,
-    uploadRate: defaults.uploadRate ?? cfg.faker_default_upload_rate,
-    downloadRate: defaults.downloadRate ?? cfg.faker_default_download_rate,
-    port: defaults.port ?? cfg.client_default_port,
+    uploadRate: defaults.uploadRate !== undefined ? defaults.uploadRate : 700,
+    downloadRate: defaults.downloadRate !== undefined ? defaults.downloadRate : 0,
+    port: defaults.port !== undefined ? defaults.port : 59859,
     completionPercent: defaults.completionPercent !== undefined ? defaults.completionPercent : 100,
     initialUploaded: defaults.initialUploaded !== undefined ? defaults.initialUploaded : 0,
     initialDownloaded: defaults.initialDownloaded !== undefined ? defaults.initialDownloaded : 0,
     randomizeRates: defaults.randomizeRates !== undefined ? defaults.randomizeRates : true,
-    randomRangePercent: defaults.randomRangePercent !== undefined ? defaults.randomRangePercent : 50,
-    updateIntervalSeconds: defaults.updateIntervalSeconds ?? cfg.faker_update_interval,
-    announceInterval: defaults.announceInterval ?? cfg.faker_default_announce_interval,
+    randomRangePercent:
+      defaults.randomRangePercent !== undefined ? defaults.randomRangePercent : 50,
+    updateIntervalSeconds:
+      defaults.updateIntervalSeconds !== undefined ? defaults.updateIntervalSeconds : 5,
 
     // Stop conditions
     stopAtRatioEnabled:
@@ -165,7 +148,6 @@ async function saveSession(instances, activeId) {
           randomize_rates: inst.randomizeRates,
           random_range_percent: parseFloat(inst.randomRangePercent),
           update_interval_seconds: parseInt(inst.updateIntervalSeconds),
-          announce_interval: inst.announceInterval,
           stop_at_ratio_enabled: inst.stopAtRatioEnabled,
           stop_at_ratio: parseFloat(inst.stopAtRatio),
           stop_at_uploaded_enabled: inst.stopAtUploadedEnabled,
@@ -195,8 +177,6 @@ async function saveSession(instances, activeId) {
 
 // Load session from storage (localStorage for web, Tauri config for desktop)
 function loadSessionFromStorage(config = null) {
-  const cfg = getCfg();
-
   try {
     let sessionData;
 
@@ -210,8 +190,7 @@ function loadSessionFromStorage(config = null) {
       sessionData = JSON.parse(stored);
     }
 
-    if (!sessionData || !Array.isArray(sessionData.instances) || sessionData.instances.length === 0) {
-      localStorage.removeItem('rustatio-session');
+    if (!sessionData || !sessionData.instances || sessionData.instances.length === 0) {
       return null;
     }
 
@@ -219,20 +198,19 @@ function loadSessionFromStorage(config = null) {
       instances: sessionData.instances.map(inst => ({
         torrentPath: inst.torrent_path,
         torrent: inst.torrent_data || null, // Restore torrent data for web
-        selectedClient: inst.selected_client ?? cfg.client_default_type,
+        selectedClient: inst.selected_client,
         selectedClientVersion: inst.selected_client_version,
-        uploadRate: inst.upload_rate ?? cfg.faker_default_upload_rate,
-        downloadRate: inst.download_rate ?? cfg.faker_default_download_rate,
-        port: inst.port ?? cfg.client_default_port,
+        uploadRate: inst.upload_rate,
+        downloadRate: inst.download_rate,
+        port: inst.port,
         completionPercent: inst.completion_percent,
         initialUploaded: bytesToMB(inst.initial_uploaded),
         initialDownloaded: bytesToMB(inst.initial_downloaded),
         cumulativeUploaded: bytesToMB(inst.cumulative_uploaded),
         cumulativeDownloaded: bytesToMB(inst.cumulative_downloaded),
-        randomizeRates: inst.randomize_rates ?? cfg.faker_default_randomize,
-        randomRangePercent: inst.random_range_percent ?? cfg.faker_default_random_range,
-        announceInterval: inst.announce_interval ?? cfg.faker_default_announce_interval,
-        updateIntervalSeconds: inst.update_interval_seconds ?? cfg.faker_update_interval,
+        randomizeRates: inst.randomize_rates,
+        randomRangePercent: inst.random_range_percent,
+        updateIntervalSeconds: inst.update_interval_seconds,
         stopAtRatioEnabled: inst.stop_at_ratio_enabled,
         stopAtRatio: inst.stop_at_ratio,
         stopAtUploadedEnabled: inst.stop_at_uploaded_enabled,
@@ -283,10 +261,12 @@ export const instanceActions = {
   // Initialize - create first instance or restore from storage/server
   initialize: async () => {
     try {
-      // Load config (both Web and Tauri)
+      // Load config if in Tauri mode
       let config = null;
-      config = await api.getConfig();
-      globalConfig.set(config);
+      if (isTauri) {
+        config = await api.getConfig();
+        globalConfig.set(config);
+      }
 
       // For server mode, try to fetch existing instances from backend first
       // This handles the case where instances are running and user refreshes or opens new tab
@@ -311,8 +291,6 @@ export const instanceActions = {
                 cumulativeDownloaded: bytesToMB(serverInst.stats.downloaded),
                 randomizeRates: serverInst.config.randomize_rates,
                 randomRangePercent: serverInst.config.random_range_percent,
-                announceInterval: serverInst.config.announce_interval,
-                updateIntervalSeconds: serverInst.config.update_interval,
                 stopAtRatioEnabled: serverInst.config.stop_at_ratio !== null,
                 stopAtRatio: serverInst.config.stop_at_ratio || 2.0,
                 stopAtUploadedEnabled: serverInst.config.stop_at_uploaded !== null,
@@ -370,8 +348,7 @@ export const instanceActions = {
       // Fall back to localStorage/config restoration
       const savedSession = loadSessionFromStorage(config);
 
-      if (savedSession && Array.isArray(savedSession.instances) && savedSession.instances.length > 0) {
-
+      if (savedSession && savedSession.instances && savedSession.instances.length > 0) {
         // Restore from saved session
         const restoredInstances = [];
         for (const savedInst of savedSession.instances) {
@@ -600,8 +577,6 @@ export const instanceActions = {
       cumulativeDownloaded: bytesToMB(serverInst.stats.downloaded),
       randomizeRates: serverInst.config.randomize_rates,
       randomRangePercent: serverInst.config.random_range_percent,
-      announceInterval: serverInst.config.announce_interval,
-      updateIntervalSeconds: serverInst.config.update_interval,
       stopAtRatioEnabled: serverInst.config.stop_at_ratio !== null,
       stopAtRatio: serverInst.config.stop_at_ratio || 2.0,
       stopAtUploadedEnabled: serverInst.config.stop_at_uploaded !== null,
