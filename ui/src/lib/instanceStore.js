@@ -9,6 +9,8 @@ const bytesToMB = bytes => Math.round((bytes || 0) / (1024 * 1024));
 
 // Create default instance state
 function createDefaultInstance(id, defaults = {}) {
+  const cfg = get(globalConfig);
+
   return {
     id,
 
@@ -33,46 +35,33 @@ function createDefaultInstance(id, defaults = {}) {
       defaults.cumulativeDownloaded !== undefined ? defaults.cumulativeDownloaded : 0,
 
     // Form values
-    selectedClient: defaults.selectedClient || 'transmission',
-    selectedClientVersion: defaults.selectedClientVersion || null,
-    uploadRate: defaults.uploadRate !== undefined ? defaults.uploadRate : 700,
-    downloadRate: defaults.downloadRate !== undefined ? defaults.downloadRate : 0,
-    port: defaults.port !== undefined ? defaults.port : 59859,
-    completionPercent: defaults.completionPercent !== undefined ? defaults.completionPercent : 100,
+    selectedClient: defaults.selectedClient ?? cfg?.client?.default_type ?? 'transmission',
+    selectedClientVersion: defaults.selectedClientVersion ?? cfg?.client?.default_version ?? null,
+    uploadRate: defaults.uploadRate ?? cfg?.faker?.default_upload_rate ?? 700,
+    downloadRate: defaults.downloadRate ?? cfg?.faker?.default_download_rate ?? 0,
+    port: defaults.port ?? cfg?.client?.default_port ?? 59859,
+    completionPercent: defaults.completionPercent ?? cfg?.faker?.default_completion_percent ?? 100,
     initialUploaded: defaults.initialUploaded !== undefined ? defaults.initialUploaded : 0,
     initialDownloaded: defaults.initialDownloaded !== undefined ? defaults.initialDownloaded : 0,
     randomizeRates: defaults.randomizeRates !== undefined ? defaults.randomizeRates : true,
-    randomRangePercent:
-      defaults.randomRangePercent !== undefined ? defaults.randomRangePercent : 50,
-    updateIntervalSeconds:
-      defaults.updateIntervalSeconds !== undefined ? defaults.updateIntervalSeconds : 5,
-
+    randomRangePercent:defaults.randomRangePercent ?? cfg?.faker?.default_random_range_percent ?? 50,
+    updateIntervalSeconds: defaults.updateIntervalSeconds ?? cfg?.faker?.update_interval ?? 5,
     // Stop conditions
-    stopAtRatioEnabled:
-      defaults.stopAtRatioEnabled !== undefined ? defaults.stopAtRatioEnabled : false,
-    stopAtRatio: defaults.stopAtRatio !== undefined ? defaults.stopAtRatio : 2.0,
-    stopAtUploadedEnabled:
-      defaults.stopAtUploadedEnabled !== undefined ? defaults.stopAtUploadedEnabled : false,
-    stopAtUploadedGB: defaults.stopAtUploadedGB !== undefined ? defaults.stopAtUploadedGB : 10,
-    stopAtDownloadedEnabled:
-      defaults.stopAtDownloadedEnabled !== undefined ? defaults.stopAtDownloadedEnabled : false,
-    stopAtDownloadedGB:
-      defaults.stopAtDownloadedGB !== undefined ? defaults.stopAtDownloadedGB : 10,
-    stopAtSeedTimeEnabled:
-      defaults.stopAtSeedTimeEnabled !== undefined ? defaults.stopAtSeedTimeEnabled : true,
-    stopAtSeedTimeHours:
-      defaults.stopAtSeedTimeHours !== undefined ? defaults.stopAtSeedTimeHours : 744,
-    stopWhenNoLeechers:
-      defaults.stopWhenNoLeechers !== undefined ? defaults.stopWhenNoLeechers : false,
+    stopAtRatioEnabled: defaults.stopAtRatioEnabled ?? cfg?.faker?.default_stop_ratio_enabled ?? false,
+    stopAtRatio: defaults.stopAtRatio ?? cfg?.faker?.default_stop_ratio ?? 2.0,
+    stopAtUploadedEnabled: defaults.stopAtUploadedEnabled ?? cfg?.faker?.default_stop_uploaded_enabled ?? false,
+    stopAtUploadedGB: defaults.stopAtUploadedGB ?? cfg?.faker?.default_stop_uploaded_gb ?? 10,
+    stopAtDownloadedEnabled: defaults.stopAtDownloadedEnabled ?? cfg?.faker?.default_stop_downloaded_enabled ?? false,
+    stopAtDownloadedGB: defaults.stopAtDownloadedGB ?? cfg?.faker?.default_stop_downloaded_gb ?? 10,
+    stopAtSeedTimeEnabled: defaults.stopAtSeedTimeEnabled ?? cfg?.faker?.default_stop_seed_time_enabled ?? true,
+    stopAtSeedTimeHours: defaults.stopAtSeedTimeHours ?? cfg?.faker?.default_stop_seed_time_hours ?? : 744,
+    stopWhenNoLeechers: defaults.stopWhenNoLeechers ?? cfg?.faker?.default_stop_when_no_leechers ?? false,
 
     // Progressive rates
-    progressiveRatesEnabled:
-      defaults.progressiveRatesEnabled !== undefined ? defaults.progressiveRatesEnabled : false,
-    targetUploadRate: defaults.targetUploadRate !== undefined ? defaults.targetUploadRate : 100,
-    targetDownloadRate:
-      defaults.targetDownloadRate !== undefined ? defaults.targetDownloadRate : 200,
-    progressiveDurationHours:
-      defaults.progressiveDurationHours !== undefined ? defaults.progressiveDurationHours : 1,
+    progressiveRatesEnabled: defaults.progressiveRatesEnabled ?? cfg?.faker?.default_progressive_rates_enabled ?? false,
+    targetUploadRate: defaults.targetUploadRate ?? cfg?.faker?.default_target_upload_rate ?? 100,
+    targetDownloadRate: defaults.targetDownloadRate ?? cfg?.faker?.default_target_download_rate ?? 200,
+    progressiveDurationHours: defaults.progressiveDurationHours ?? cfg?.faker?.default_progressive_duration_hours ?? 1,
 
     // Status
     statusMessage: 'Select a torrent file to begin',
@@ -271,7 +260,20 @@ export const instanceActions = {
       // For server mode, try to fetch existing instances from backend first
       // This handles the case where instances are running and user refreshes or opens new tab
       const isServerMode = !isTauri && typeof api.listInstances === 'function';
+
       if (isServerMode) {
+      // Load config from backend
+        try {
+          const cfg = await api.getConfig();
+          if (cfg) {
+            globalConfig.set(cfg);
+            console.info("Server config loaded succesfully");
+          }
+        } catch (e) {
+          console.warn("Failed to load server config:", e);
+        }
+
+         // Load existing instances
         try {
           const serverInstances = await api.listInstances();
           if (serverInstances && serverInstances.length > 0) {
