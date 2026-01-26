@@ -248,25 +248,7 @@ impl AppState {
     }
 
     /// Create a new faker instance (manual creation via API)
-    pub async fn create_instance(&self, id: &str, torrent: TorrentInfo, mut config: FakerConfig) -> Result<(), String> {
-        let defaults = self.config.to_faker_defaults();
-
-        if config.upload_rate == FakerConfig::default().upload_rate {
-            config.upload_rate = defaults.upload_rate;
-        }
-        if config.download_rate == FakerConfig::default().download_rate {
-            config.download_rate = defaults.download_rate;
-        }
-        if config.port == FakerConfig::default().port {
-            config.port = defaults.port;
-        }
-        if config.num_want == FakerConfig::default().num_want {
-            config.num_want = defaults.num_want;
-        }
-        if config.client_type == FakerConfig::default().client_type {
-            config.client_type = defaults.client_type.clone();
-        }
-
+    pub async fn create_instance(&self, id: &str, torrent: TorrentInfo, config: FakerConfig) -> Result<(), String> {
         self.create_instance_internal(id, torrent, config, InstanceSource::Manual)
             .await
     }
@@ -275,7 +257,16 @@ impl AppState {
     /// Used when user loads a torrent via UI - creates server-side instance so it persists on refresh
     pub async fn create_idle_instance(&self, id: &str, torrent: TorrentInfo) -> Result<(), String> {
         // Use default config for idle instance
-        let config = self.config.to_faker_defaults();
+        let mut config = FakerConfig::default();
+
+         // Inject ENV defaults
+        config.upload_rate = self.config.faker_default_upload_rate;
+        config.download_rate = self.config.faker_default_download_rate;
+        config.num_want = self.config.client_default_num_want;
+        config.port = self.config.client_default_port;
+        config.client_type = self.config.client_default_type.clone();
+        config.announce_interval = self.config.faker_default_announce_interval;
+        config.update_interval = self.config.faker_update_interval;
 
         self.create_instance_internal(id, torrent.clone(), config, InstanceSource::Manual)
             .await?;
@@ -297,27 +288,9 @@ impl AppState {
         &self,
         id: &str,
         torrent: TorrentInfo,
-        mut config: FakerConfig,
+        config: FakerConfig,
         auto_started: bool,
     ) -> Result<(), String> {
-        let defaults = self.config.to_faker_defaults();
-
-        if config.upload_rate == FakerConfig::default().upload_rate {
-            config.upload_rate = defaults.upload_rate;
-        }
-        if config.download_rate == FakerConfig::default().download_rate {
-            config.download_rate = defaults.download_rate;
-        }
-        if config.port == FakerConfig::default().port {
-            config.port = defaults.port;
-        }
-        if config.num_want == FakerConfig::default().num_want {
-            config.num_want = defaults.num_want;
-        }
-        if config.client_type == FakerConfig::default().client_type {
-            config.client_type = defaults.client_type.clone();
-        }
-
         self.create_instance_internal(id, torrent.clone(), config, InstanceSource::WatchFolder)
             .await?;
 
@@ -458,7 +431,7 @@ impl AppState {
         state: AppState,
         mut shutdown_rx: mpsc::Receiver<()>,
     ) {
-        let update_interval = Duration::from_secs(state.config.faker_update_interval);
+        let update_interval = Duration::from_secs(5);
         let save_interval = Duration::from_secs(30);
         let mut last_save = std::time::Instant::now();
 
