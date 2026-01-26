@@ -19,9 +19,6 @@ use std::cell::RefCell;
 #[cfg(target_arch = "wasm32")]
 use js_sys;
 
-#[cfg(target_arch = "wasm32")]
-use gloo_timers::future::sleep as wasm_sleep;
-
 // Macros for platform-specific lock access
 #[cfg(not(target_arch = "wasm32"))]
 macro_rules! read_lock {
@@ -140,12 +137,6 @@ pub struct FakerConfig {
     /// Base delay in milliseconds for announce retry exponential backoff (default 5000ms)
     #[serde(default = "default_announce_retry_ms")]
     pub announce_retry_delay_ms: u64,
-
-    #[serde(default = "default_announce_interval")]
-    pub announce_interval: u64,
-
-    #[serde(default = "default_update_interval")]
-    pub update_interval: u64,
 }
 
 fn default_randomize_rates() -> bool {
@@ -166,13 +157,6 @@ fn default_announce_max_retries() -> u32 {
 
 fn default_announce_retry_ms() -> u64 {
     5000
-}
-
-fn default_announce_interval() -> u64 {
-    1800
-}
-fn default_update_interval() -> u64 {
-    5
 }
 
 impl Default for FakerConfig {
@@ -200,8 +184,6 @@ impl Default for FakerConfig {
             progressive_duration: 3600,
             announce_max_retries: default_announce_max_retries(),
             announce_retry_delay_ms: default_announce_retry_ms(),
-            announce_interval: 1800,
-            update_interval: 5,
         }
     }
 }
@@ -323,7 +305,6 @@ impl RatioFaker {
 
         // Create client configuration
         let client_config = ClientConfig::get(config.client_type.clone(), config.client_version.clone());
-        let announce_interval = config.announce_interval;
 
         // Generate session identifiers
         let peer_id = client_config.generate_peer_id();
@@ -404,7 +385,7 @@ impl RatioFaker {
                 tracker_id: None,
                 start_time: Instant::now(),
                 last_update: Instant::now(),
-                announce_interval: Duration::from_secs(announce_interval), // Default 30 minutes
+                announce_interval: Duration::from_secs(1800), // Default 30 minutes
             })
         }
 
@@ -421,7 +402,7 @@ impl RatioFaker {
                 tracker_id: None,
                 start_time: Instant::now(),
                 last_update: Instant::now(),
-                announce_interval: Duration::from_secs(announce_interval), // Default 30 minutes
+                announce_interval: Duration::from_secs(1800), // Default 30 minutes
             })
         }
     }
@@ -669,7 +650,10 @@ impl RatioFaker {
 
                         #[cfg(target_arch = "wasm32")]
                         {
-                            wasm_sleep(Duration::from_millis(delay_ms)).await;
+                            // WASM: no tokio::time::sleep by default in this codebase.
+                            // If you need a delay in wasm, replace this with a wasm-compatible async sleep
+                            // (e.g., gloo_timers::future::sleep) or adjust the code to retry immediately.
+                            // For now, we retry immediately in wasm builds.
                         }
                     }
                 }
