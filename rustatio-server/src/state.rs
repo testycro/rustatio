@@ -249,6 +249,7 @@ impl AppState {
     /// Create a new faker instance (manual creation via API)
     pub async fn create_instance(&self, id: &str, torrent: TorrentInfo, mut config: FakerConfig) -> Result<(), String> {
         let defaults = &self.config.faker;
+		let client_defaults = &self.config.client; 
 
         // Apply defaults from TOML when values are still at their Rust defaults
         if config.upload_rate == FakerConfig::default().upload_rate {
@@ -260,11 +261,11 @@ impl AppState {
         }
 
         if config.port == FakerConfig::default().port {
-            config.port = defaults.default_port;
+            config.port = client_defaults.default_port;
         }
 
         if config.num_want == FakerConfig::default().num_want {
-            config.num_want = defaults.default_num_want;
+            config.num_want = client_defaults.default_num_want;
         }
 
         if config.client_type == FakerConfig::default().client_type {
@@ -326,12 +327,13 @@ impl AppState {
     pub async fn create_idle_instance(&self, id: &str, torrent: TorrentInfo) -> Result<(), String> {
         // Use default config for idle instance
         let d = &self.config.faker;
+		let client_defaults = &self.config.client; 
         let mut config = FakerConfig::default();
 
         config.upload_rate = d.default_upload_rate;
         config.download_rate = d.default_download_rate;
-        config.port = d.default_port;
-        config.num_want = d.default_num_want;
+        config.port = client_defaults.default_port;
+        config.num_want = client_defaults.default_num_want;
         config.client_type = d.default_type.clone();
         config.completion_percent = d.default_completion_percent;
 
@@ -405,6 +407,7 @@ impl AppState {
         auto_started: bool,
     ) -> Result<(), String> {
         let d = &self.config.faker;
+		let client_defaults = &self.config.client;
 
         // Apply TOML defaults when values are still at their Rust defaults
         if config.upload_rate == FakerConfig::default().upload_rate {
@@ -416,11 +419,11 @@ impl AppState {
         }
 
         if config.port == FakerConfig::default().port {
-            config.port = d.default_port;
+            config.port = client_defaults.default_port;
         }
 
         if config.num_want == FakerConfig::default().num_want {
-            config.num_want = d.default_num_want;
+            config.num_want = client_defaults.default_num_want;
         }
 
         if config.client_type == FakerConfig::default().client_type {
