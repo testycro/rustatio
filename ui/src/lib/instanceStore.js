@@ -7,6 +7,37 @@ const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 // Helper to convert bytes to MB (rounded to integer)
 const bytesToMB = bytes => Math.round((bytes || 0) / (1024 * 1024));
 
+function backendDefaults(cfg) {
+  if (!cfg) return {};
+
+  return {
+    selectedClient: cfg?.client?.default_type,
+    selectedClientVersion: cfg?.client?.default_version,
+    uploadRate: cfg?.faker?.default_upload_rate,
+    downloadRate: cfg?.faker?.default_download_rate,
+    port: cfg?.client?.default_port,
+    completionPercent: cfg?.faker?.default_completion_percent,
+    randomizeRates: cfg?.faker?.default_randomize_rates,
+    randomRangePercent: cfg?.faker?.default_random_range_percent,
+    updateIntervalSeconds: cfg?.faker?.update_interval,
+
+    stopAtRatioEnabled: cfg?.faker?.default_stop_ratio_enabled,
+    stopAtRatio: cfg?.faker?.default_stop_ratio,
+    stopAtUploadedEnabled: cfg?.faker?.default_stop_uploaded_enabled,
+    stopAtUploadedGB: cfg?.faker?.default_stop_uploaded_gb,
+    stopAtDownloadedEnabled: cfg?.faker?.default_stop_downloaded_enabled,
+    stopAtDownloadedGB: cfg?.faker?.default_stop_downloaded_gb,
+    stopAtSeedTimeEnabled: cfg?.faker?.default_stop_seed_time_enabled,
+    stopAtSeedTimeHours: cfg?.faker?.default_stop_seed_time_hours,
+    stopWhenNoLeechers: cfg?.faker?.default_stop_when_no_leechers,
+
+    progressiveRatesEnabled: cfg?.faker?.default_progressive_rates_enabled,
+    targetUploadRate: cfg?.faker?.default_target_upload_rate,
+    targetDownloadRate: cfg?.faker?.default_target_download_rate,
+    progressiveDurationHours: cfg?.faker?.default_progressive_duration_hours,
+  };
+}
+
 // Create default instance state
 function createDefaultInstance(id, defaults = {}) {
   const cfg = get(globalConfig) || {};
@@ -418,9 +449,10 @@ export const instanceActions = {
         return restoredInstances[0].id;
       } else {
         // No saved session - create first instance with defaults
+        const cfg = get(globalConfig);
+        const defaults = backendDefaults(cfg);
         const instanceId = await api.createInstance();
-
-        const newInstance = createDefaultInstance(instanceId, {});
+        const newInstance = createDefaultInstance(instanceId, defaults);
         instances.set([newInstance]);
         activeInstanceId.set(instanceId);
         updateActiveInstanceStore();
@@ -436,7 +468,13 @@ export const instanceActions = {
   addInstance: async (defaults = {}) => {
     try {
       const instanceId = await api.createInstance();
-      const newInstance = createDefaultInstance(instanceId, defaults);
+      const cfg = get(globalConfig);
+      const backend = backendDefaults(cfg);
+
+      const newInstance = createDefaultInstance(instanceId, {
+        ...backend,
+        ...defaults, // l’utilisateur peut override
+      });
 
       instances.update(insts => [...insts, newInstance]);
       activeInstanceId.set(instanceId);
