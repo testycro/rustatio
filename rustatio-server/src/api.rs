@@ -143,8 +143,9 @@ async fn list_instances(State(state): State<ServerState>) -> Response {
 
 /// Return full application config (public endpoint)
 async fn get_config(State(state): State<ServerState>) -> Response {
-    ApiSuccess::response(&state.config)
+    ApiSuccess::response(&state.app.config)
 }
+
 
 
 /// Query parameters for delete instance
