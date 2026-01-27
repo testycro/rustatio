@@ -9,7 +9,7 @@ const bytesToMB = bytes => Math.round((bytes || 0) / (1024 * 1024));
 
 // Create default instance state
 function createDefaultInstance(id, defaults = {}) {
-  const cfg = get(globalConfig);
+  const cfg = get(globalConfig) || {};
 
   return {
     id,
@@ -250,6 +250,16 @@ export const instanceActions = {
   // Initialize - create first instance or restore from storage/server
   initialize: async () => {
     try {
+      // Always load backend config first
+      try {
+          const cfg = await api.getConfig();
+          if (cfg) {
+              globalConfig.set(cfg);
+              console.info("Backend config loaded");
+          }
+      } catch (e) {
+          console.warn("Backend config unavailable, using UI defaults");
+      }
       // Load config if in Tauri mode
       let config = null;
       if (isTauri) {
