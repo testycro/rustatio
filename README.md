@@ -122,16 +122,8 @@ services:
       # - AUTH_TOKEN=${AUTH_TOKEN:-CHANGE_ME}
       # Optional: Watch folder configuration (auto-detected if volume is mounted)
       - WATCH_AUTO_START=true  # Set to true to auto-start faking new torrents
-
-      - CLIENT_DEFAULT_TYPE="transmission"
-      - CLIENT_DEFAULT_PORT="59859"
-      - CLIENT_DEFAULT_NUM_WANT="50"
-
-      - FAKER_DEFAULT_UPLOAD_RATE="700"
-      - FAKER_DEFAULT_DOWNLOAD_RATE="0"
-      - FAKER_DEFAULT_ANNOUNCE_INTERVAL="1800"
-      - FAKER_UPDATE_INTERVAL="5"
     volumes:
+      - /your/path/to/rustatio/config:/home/rustatio/.config
       - /your/path/to/rustatio/data/folder:/data
       # Optional: Uncomment to enable watch folder feature
       - ${TORRENTS_DIR:-/your/path/to/rustatio/torrents/folder}:/torrents
@@ -246,16 +238,8 @@ services:
       # - AUTH_TOKEN=${AUTH_TOKEN:-CHANGE_ME}
       # Optional: Watch folder configuration (auto-detected if volume is mounted)
       - WATCH_AUTO_START=true  # Set to true to auto-start faking new torrents
-
-      - CLIENT_DEFAULT_TYPE="transmission"
-      - CLIENT_DEFAULT_PORT="59859"
-      - CLIENT_DEFAULT_NUM_WANT="50"
-
-      - FAKER_DEFAULT_UPLOAD_RATE="700"
-      - FAKER_DEFAULT_DOWNLOAD_RATE="0"
-      - FAKER_DEFAULT_ANNOUNCE_INTERVAL="1800"
-      - FAKER_UPDATE_INTERVAL="5"
     volumes:
+      - /your/path/to/rustatio/config:/home/rustatio/.config
       - /your/path/to/rustatio/data/folder:/data
       # Optional: Uncomment to enable watch folder feature
       - ${TORRENTS_DIR:-/your/path/to/rustatio/torrents/folder}:/torrents
@@ -315,21 +299,40 @@ Configuration is automatically saved when using the UI. Settings are stored in:
 You can also manually edit the configuration file. Example configuration:
 
 ```toml
+instances = []
+
 [client]
-default_type = "qbittorrent"
-default_port = 6881
+default_type = "transmission"
+default_port = 59859
 default_num_want = 50
 
 [faker]
-default_upload_rate = 50.0
-default_download_rate = 100.0
+default_upload_rate = 700.0
+default_download_rate = 0.0
 default_announce_interval = 1800
 update_interval = 5
+default_completion_percent = 100.0
+default_stop_ratio = 2.0
+default_stop_uploaded_gb = 10.0
+default_stop_downloaded_gb = 10.0
+default_stop_seed_time_hours = 744.0
+default_stop_when_no_leechers = false
+default_progressive_rates_enabled = false
+default_target_upload_rate = 100.0
+default_target_download_rate = 200.0
+default_progressive_duration_hours = 1.0
+default_stop_ratio_enabled = false
+default_stop_uploaded_enabled = false
+default_stop_downloaded_enabled = false
+default_stop_seed_time_enabled = true
+default_random_range_percent = 50.0
 
 [ui]
 window_width = 1200
 window_height = 800
 dark_mode = true
+show_logs = true
+
 ```
 
 ## 🎯 Supported Clients
