@@ -271,35 +271,51 @@ impl AppState {
             config.client_type = defaults.default_type.clone();
         }
 
-        if config.completion_percent == FakerConfig::default().completion_percent {
-            config.completion_percent = defaults.default_completion_percent;
-        }
+        config.stop_at_ratio = if defaults.default_stop_ratio_enabled {
+            Some(defaults.default_stop_ratio)
+        } else {
+            None
+        };
 
-        if config.stop_at_ratio == FakerConfig::default().stop_at_ratio {
-            config.stop_at_ratio = defaults.default_stop_ratio;
-        }
+        config.stop_at_uploaded = if defaults.default_stop_uploaded_enabled {
+            Some((defaults.default_stop_uploaded_gb * 1024.0 * 1024.0 * 1024.0) as u64)
+        } else {
+            None
+        };
 
-        if config.stop_at_uploaded_gb == FakerConfig::default().stop_at_uploaded_gb {
-            config.stop_at_uploaded_gb = defaults.default_stop_uploaded_gb;
-        }
+        config.stop_at_downloaded = if defaults.default_stop_downloaded_enabled {
+            Some((defaults.default_stop_downloaded_gb * 1024.0 * 1024.0 * 1024.0) as u64)
+        } else {
+            None
+        };
 
-        if config.stop_at_downloaded_gb == FakerConfig::default().stop_at_downloaded_gb {
-            config.stop_at_downloaded_gb = defaults.default_stop_downloaded_gb;
-        }
+        config.stop_at_seed_time = if defaults.default_stop_seed_time_enabled {
+            Some((defaults.default_stop_seed_time_hours * 3600.0) as u64)
+        } else {
+            None
+        };
 
-        if config.stop_at_seed_time_hours == FakerConfig::default().stop_at_seed_time_hours {
-            config.stop_at_seed_time_hours = defaults.default_stop_seed_time_hours;
-        }
-
-        config.stop_at_ratio_enabled = defaults.default_stop_ratio_enabled;
-        config.stop_at_uploaded_enabled = defaults.default_stop_uploaded_enabled;
-        config.stop_at_downloaded_enabled = defaults.default_stop_downloaded_enabled;
-        config.stop_at_seed_time_enabled = defaults.default_stop_seed_time_enabled;
         config.stop_when_no_leechers = defaults.default_stop_when_no_leechers;
-        config.progressive_rates_enabled = defaults.default_progressive_rates_enabled;
-        config.target_upload_rate = defaults.default_target_upload_rate;
-        config.target_download_rate = defaults.default_target_download_rate;
-        config.progressive_duration_hours = defaults.default_progressive_duration_hours;
+
+        // === PROGRESSIVE RATES ===
+        config.progressive_rates = defaults.default_progressive_rates_enabled;
+
+        config.target_upload_rate = if defaults.default_progressive_rates_enabled {
+            Some(defaults.default_target_upload_rate)
+        } else {
+            None
+        };
+
+        config.target_download_rate = if defaults.default_progressive_rates_enabled {
+            Some(defaults.default_target_download_rate)
+        } else {
+            None
+        };
+
+        config.progressive_duration =
+            (defaults.default_progressive_duration_hours * 3600.0) as u64;
+
+        // === RANDOMIZATION ===
         config.random_range_percent = defaults.default_random_range_percent;
 
         self.create_instance_internal(id, torrent, config, InstanceSource::Manual).await
@@ -318,19 +334,51 @@ impl AppState {
         config.num_want = d.default_num_want;
         config.client_type = d.default_type.clone();
         config.completion_percent = d.default_completion_percent;
-        config.stop_at_ratio = d.default_stop_ratio;
-        config.stop_at_uploaded_gb = d.default_stop_uploaded_gb;
-        config.stop_at_downloaded_gb = d.default_stop_downloaded_gb;
-        config.stop_at_seed_time_hours = d.default_stop_seed_time_hours;
-        config.stop_at_ratio_enabled = d.default_stop_ratio_enabled;
-        config.stop_at_uploaded_enabled = d.default_stop_uploaded_enabled;
-        config.stop_at_downloaded_enabled = d.default_stop_downloaded_enabled;
-        config.stop_at_seed_time_enabled = d.default_stop_seed_time_enabled;
+
+        config.stop_at_ratio = if d.default_stop_ratio_enabled {
+            Some(d.default_stop_ratio)
+        } else {
+            None
+        };
+
+        config.stop_at_uploaded = if d.default_stop_uploaded_enabled {
+            Some((d.default_stop_uploaded_gb * 1024.0 * 1024.0 * 1024.0) as u64)
+        } else {
+            None
+        };
+
+        config.stop_at_downloaded = if d.default_stop_downloaded_enabled {
+            Some((d.default_stop_downloaded_gb * 1024.0 * 1024.0 * 1024.0) as u64)
+        } else {
+            None
+        };
+
+        config.stop_at_seed_time = if d.default_stop_seed_time_enabled {
+            Some((d.default_stop_seed_time_hours * 3600.0) as u64)
+        } else {
+            None
+        };
+
         config.stop_when_no_leechers = d.default_stop_when_no_leechers;
-        config.progressive_rates_enabled = d.default_progressive_rates_enabled;
-        config.target_upload_rate = d.default_target_upload_rate;
-        config.target_download_rate = d.default_target_download_rate;
-        config.progressive_duration_hours = d.default_progressive_duration_hours;
+
+        // === PROGRESSIVE RATES ===
+        config.progressive_rates = d.default_progressive_rates_enabled;
+
+        config.target_upload_rate = if d.default_progressive_rates_enabled {
+            Some(d.default_target_upload_rate)
+        } else {
+            None
+        };
+
+        config.target_download_rate = if d.default_progressive_rates_enabled {
+            Some(d.default_target_download_rate)
+        } else {
+            None
+        };
+
+        config.progressive_duration =
+            (d.default_progressive_duration_hours * 3600.0) as u64;
+
         config.random_range_percent = d.default_random_range_percent;
 
         self.create_instance_internal(id, torrent.clone(), config, InstanceSource::Manual)
@@ -383,32 +431,52 @@ impl AppState {
             config.completion_percent = d.default_completion_percent;
         }
 
-        if config.stop_at_ratio == FakerConfig::default().stop_at_ratio {
-            config.stop_at_ratio = d.default_stop_ratio;
-        }
+		config.stop_at_ratio = if d.default_stop_ratio_enabled {
+			Some(d.default_stop_ratio)
+		} else {
+			None
+		};
 
-        if config.stop_at_uploaded_gb == FakerConfig::default().stop_at_uploaded_gb {
-            config.stop_at_uploaded_gb = d.default_stop_uploaded_gb;
-        }
+		config.stop_at_uploaded = if d.default_stop_uploaded_enabled {
+			Some((d.default_stop_uploaded_gb * 1024.0 * 1024.0 * 1024.0) as u64)
+		} else {
+			None
+		};
 
-        if config.stop_at_downloaded_gb == FakerConfig::default().stop_at_downloaded_gb {
-            config.stop_at_downloaded_gb = d.default_stop_downloaded_gb;
-        }
+		config.stop_at_downloaded = if d.default_stop_downloaded_enabled {
+			Some((d.default_stop_downloaded_gb * 1024.0 * 1024.0 * 1024.0) as u64)
+		} else {
+			None
+		};
 
-        if config.stop_at_seed_time_hours == FakerConfig::default().stop_at_seed_time_hours {
-            config.stop_at_seed_time_hours = d.default_stop_seed_time_hours;
-        }
+		config.stop_at_seed_time = if d.default_stop_seed_time_enabled {
+			Some((d.default_stop_seed_time_hours * 3600.0) as u64)
+		} else {
+			None
+		};
 
-        config.stop_at_ratio_enabled = d.default_stop_ratio_enabled;
-        config.stop_at_uploaded_enabled = d.default_stop_uploaded_enabled;
-        config.stop_at_downloaded_enabled = d.default_stop_downloaded_enabled;
-        config.stop_at_seed_time_enabled = d.default_stop_seed_time_enabled;
-        config.stop_when_no_leechers = d.default_stop_when_no_leechers;
-        config.progressive_rates_enabled = d.default_progressive_rates_enabled;
-        config.target_upload_rate = d.default_target_upload_rate;
-        config.target_download_rate = d.default_target_download_rate;
-        config.progressive_duration_hours = d.default_progressive_duration_hours;
-        config.random_range_percent = d.default_random_range_percent;
+		config.stop_when_no_leechers = d.default_stop_when_no_leechers;
+
+		// === PROGRESSIVE RATES ===
+		config.progressive_rates = d.default_progressive_rates_enabled;
+
+		config.target_upload_rate = if d.default_progressive_rates_enabled {
+			Some(d.default_target_upload_rate)
+		} else {
+			None
+		};
+
+		config.target_download_rate = if d.default_progressive_rates_enabled {
+			Some(d.default_target_download_rate)
+		} else {
+			None
+		};
+
+		config.progressive_duration =
+			(d.default_progressive_duration_hours * 3600.0) as u64;
+
+		// === RANDOMIZATION ===
+		config.random_range_percent = d.default_random_range_percent;
 
         self.create_instance_internal(id, torrent.clone(), config, InstanceSource::WatchFolder)
             .await?;
