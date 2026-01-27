@@ -389,10 +389,12 @@ struct GluetunPublicIp {
 async fn get_network_status() -> Response {
     match try_gluetun_detection().await {
         Some(status) => ApiSuccess::response(status),
-        None => ApiError::response(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Gluetun not available. Network status requires Docker with gluetun VPN container.",
-        ),
+        ApiSuccess::response(NetworkStatus {
+            ip: "unknown".into(),
+            country: None,
+            organization: None,
+            is_vpn: false,
+        })
     }
 }
 
