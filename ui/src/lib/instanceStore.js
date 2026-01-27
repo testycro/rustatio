@@ -257,7 +257,7 @@ export const instanceActions = {
               globalConfig.set(cfg);
               console.info("Backend config loaded");
           }
-      } catch (e) {
+      } catch {
           console.warn("Backend config unavailable, using UI defaults");
       }
       // Load config if in Tauri mode
