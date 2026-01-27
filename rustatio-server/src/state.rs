@@ -349,7 +349,7 @@ impl AppState {
     /// Used when user loads a torrent via UI - creates server-side instance so it persists on refresh
     pub async fn create_idle_instance(&self, id: &str, torrent: TorrentInfo) -> Result<(), String> {
         // Use default config for idle instance
-        config = self.apply_faker_defaults(config);
+        let config = self.apply_faker_defaults(FakerConfig::default());
         self.create_instance_internal(id, torrent.clone(), config, InstanceSource::Manual)
             .await?;
 
