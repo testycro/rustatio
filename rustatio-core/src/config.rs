@@ -386,9 +386,9 @@ mod dirs {
 
     pub fn config_dir() -> Option<PathBuf> {
         if let Ok(home) = std::env::var("HOME") {
-            return Some(PathBuf::from(home).join(".config"));
+            Some(PathBuf::from(home).join(".config"))
         } else {
-            Some(PathBuf::from("/root/.config"))
+            None
         }
     }
 }
