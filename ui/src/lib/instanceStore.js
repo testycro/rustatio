@@ -1,6 +1,5 @@
 import { writable, get } from 'svelte/store';
 import { api } from '$lib/api';
-import { getRunMode } from '$lib/api';
 
 // Check if running in Tauri
 const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -270,7 +269,7 @@ export const instanceActions = {
 
       // For server mode, try to fetch existing instances from backend first
       // This handles the case where instances are running and user refreshes or opens new tab
-      const isServerMode = getRunMode() === 'server';
+      const isServerMode = !isTauri && typeof api.listInstances === 'function';
 
       if (isServerMode) {
       // Load config from backend
@@ -356,15 +355,6 @@ export const instanceActions = {
             error
           );
         }
-
-       // Si on est en mode serveur et qu'il n'y a aucune instance backend,
-       // on en crée une vide côté backend et on l'utilise comme source.
-         const instanceId = await api.createInstance();
-         const newInstance = createDefaultInstance(instanceId, {});
-         instances.set([newInstance]);
-         activeInstanceId.set(instanceId);
-         updateActiveInstanceStore();
-         return instanceId;
       }
 
       // Fall back to localStorage/config restoration
