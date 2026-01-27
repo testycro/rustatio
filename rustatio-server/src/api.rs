@@ -389,14 +389,15 @@ struct GluetunPublicIp {
 async fn get_network_status() -> Response {
     match try_gluetun_detection().await {
         Some(status) => ApiSuccess::response(status),
-        ApiSuccess::response(NetworkStatus {
+        None => ApiSuccess::response(NetworkStatus {
             ip: "unknown".into(),
             country: None,
             organization: None,
             is_vpn: false,
-        })
+        }),
     }
 }
+
 
 /// Try to detect VPN status via gluetun's control server
 async fn try_gluetun_detection() -> Option<NetworkStatus> {
