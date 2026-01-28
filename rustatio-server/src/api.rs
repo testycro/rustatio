@@ -143,8 +143,16 @@ async fn list_instances(State(state): State<ServerState>) -> Response {
 
 /// Return full application config (public endpoint)
 async fn get_config(State(state): State<ServerState>) -> Response {
-    ApiSuccess::response(&state.app.config)
+    // Clone pour pouvoir modifier
+    let mut cfg = state.app.config.clone();
+
+    // IMPORTANT : ne jamais renvoyer les instances au frontend
+    cfg.instances = vec![];
+    cfg.active_instance_id = None;
+
+    ApiSuccess::response(cfg)
 }
+
 
 /// Query parameters for delete instance
 #[derive(Deserialize)]
