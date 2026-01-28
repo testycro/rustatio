@@ -165,7 +165,7 @@ async function saveSession(instances, activeId) {
 }
 
 // Load session from storage (localStorage for web, Tauri config for desktop)
-function loadSessionFromStorage(config = null) {
+function loadSessionFromStorage(config) {
   try {
     let sessionData;
 
