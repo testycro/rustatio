@@ -601,7 +601,7 @@ impl RatioFaker {
     }
 
     /// Build announce request (helper)
-    fn build_announce_request(&self, stats: &FakerStats, event: &TrackerEvent) -> AnnounceRequest {
+    fn build_announce_request(&self, stats: &FakerStats, event: TrackerEvent) -> AnnounceRequest {
         AnnounceRequest {
             info_hash: self.torrent.info_hash,
             peer_id: self.peer_id.clone(),
@@ -631,7 +631,7 @@ impl RatioFaker {
             stats.left
         );
 
-        let request = self.build_announce_request(&stats, &event);
+        let request = self.build_announce_request(&stats, event.clone());
 
         drop(stats); // Release lock before async call
 
