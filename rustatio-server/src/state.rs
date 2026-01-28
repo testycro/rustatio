@@ -170,7 +170,7 @@ impl AppState {
 
         // Announce retry settings
         config.announce_max_retries = f.default_announce_max_retries;
-        config.announce_retry_delay_ms = f.default_announce_retry_delay_ms;
+        config.announce_retry_delay_seconds = f.default_announce_retry_delay_seconds;
         config.infinite_retry_after_max = f.default_infinite_retry_after_max;
 
         config
