@@ -19,6 +19,9 @@ use std::cell::RefCell;
 #[cfg(target_arch = "wasm32")]
 use js_sys;
 
+#[cfg(target_arch = "wasm32")]
+use gloo_timers::future::sleep as wasm_sleep;
+
 // Macros for platform-specific lock access
 #[cfg(not(target_arch = "wasm32"))]
 macro_rules! read_lock {
@@ -440,7 +443,15 @@ impl RatioFaker {
         self.last_update = Instant::now();
 
         // Send started event
-        let response = self.announce(TrackerEvent::Started).await?;
+        let response = match self.announce(TrackerEvent::Started).await {
+            Ok(r) => r,
+            Err(e) => {
+                // UI doit savoir que le start a échoué
+                log_info!("Initial announce failed: {}", e);
+                *write_lock!(self.state) = FakerState::Stopped;
+                return Err(e);
+            }
+        };
 
         // Update announce interval
         self.announce_interval = Duration::from_secs(response.interval as u64);
@@ -630,7 +641,7 @@ impl RatioFaker {
         Ok(response)
     }
 
-    /// Send announce with retry/fixed-delay (non-wasm uses tokio::time::sleep)
+    /// Send announce with retry/fixed-delay
     async fn send_announce_with_retry(&mut self, request: AnnounceRequest) -> Result<AnnounceResponse> {
         // Number of retries after the initial attempt
         let max_retries = self.config.announce_max_retries;
@@ -649,38 +660,66 @@ impl RatioFaker {
             {
                 Ok(resp) => {
                     return Ok(resp);
-                }
+                }                
                 Err(e) => {
                     // If we've exhausted retries (attempt > max_retries), return the error.
                     // Note: this allows up to `max_retries` retries after the first attempt,
                     // resulting in up to `max_retries + 1` total attempts.
                     if attempt > max_retries {
-                        log_info!("Announce failed after {} attempts: {}", attempt - 1, e.to_string());
-                        return Err(FakerError::TrackerError(e));
-                    } else {
+                        if self.config.infinite_retry_after_max {
+                            // Infinite retry mode: use announce_interval instead of retry_delay_ms
+                            let wait_ms = self.announce_interval.as_millis() as u64;
+                            let wait_sec = wait_ms as f64 / 1000.0;
+
+                            log_info!(
+                                "Announce failed after {} retries. Switching to infinite retry mode ({} seconds)",
+                                max_retries,
+                                wait_sec
+                            );
+
+                            #[cfg(not(target_arch = "wasm32"))]
+                            {
+                                tokio::time::sleep(Duration::from_millis(wait_ms)).await;
+                            }
+
+                            #[cfg(target_arch = "wasm32")]
+                            {
+                                wasm_sleep(Duration::from_millis(wait_ms)).await;
+                            }
+
+                            continue; // retry forever
+                        }
+
                         log_info!(
-                            "Announce attempt {}/{} failed: {}. Retrying in {} ms",
-                            attempt,
-                            max_retries,
-                            e.to_string(),
-                            delay_ms
+                            "Announce failed after {} attempts: {}",
+                            attempt - 1,
+                            e.to_string()
                         );
-
-                        #[cfg(not(target_arch = "wasm32"))]
-                        {
-                            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-                        }
-
-                        #[cfg(target_arch = "wasm32")]
-                        {
-                            // WASM: no tokio::time::sleep by default in this codebase.
-                            // If you need a delay in wasm, replace this with a wasm-compatible async sleep
-                            // (e.g., gloo_timers::future::sleep) or adjust the code to retry immediately.
-                            // For now, we retry immediately in wasm builds.
-                        }
+                        return Err(FakerError::TrackerError(e));
                     }
-                }
-            }
+
+                    let delay_sec = delay_ms as f64 / 1000.0;
+
+                    // Normal retry (before max_retries)
+                    log_info!(
+                        "Announce attempt {}/{} failed: {}. Retrying in {:.2} seconds",
+                        attempt,
+                        max_retries,
+                        e.to_string(),
+                        delay_sec
+                    );
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    }
+
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        wasm_sleep(Duration::from_millis(delay_ms)).await;
+                    }
+                 }
+             }
         }
     }
 
