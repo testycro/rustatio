@@ -709,11 +709,7 @@ impl RatioFaker {
                             continue; // retry forever
                         }
 
-                        log_info!(
-                            "Announce failed after {} attempts: {}",
-                            attempt - 1,
-                            e.to_string()
-                        );
+                        log_info!("Announce failed after {} attempts: {}", attempt - 1, e.to_string());
                         return Err(FakerError::TrackerError(e));
                     }
 
