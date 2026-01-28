@@ -142,6 +142,9 @@ pub struct FakerConfig {
 
     #[serde(default = "default_update_interval")]
     pub update_interval: u64,
+
+    #[serde(default = "default_infinite_retry_after_max")]
+    pub infinite_retry_after_max: bool,
 }
 
 fn default_randomize_rates() -> bool {
@@ -172,6 +175,10 @@ fn default_update_interval() -> u64 {
     5
 }
 
+fn default_infinite_retry_after_max() -> bool {
+    false
+}
+
 impl Default for FakerConfig {
     fn default() -> Self {
         FakerConfig {
@@ -199,6 +206,7 @@ impl Default for FakerConfig {
             announce_retry_delay_ms: 5000,
             announce_interval: 1800,
             update_interval: 5,
+            infinite_retry_after_max: false,
         }
     }
 }
