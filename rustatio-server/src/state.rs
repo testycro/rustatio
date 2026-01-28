@@ -168,6 +168,10 @@ impl AppState {
             config.update_interval = f.update_interval;
         }
 
+        // Announce retry settings
+        config.announce_max_retries = f.default_announce_max_retries;
+        config.announce_retry_delay_ms = f.default_announce_retry_delay_ms;
+
         config
     }
 }
