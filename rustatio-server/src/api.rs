@@ -443,72 +443,35 @@ async fn try_gluetun_detection() -> Option<NetworkStatus> {
 }
 
 /// SSE endpoint for streaming logs to the UI
-use tokio_stream::{StreamExt, wrappers::IntervalStream};
-use std::time::Duration;
-
-async fn logs_sse(
-    State(state): State<ServerState>
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-
+async fn logs_sse(State(state): State<ServerState>) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let rx = state.app.subscribe_logs();
 
-    let log_stream = BroadcastStream::new(rx).filter_map(|result| {
-        match result {
-            Ok(log_event) => {
-                match serde_json::to_string(&log_event) {
-                    Ok(_) => Some(Ok(Event::default().event("log").json_data(&log_event).unwrap())),
-                    Err(e) => {
-                        eprintln!("SSE LOG JSON ERROR: {}", e);
-                        None
-                    }
-                }
-            }
-            Err(e) => {
-                eprintln!("SSE LOG ERROR: {:?}", e);
-                None
-            }
-        }
+    let stream = BroadcastStream::new(rx).filter_map(|result| {
+        result.ok().map(|log_event| {
+            Ok(Event::default()
+                .event("log")
+                .json_data(&log_event)
+                .unwrap_or_else(|_| Event::default()))
+        })
     });
 
-    let ping_stream = IntervalStream::new(tokio::time::interval(Duration::from_secs(10)))
-        .map(|_| Ok(Event::default().event("ping").data("keepalive")));
-
-    let merged = tokio_stream::StreamExt::merge(log_stream, ping_stream);
-
-    Sse::new(merged).keep_alive(KeepAlive::default())
+    Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
 /// SSE endpoint for streaming instance events to the UI (for real-time sync)
-async fn instances_sse(
-    State(state): State<ServerState>
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-
+async fn instances_sse(State(state): State<ServerState>) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let rx = state.app.subscribe_instance_events();
 
-    let event_stream = BroadcastStream::new(rx).filter_map(|result| {
-        match result {
-            Ok(instance_event) => {
-                match serde_json::to_string(&instance_event) {
-                    Ok(_) => Some(Ok(Event::default().event("instance").json_data(&instance_event).unwrap())),
-                    Err(e) => {
-                        eprintln!("SSE INSTANCE JSON ERROR: {}", e);
-                        None
-                    }
-                }
-            }
-            Err(e) => {
-                eprintln!("SSE INSTANCE ERROR: {:?}", e);
-                None
-            }
-        }
+    let stream = BroadcastStream::new(rx).filter_map(|result| {
+        result.ok().map(|instance_event| {
+            Ok(Event::default()
+                .event("instance")
+                .json_data(&instance_event)
+                .unwrap_or_else(|_| Event::default()))
+        })
     });
 
-    let ping_stream = IntervalStream::new(tokio::time::interval(Duration::from_secs(10)))
-        .map(|_| Ok(Event::default().event("ping").data("keepalive")));
-
-    let merged = tokio_stream::StreamExt::merge(event_stream, ping_stream);
-
-    Sse::new(merged).keep_alive(KeepAlive::default())
+    Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
 // =============================================================================
