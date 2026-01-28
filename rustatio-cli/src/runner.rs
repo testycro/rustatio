@@ -44,7 +44,7 @@ pub struct RunnerConfig {
     pub torrent_name: String,
     pub torrent_size: u64,
     pub announce_max_retries: u32,
-    pub announce_retry_delay_ms: u64,
+    pub announce_retry_delay_seconds: u64,
     pub announce_interval: u64,
     pub update_interval: u64,
 }
@@ -301,7 +301,7 @@ pub fn create_faker_config(config: &RunnerConfig) -> FakerConfig {
         target_download_rate: config.target_download,
         progressive_duration: (config.progressive_duration * 3600.0) as u64,
         announce_max_retries: config.announce_max_retries,
-        announce_retry_delay_ms: config.announce_retry_delay_ms,
+        announce_retry_delay_seconds: config.announce_retry_delay_seconds,
         announce_interval: config.announce_interval,
         update_interval: config.update_interval,
     }
