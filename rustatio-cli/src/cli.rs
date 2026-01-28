@@ -108,9 +108,9 @@ pub enum Commands {
         #[arg(long, default_value = "10", value_name = "COUNT")]
         announce_max_retries: u32,
 
-        /// Delay between announce retries (ms)
-        #[arg(long, default_value = "5000", value_name = "MILLISECONDS")]
-        announce_retry_delay_ms: u64,
+        /// Delay between announce retries in seconds
+        #[arg(long, default_value = "5", value_name = "SECONDS")]
+        announce_retry_delay_seconds: u64,
 
         /// Announce interval in seconds
         #[arg(long, default_value = "1800", value_name = "SECONDS")]
@@ -143,6 +143,9 @@ pub enum Commands {
         /// Don't save session progress on exit
         #[arg(long)]
         no_save_session: bool,
+
+        #[arg(long)]
+        infinite_retry_after_max: bool,
     },
 
     /// Resume a saved session by info hash
