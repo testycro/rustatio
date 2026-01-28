@@ -148,8 +148,8 @@ pub struct FakerSettings {
     #[serde(default = "default_announce_max_retries")]
     pub default_announce_max_retries: u32,
 
-    #[serde(default = "default_announce_retry_delay_ms")]
-    pub default_announce_retry_delay_ms: u64,
+    #[serde(default = "default_announce_retry_delay_seconds")]
+    pub default_announce_retry_delay_seconds: u64,
 
     #[serde(default = "default_infinite_retry_after_max")]
     pub default_infinite_retry_after_max: bool,
@@ -283,7 +283,7 @@ fn default_announce_max_retries() -> u32 {
     10
 }
 
-fn default_announce_retry_delay_ms() -> u64 {
+fn default_announce_retry_delay_seconds() -> u64 {
     5000
 }
 
@@ -325,7 +325,7 @@ impl Default for FakerSettings {
             default_stop_seed_time_enabled: default_stop_seed_time_enabled(),
             default_random_range_percent: default_random_range_percent(),
             default_announce_max_retries: default_announce_max_retries(),
-            default_announce_retry_delay_ms: default_announce_retry_delay_ms(),
+            default_announce_retry_delay_seconds: default_announce_retry_delay_seconds(),
             default_infinite_retry_after_max: default_infinite_retry_after_max(),
         }
     }
