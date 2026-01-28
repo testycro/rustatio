@@ -144,6 +144,12 @@ pub struct FakerSettings {
 
     #[serde(default = "default_random_range_percent")]
     pub default_random_range_percent: f64,
+
+    #[serde(default = "default_announce_max_retries")]
+    pub default_announce_max_retries: u32,
+
+    #[serde(default = "default_announce_retry_delay_ms")]
+    pub default_announce_retry_delay_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -270,6 +276,14 @@ fn default_random_range_percent() -> f64 {
     50.0
 }
 
+fn default_announce_max_retries() -> u32 {
+    10
+}
+
+fn default_announce_retry_delay_ms() -> u64 {
+    5000
+}
+
 impl Default for ClientSettings {
     fn default() -> Self {
         ClientSettings {
@@ -303,6 +317,8 @@ impl Default for FakerSettings {
             default_stop_downloaded_enabled: default_stop_downloaded_enabled(),
             default_stop_seed_time_enabled: default_stop_seed_time_enabled(),
             default_random_range_percent: default_random_range_percent(),
+            default_announce_max_retries: default_announce_max_retries(),
+            default_announce_retry_delay_ms: default_announce_retry_delay_ms(),
         }
     }
 }
