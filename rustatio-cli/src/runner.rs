@@ -47,6 +47,7 @@ pub struct RunnerConfig {
     pub announce_retry_delay_seconds: u64,
     pub announce_interval: u64,
     pub update_interval: u64,
+    pub infinite_retry_after_max: bool,
 }
 
 /// Internal command for controlling the runner
@@ -304,6 +305,8 @@ pub fn create_faker_config(config: &RunnerConfig) -> FakerConfig {
         announce_retry_delay_seconds: config.announce_retry_delay_seconds,
         announce_interval: config.announce_interval,
         update_interval: config.update_interval,
+        infinite_retry_after_max: config.infinite_retry_after_max,
+        
     }
 }
 
