@@ -166,8 +166,8 @@ fn default_announce_max_retries() -> u32 {
     10
 }
 
-fn default__delay_seconds() -> u64 {
-    5000
+fn default_announce_retry_delay_seconds() -> u64 {
+    5
 }
 
 fn default_announce_interval() -> u64 {
@@ -206,7 +206,7 @@ impl Default for FakerConfig {
             target_download_rate: None,
             progressive_duration: 3600,
             announce_max_retries: 10,
-            _delay_seconds: 5,
+            announce_retry_delay_seconds: 5,
             announce_interval: 1800,
             update_interval: 5,
             infinite_retry_after_max: false,
@@ -601,7 +601,7 @@ impl RatioFaker {
     }
 
     /// Build announce request (helper)
-    fn build_announce_request(&self, stats: &FakerStats, event: TrackerEvent) -> AnnounceRequest {
+    fn build_announce_request(&self, stats: &FakerStats, event: &TrackerEvent) -> AnnounceRequest {
         AnnounceRequest {
             info_hash: self.torrent.info_hash,
             peer_id: self.peer_id.clone(),
@@ -631,7 +631,7 @@ impl RatioFaker {
             stats.left
         );
 
-        let request = self.build_announce_request(&stats, event);
+        let request = self.build_announce_request(&stats, &event);
 
         drop(stats); // Release lock before async call
 
@@ -664,7 +664,7 @@ impl RatioFaker {
     async fn send_announce_with_retry(&mut self, request: AnnounceRequest) -> Result<AnnounceResponse> {
         // Number of retries after the initial attempt
         let max_retries = self.config.announce_max_retries;
-        let delay_secs = self.config._delay_seconds;
+        let delay_secs = self.config.announce_retry_delay_seconds;
         let delay = Duration::from_secs(delay_secs);
 
         // Attempt counter starts at 1 for the first attempt
