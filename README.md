@@ -299,8 +299,6 @@ Configuration is automatically saved when using the UI. Settings are stored in:
 You can also manually edit the configuration file. Example configuration:
 
 ```toml
-instances = []
-
 [client]
 default_type = "transmission"
 default_port = 59859
@@ -326,6 +324,9 @@ default_stop_uploaded_enabled = false
 default_stop_downloaded_enabled = false
 default_stop_seed_time_enabled = true
 default_random_range_percent = 50.0
+default_announce_max_retries = 10
+default_announce_retry_delay_seconds = 5000
+default_infinite_retry_after_max = false
 
 [ui]
 window_width = 1200
