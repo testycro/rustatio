@@ -47,9 +47,10 @@ async fn main() -> Result<()> {
             save_session,
             no_save_session,
             announce_max_retries,
-            announce_retry_delay_ms,
+            announce_retry_delay_seconds,
             announce_interval,
             update_interval,
+            infinite_retry_after_max,
         } => {
             // Validate torrent file exists
             if !torrent.exists() {
@@ -136,9 +137,10 @@ async fn main() -> Result<()> {
                 torrent_name: torrent_info.name.clone(),
                 torrent_size: torrent_info.total_size,
                 announce_max_retries,
-                announce_retry_delay_ms,
+                announce_retry_delay_seconds,
                 announce_interval,
                 update_interval,
+                infinite_retry_after_max,
             };
 
             if json {
@@ -235,7 +237,7 @@ async fn main() -> Result<()> {
                 torrent_name: session.torrent_name.clone(),
                 torrent_size: session.torrent_size,
                 announce_max_retries: 3,
-                announce_retry_delay_ms: 5000,
+                announce_retry_delay_seconds: 5,
                 announce_interval: 1800,
                 update_interval: 5,
             };
