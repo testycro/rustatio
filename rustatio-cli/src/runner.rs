@@ -306,7 +306,6 @@ pub fn create_faker_config(config: &RunnerConfig) -> FakerConfig {
         announce_interval: config.announce_interval,
         update_interval: config.update_interval,
         infinite_retry_after_max: config.infinite_retry_after_max,
-        
     }
 }
 
