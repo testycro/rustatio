@@ -136,8 +136,8 @@ pub struct FakerConfig {
     #[serde(default = "default_announce_max_retries")]
     pub announce_max_retries: u32,
 
-    /// Base delay in milliseconds for announce retry (default 5000ms)
-    #[serde(default = "default_announce_retry_seconds")]
+    /// Base delay in secondss for announce retry (default 5s)
+    #[serde(default = "default_announce_retry_delay_seconds", alias = "announce_retry_delay_ms")]
     pub announce_retry_delay_seconds: u64,
 
     #[serde(default = "default_announce_interval")]
@@ -166,7 +166,7 @@ fn default_announce_max_retries() -> u32 {
     10
 }
 
-fn default_announce_retry_seconds() -> u64 {
+fn default__delay_seconds() -> u64 {
     5000
 }
 
@@ -206,7 +206,7 @@ impl Default for FakerConfig {
             target_download_rate: None,
             progressive_duration: 3600,
             announce_max_retries: 10,
-            announce_retry_delay_seconds: 5,
+            _delay_seconds: 5,
             announce_interval: 1800,
             update_interval: 5,
             infinite_retry_after_max: false,
@@ -664,7 +664,7 @@ impl RatioFaker {
     async fn send_announce_with_retry(&mut self, request: AnnounceRequest) -> Result<AnnounceResponse> {
         // Number of retries after the initial attempt
         let max_retries = self.config.announce_max_retries;
-        let delay_secs = self.config.announce_retry_delay_seconds;
+        let delay_secs = self.config._delay_seconds;
         let delay = Duration::from_secs(delay_secs);
 
         // Attempt counter starts at 1 for the first attempt
