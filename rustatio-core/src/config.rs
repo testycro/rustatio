@@ -150,6 +150,9 @@ pub struct FakerSettings {
 
     #[serde(default = "default_announce_retry_delay_ms")]
     pub default_announce_retry_delay_ms: u64,
+
+    #[serde(default = "default_infinite_retry_after_max")]
+    pub default_infinite_retry_after_max: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -284,6 +287,10 @@ fn default_announce_retry_delay_ms() -> u64 {
     5000
 }
 
+fn default_infinite_retry_after_max() -> bool {
+    false
+}
+
 impl Default for ClientSettings {
     fn default() -> Self {
         ClientSettings {
@@ -319,6 +326,7 @@ impl Default for FakerSettings {
             default_random_range_percent: default_random_range_percent(),
             default_announce_max_retries: default_announce_max_retries(),
             default_announce_retry_delay_ms: default_announce_retry_delay_ms(),
+            default_infinite_retry_after_max: default_infinite_retry_after_max(),
         }
     }
 }
