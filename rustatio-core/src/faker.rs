@@ -137,7 +137,7 @@ pub struct FakerConfig {
     pub announce_max_retries: u32,
 
     /// Base delay in milliseconds for announce retry (default 5000ms)
-    #[serde(default = "default_announce_retry_ms")]
+    #[serde(default = "default_announce_retry_seconds")]
     pub announce_retry_delay_seconds: u64,
 
     #[serde(default = "default_announce_interval")]
@@ -166,7 +166,7 @@ fn default_announce_max_retries() -> u32 {
     10
 }
 
-fn default_announce_retry_ms() -> u64 {
+fn default_announce_retry_seconds() -> u64 {
     5000
 }
 
@@ -635,17 +635,37 @@ impl RatioFaker {
 
         drop(stats); // Release lock before async call
 
-        // Use retry-capable announcer
-        let response = self.send_announce_with_retry(request).await?;
+        // Pour ne pas bloquer l'UI lors de l'ajout de torrent, on ne fait PAS
+        // de retry sur l'announce initial (Started). On renvoie l'erreur tout de suite.
+        let response = match event {
+            TrackerEvent::Started => self.send_announce_no_retry(request).await?,
+            _ => self.send_announce_with_retry(request).await?,
+        };
 
         Ok(response)
+    }
+
+    /// Announce sans retry (utilisé pour TrackerEvent::Started)
+    async fn send_announce_no_retry(&mut self, request: AnnounceRequest) -> Result<AnnounceResponse> {
+        match self
+            .tracker_client
+            .announce(self.torrent.get_tracker_url(), &request)
+            .await
+        {
+            Ok(resp) => Ok(resp),
+            Err(e) => {
+                log_info!("Announce (no retry) failed: {}", e.to_string());
+                Err(FakerError::TrackerError(e))
+            }
+        }
     }
 
     /// Send announce with retry/fixed-delay
     async fn send_announce_with_retry(&mut self, request: AnnounceRequest) -> Result<AnnounceResponse> {
         // Number of retries after the initial attempt
         let max_retries = self.config.announce_max_retries;
-        let delay_ms = self.config.announce_retry_delay_seconds * 1000;
+        let delay_secs = self.config.announce_retry_delay_seconds;
+        let delay = Duration::from_secs(delay_secs);
 
         // Attempt counter starts at 1 for the first attempt
         let mut attempt: u32 = 0;
@@ -660,31 +680,30 @@ impl RatioFaker {
             {
                 Ok(resp) => {
                     return Ok(resp);
-                }                
+                }
                 Err(e) => {
                     // If we've exhausted retries (attempt > max_retries), return the error.
                     // Note: this allows up to `max_retries` retries after the first attempt,
                     // resulting in up to `max_retries + 1` total attempts.
                     if attempt > max_retries {
                         if self.config.infinite_retry_after_max {
-                            // Infinite retry mode: use announce_interval instead of retry_delay_ms
-                            let wait_ms = self.announce_interval.as_millis() as u64;
-                            let wait_sec = wait_ms as f64 / 1000.0;
+                            // Infinite retry mode: use announce_interval instead of retry_delay
+                            let wait_secs = self.announce_interval.as_secs();
 
                             log_info!(
-                                "Announce failed after {} retries. Switching to infinite retry mode ({} seconds)",
+                                "Announce failed after {} retries. Switching to infinite retry mode (every {} s)",
                                 max_retries,
-                                wait_sec
+                                wait_secs
                             );
 
                             #[cfg(not(target_arch = "wasm32"))]
                             {
-                                tokio::time::sleep(Duration::from_millis(wait_ms)).await;
+                                tokio::time::sleep(Duration::from_secs(wait_secs)).await;
                             }
 
                             #[cfg(target_arch = "wasm32")]
                             {
-                                wasm_sleep(Duration::from_millis(wait_ms)).await;
+                                wasm_sleep(Duration::from_secs(wait_secs)).await;
                             }
 
                             continue; // retry forever
@@ -698,28 +717,26 @@ impl RatioFaker {
                         return Err(FakerError::TrackerError(e));
                     }
 
-                    let delay_sec = delay_ms as f64 / 1000.0;
-
                     // Normal retry (before max_retries)
                     log_info!(
-                        "Announce attempt {}/{} failed: {}. Retrying in {:.2} seconds",
+                        "Announce attempt {}/{} failed: {}. Retrying in {} s",
                         attempt,
                         max_retries,
                         e.to_string(),
-                        delay_sec
+                        delay_secs
                     );
 
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                        tokio::time::sleep(delay).await;
                     }
 
                     #[cfg(target_arch = "wasm32")]
                     {
-                        wasm_sleep(Duration::from_millis(delay_ms)).await;
+                        wasm_sleep(delay).await;
                     }
-                 }
-             }
+                }
+            }
         }
     }
 
