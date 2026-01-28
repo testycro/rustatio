@@ -261,12 +261,13 @@ export const instanceActions = {
         console.warn("Backend config unavailable", e);
       }
 
+      let config = null;
       // 2. Tauri config (desktop mode)
       if (isTauri) {
         try {
-          const cfg = await api.getConfig();
-          if (cfg) {
-            globalConfig.set(cfg);
+          config = await api.getConfig();
+          if (config) {
+            globalConfig.set(config);
             console.info("Tauri config loaded");
           }
         } catch (e) {
