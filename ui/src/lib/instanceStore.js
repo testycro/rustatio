@@ -252,19 +252,37 @@ export const instanceActions = {
     try {
       // Always load backend config first
       try {
+        const cfg = await api.getConfig();
+        if (cfg) {
+           globalConfig.set(cfg);
+          console.info("Backend config loaded");
+        }
+      } catch (e) {
+        console.warn("Backend config unavailable", e);
+      }
+
+      // 2. Tauri config (desktop mode)
+      if (isTauri) {
+        try {
           const cfg = await api.getConfig();
           if (cfg) {
-              globalConfig.set(cfg);
-              console.info("Backend config loaded");
+            globalConfig.set(cfg);
+            console.info("Tauri config loaded");
           }
-      } catch {
-          console.warn("Backend config unavailable, using UI defaults");
+        } catch (e) {
+          console.warn("Tauri config unavailable:", e);
+        }
       }
-      // Load config if in Tauri mode
-      let config = null;
-      if (isTauri) {
-        config = await api.getConfig();
-        globalConfig.set(config);
+
+      // 3. Final fallback: localStorage or defaults
+      if (!get(globalConfig)) {
+        const stored = localStorage.getItem('rustatio-config');
+        if (stored) {
+          globalConfig.set(JSON.parse(stored));
+          console.info("Loaded config from localStorage fallback");
+        } else {
+          console.info("No config found, using UI defaults");
+        }
       }
 
       // For server mode, try to fetch existing instances from backend first
@@ -272,17 +290,6 @@ export const instanceActions = {
       const isServerMode = !isTauri && typeof api.listInstances === 'function';
 
       if (isServerMode) {
-      // Load config from backend
-        try {
-          const cfg = await api.getConfig();
-          if (cfg) {
-            globalConfig.set(cfg);
-            console.info("Server config loaded succesfully");
-          }
-        } catch (e) {
-          console.warn("Failed to load server config:", e);
-        }
-
          // Load existing instances
         try {
           const serverInstances = await api.listInstances();
