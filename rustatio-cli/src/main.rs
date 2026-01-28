@@ -240,6 +240,7 @@ async fn main() -> Result<()> {
                 announce_retry_delay_seconds: 5,
                 announce_interval: 1800,
                 update_interval: 5,
+                infinite_retry_after_max: false,
             };
 
             if json {
