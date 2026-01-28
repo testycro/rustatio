@@ -340,7 +340,7 @@ impl AppState {
     }
 
     /// Create a new faker instance (manual creation via API)
-    pub async fn create_instance(&self, id: &str, torrent: TorrentInfo, mut config: FakerConfig) -> Result<(), String> {
+    pub async fn create_instance(&self, id: &str, torrent: TorrentInfo, config: FakerConfig) -> Result<(), String> {
         let config = self.apply_faker_defaults(config);
         self.create_instance_internal(id, torrent, config, InstanceSource::Manual).await
     }
