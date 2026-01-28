@@ -254,8 +254,9 @@ export const instanceActions = {
       try {
         const cfg = await api.getConfig();
         if (cfg) {
-           globalConfig.set(cfg);
-          console.info("Backend config loaded");
+          const cleanCfg = { ...cfg, instances: [], active_instance_id: null };
+          globalConfig.set(cleanCfg);
+          console.info("Backend config loaded (instances ignored)");
         }
       } catch (e) {
         console.warn("Backend config unavailable", e);
