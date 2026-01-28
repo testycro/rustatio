@@ -453,9 +453,17 @@ const serverApi = {
   getNetworkStatus: async () => {
     return serverFetch('/network/status', { method: 'GET' });
   },
-  getConfig: () => {
-    const stored = localStorage.getItem('rustatio-config');
-    return stored ? JSON.parse(stored) : null;
+  getConfig: async () => {
+    try {
+      // Essaye de récupérer la config depuis le backend
+      return await serverFetch('/config', { method: 'GET' });
+    } catch (error) {
+      console.warn('Backend config failed, falling back to localStorage:', error);
+
+      // Fallback : ancienne méthode
+      const stored = localStorage.getItem('rustatio-config');
+      return stored ? JSON.parse(stored) : null;
+    }
   },
   updateConfig: config => {
     localStorage.setItem('rustatio-config', JSON.stringify(config));
