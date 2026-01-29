@@ -180,6 +180,29 @@ jobs:
             exit 1
           fi
 
+      - name: Debug list wasm output and dist
+        shell: bash
+        run: |
+          echo "=== ls ui/src/lib/wasm ==="
+          ls -la ui/src/lib/wasm || true
+          echo "=== ls ui/src/lib/wasm/pkg ==="
+          ls -la ui/src/lib/wasm/pkg || true
+          echo "=== ls ui/dist (before copy) ==="
+          ls -la ui/dist || true
+
+      - name: Ensure wasm files are in ui/dist
+        shell: bash
+        run: |
+          mkdir -p ui/dist
+          if [ -d "ui/src/lib/wasm" ]; then
+            cp -r ui/src/lib/wasm/* ui/dist/ || true
+            echo "Copied ui/src/lib/wasm/* -> ui/dist/"
+          else
+            echo "No ui/src/lib/wasm directory found"
+          fi
+          echo "=== Final ls ui/dist ==="
+          ls -la ui/dist || true
+
       - name: Upload GitHub Pages artifact
         uses: actions/upload-artifact@v4
         with:
@@ -252,6 +275,23 @@ jobs:
 
       - name: Build CLI
         run: cargo build --release --target x86_64-unknown-linux-gnu -p rustatio-cli
+
+      - name: Copy CLI binary to expected path for release
+        shell: bash
+        run: |
+          # compute source path (use CARGO_TARGET_DIR if set, else default target)
+          SRC_DIR="${CARGO_TARGET_DIR:-target}"
+          SRC="${SRC_DIR}/x86_64-unknown-linux-gnu/release/rustatio"
+          DST_DIR="target/x86_64-unknown-linux-gnu/release"
+          mkdir -p "$DST_DIR"
+          if [ -f "$SRC" ]; then
+            cp "$SRC" "$DST_DIR/" || true
+            echo "Copied $SRC -> $DST_DIR/"
+          else
+            echo "Binary not found at $SRC"
+            ls -la "$SRC_DIR/x86_64-unknown-linux-gnu/release" || true
+            exit 1
+          fi
 
       - name: Upload CLI binary to release
         uses: softprops/action-gh-release@v2
@@ -374,7 +414,7 @@ jobs:
           docker buildx imagetools inspect ghcr.io/${{ github.repository }}:${{ needs.prepare-release.outputs.version }}
 
   build-tauri:
-    needs: prepare-release
+    needs: [prepare-release, build-web-assets]
     strategy:
       fail-fast: false
       matrix:
@@ -404,6 +444,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.prepare-release.outputs.tag }}
+      - name: Download web dist artifact for tauri
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist-pages
+          path: ./ui/dist
 
       - name: Extract target from args
         id: target
