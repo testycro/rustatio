@@ -126,7 +126,7 @@ jobs:
 
   build-web-assets:
     name: Build Web Assets
-    needs: prepare-release
+    needs: build-wasm
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -149,11 +149,6 @@ jobs:
           key: ${{ runner.os }}-wasm-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-wasm-
-
-      - name: Clean WASM build artifacts
-        run: |
-          rm -rf rustatio-wasm/pkg
-          rm -rf ui/node_modules/.vite
 
       - name: Install mise
         uses: jdx/mise-action@v2
@@ -233,7 +228,7 @@ jobs:
 
   build-docker:
     name: Build Docker Image (${{ matrix.platform }})
-    needs: [prepare-release, build-web-assets]
+    needs: [prepare-release, build-wasm]
     strategy:
       fail-fast: false
       matrix:
@@ -414,9 +409,6 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           cache: true
 
-      - name: Install wasm32 target
-        run: rustup target add wasm32-unknown-unknown
-
       - name: Update version in Cargo.toml
         shell: bash
         run: |
@@ -485,7 +477,7 @@ jobs:
 
   prepare-pages:
     name: Prepare GitHub Pages
-    needs: [prepare-release, build-web-assets]
+    needs: [prepare-release, build-wasm]
     runs-on: ubuntu-latest
     steps:
 
