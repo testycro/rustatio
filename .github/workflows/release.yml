@@ -139,6 +139,16 @@ jobs:
       - name: Isolate cargo target dir
         run: echo "CARGO_TARGET_DIR=${{ runner.temp }}/cargo-target" >> $GITHUB_ENV
 
+      - name: Ensure clean wasm output dir
+        shell: bash
+        run: |
+          echo "Cleaning wasm output dir ui/src/lib/wasm"
+          # supprime tout et recrée proprement
+          rm -rf ui/src/lib/wasm || true
+          mkdir -p ui/src/lib/wasm
+          # sécurité: supprimer pkg si présent
+          rm -rf ui/src/lib/wasm/pkg || true
+
       - name: Build Web Version for GitHub Pages (diagnostic)
         env:
           GITHUB_PAGES: true
@@ -446,6 +456,14 @@ jobs:
 
       - name: Isolate cargo target dir
         run: echo "CARGO_TARGET_DIR=${{ runner.temp }}/cargo-target" >> $GITHUB_ENV
+
+      - name: Ensure clean wasm output dir for tauri build
+        shell: bash
+        run: |
+          echo "Cleaning wasm output dir ui/src/lib/wasm (tauri)"
+          rm -rf ui/src/lib/wasm || true
+          mkdir -p ui/src/lib/wasm
+          rm -rf ui/src/lib/wasm/pkg || true
 
       - name: Build UI for Desktop (without GitHub Pages base path)
         run: mise run build:web
