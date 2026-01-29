@@ -130,11 +130,9 @@ jobs:
         run: mise run install
       
       - name: Build Web Version for GitHub Pages
-        working-directory: ui
         env:
           GITHUB_PAGES: true
-        run: npm run build
-
+        run: mise run build:web
 
       - name: Upload GitHub Pages artifact
         uses: actions/upload-artifact@v4
