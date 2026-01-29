@@ -138,13 +138,36 @@ jobs:
       - name: Isolate cargo target dir
         run: echo "CARGO_TARGET_DIR=${{ runner.temp }}/cargo-target" >> $GITHUB_ENV
 
-      - name: Build Web Version for GitHub Pages
+      - name: Build Web Version for GitHub Pages (diagnostic)
         env:
           GITHUB_PAGES: true
           RUST_BACKTRACE: 1
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
+        shell: bash
         run: |
           set -x
-          mise run build:web
+          echo "=== ENV ==="
+          env | sort
+          echo "=== BEFORE: ls target and ui/dist ==="
+          ls -la target || true
+          ls -la target/wasm32-unknown-unknown || true
+          ls -la ui || true
+          ls -la ui/dist || true
+          echo "=== Running build (verbose) ==="
+          # capture tout dans build-wasm.log
+          mise run build:web 2>&1 | tee build-wasm.log || true
+          echo "=== AFTER: ls target and ui/dist ==="
+          ls -la target || true
+          ls -la target/wasm32-unknown-unknown || true
+          ls -la ui/dist || true
+          echo "=== TAIL build log ==="
+          tail -n 200 build-wasm.log || true
+          # exit non-zero if log contains "File exists" to fail step but keep logs visible
+          if grep -q "File exists (os error 17)" build-wasm.log; then
+            echo "ERROR DETECTED: os error 17"
+            grep -n "File exists (os error 17)" -n build-wasm.log || true
+            exit 1
+          fi
 
       - name: Upload GitHub Pages artifact
         uses: actions/upload-artifact@v4
