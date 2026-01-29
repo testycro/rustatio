@@ -65,19 +65,19 @@ Rustatio is available in **three versions**:
 
 **Windows**
 
-1. Download the latest setup installer from [Releases](https://github.com/takitsu21/rustatio/releases)
+1. Download the latest setup installer from [Releases](https://github.com/testycro/rustatio/releases)
 2. Run the installer and follow the installation wizard
 3. Launch Rustatio from the Start Menu
 
 **macOS**
 
-1. Download the latest `Rustatio_*.dmg` file from [Releases](https://github.com/takitsu21/rustatio/releases) 
+1. Download the latest `Rustatio_*.dmg` file from [Releases](https://github.com/testycro/rustatio/releases) 
 2. Open the downloaded file and drag Rustatio to your Applications folder 
 3. Launch Rustatio from Applications (you may need to allow it in System Preferences → Security & Privacy)
 
 **Linux**
 
-Download from [Releases](https://github.com/takitsu21/rustatio/releases)
+Download from [Releases](https://github.com/testycro/rustatio/releases)
 
 Debian/Ubuntu:
 
@@ -180,6 +180,7 @@ Automatically detect and load torrent files from a folder:
 ```bash
 # 1. Create the directory first (with your user permissions)
 mkdir -p /path/to/your/torrents
+mkdir -p /path/to/your/config
 
 # 2. Then start the container with the volume mounted
 ```
@@ -239,7 +240,7 @@ services:
       # Optional: Watch folder configuration (auto-detected if volume is mounted)
       - WATCH_AUTO_START=true  # Set to true to auto-start faking new torrents
     volumes:
-      - /your/path/to/rustatio/config:/home/rustatio/.config
+      - /your/path/to/your/config:/home/rustatio/.config
       - /your/path/to/rustatio/data/folder:/data
       # Optional: Uncomment to enable watch folder feature
       - ${TORRENTS_DIR:-/your/path/to/rustatio/torrents/folder}:/torrents
@@ -293,7 +294,7 @@ The web version runs entirely in your browser using WebAssembly.
 
 Configuration is automatically saved when using the UI. Settings are stored in:
 
-- **Linux/macOS**: `~/.config/rustatio/config.toml`
+- **Linux/macOS/Docker**: `~/.config/rustatio/config.toml`
 - **Windows**: `%APPDATA%\rustatio\config.toml`
 
 You can also manually edit the configuration file. Example configuration:
@@ -332,7 +333,7 @@ default_infinite_retry_after_max = false
 window_width = 1200
 window_height = 800
 dark_mode = true
-show_logs = true
+show_logs = false
 
 ```
 
