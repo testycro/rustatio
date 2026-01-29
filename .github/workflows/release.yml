@@ -87,68 +87,15 @@ jobs:
           message: "Release ${{ steps.new_version.outputs.tag }}"
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
-  build-wasm:
-    name: Build WASM once
-    needs: prepare-release
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.prepare-release.outputs.tag }}
-
-      - name: Install mise
-        uses: jdx/mise-action@v2
-
-      - name: Install wasm32 target
-        run: rustup target add wasm32-unknown-unknown
-
-      - name: Clean WASM artifacts
-        run: |
-          rm -rf rustatio-wasm/pkg
-          rm -rf ui/dist
-          rm -rf ui/node_modules/.vite
-
-      - name: Build Web (WASM + Vite)
-        run: mise run build:web
-
-      - name: Upload WASM pkg
-        uses: actions/upload-artifact@v4
-        with:
-          name: wasm-pkg
-          path: rustatio-wasm/pkg
-
-      - name: Upload Web dist
-        uses: actions/upload-artifact@v4
-        with:
-          name: web-dist
-          path: ui/dist
-
-
   build-web-assets:
     name: Build Web Assets
-    needs: build-wasm
+    needs: prepare-release
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           ref: ${{ needs.prepare-release.outputs.tag }}
-
-      - name: Download web dist artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: web-dist
-          path: ui/dist
-
-      - name: Cache WASM target
-        uses: actions/cache@v4
-        with:
-          path: |
-            target/wasm32-unknown-unknown/release/deps
-            target/wasm32-unknown-unknown/release/.fingerprint
-          key: ${{ runner.os }}-wasm-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-wasm-
 
       - name: Install mise
         uses: jdx/mise-action@v2
@@ -160,6 +107,7 @@ jobs:
         uses: rui314/setup-mold@v1
 
       - name: Cache cargo
+        if: false
         uses: actions/cache@v4
         with:
           path: |
@@ -169,6 +117,47 @@ jobs:
             ~/.cargo/git/db/
             target/
           key: ${{ runner.os }}-cargo-web-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Update version in package.json
+        working-directory: ui
+        run: |
+          VERSION="${{ needs.prepare-release.outputs.version }}"
+          sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" package.json
+
+      - name: Clean previous build outputs
+        run: |
+          echo "Cleaning ui/dist and cargo target"
+          rm -rf ui/dist
+          rm -rf target
+          cargo clean || true
+          find . -type l -delete || true
+
+      - name: Isolate cargo target dir
+        run: echo "CARGO_TARGET_DIR=${{ runner.temp }}/cargo-target" >> $GITHUB_ENV
+
+      - name: Build Web Version for GitHub Pages
+        env:
+          GITHUB_PAGES: true
+          RUST_BACKTRACE: 1
+        run: |
+          set -x
+          mise run build:web
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist-pages
+          path: ui/dist
+          retention-days: 1
+
+      - name: Build Web Version for Docker (no base path)
+        run: |
+          rm -rf ui/dist
+          rm -rf ui/node_modules/.vite
+          cd ui && npm run build
 
       - name: Upload Docker artifact
         uses: actions/upload-artifact@v4
@@ -196,6 +185,7 @@ jobs:
           cache: true
 
       - name: Cache cargo
+        if: false
         uses: actions/cache@v4
         with:
           path: |
@@ -214,6 +204,17 @@ jobs:
           VERSION="${{ needs.prepare-release.outputs.version }}"
           sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
 
+      - name: Clean previous build outputs
+        run: |
+          echo "Cleaning ui/dist and cargo target"
+          rm -rf ui/dist
+          rm -rf target
+          cargo clean || true
+          find . -type l -delete || true
+
+      - name: Isolate cargo target dir
+        run: echo "CARGO_TARGET_DIR=${{ runner.temp }}/cargo-target" >> $GITHUB_ENV
+
       - name: Build CLI
         run: cargo build --release --target x86_64-unknown-linux-gnu -p rustatio-cli
 
@@ -228,9 +229,10 @@ jobs:
 
   build-docker:
     name: Build Docker Image (${{ matrix.platform }})
-    needs: [prepare-release, build-wasm]
+    needs: [prepare-release, build-web-assets]
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         include:
           - platform: linux/amd64
@@ -243,16 +245,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ needs.prepare-release.outputs.tag }}
-      
-      - name: Clean WASM target directory
-        run: rm -rf target/wasm32-unknown-unknown
 
       - name: Download web dist artifact
         uses: actions/download-artifact@v4
         with:
-          name: web-dist
+          name: web-dist-docker
           path: ./ui/dist
-
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -409,6 +407,23 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           cache: true
 
+      - name: Install wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Clean previous build outputs
+        run: |
+          echo "Cleaning ui/dist and cargo target"
+          rm -rf ui/dist
+          rm -rf target
+          cargo clean || true
+          find . -type l -delete || true
+
+      - name: Isolate cargo target dir
+        run: echo "CARGO_TARGET_DIR=${{ runner.temp }}/cargo-target" >> $GITHUB_ENV
+
+      - name: Build UI for Desktop (without GitHub Pages base path)
+        run: mise run build:web
+
       - name: Update version in Cargo.toml
         shell: bash
         run: |
@@ -427,6 +442,7 @@ jobs:
           fi
 
       - name: Cache cargo
+        if: false
         uses: actions/cache@v4
         with:
           path: |
@@ -436,9 +452,6 @@ jobs:
             ~/.cargo/git/db/
             target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Clean WASM target directory
-        run: rm -rf target/wasm32-unknown-unknown
 
       - name: Install Rust target
         if: steps.target.outputs.target != ''
@@ -455,11 +468,16 @@ jobs:
             sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" package.json
           fi
 
-      - name: Download web dist artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: web-dist
-          path: ui/dist
+      - name: Clean previous build outputs
+        run: |
+          echo "Cleaning ui/dist and cargo target"
+          rm -rf ui/dist
+          rm -rf target
+          cargo clean || true
+          find . -type l -delete || true
+
+      - name: Isolate cargo target dir
+        run: echo "CARGO_TARGET_DIR=${{ runner.temp }}/cargo-target" >> $GITHUB_ENV
 
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0
@@ -477,14 +495,13 @@ jobs:
 
   prepare-pages:
     name: Prepare GitHub Pages
-    needs: [prepare-release, build-wasm]
+    needs: [prepare-release, build-web-assets]
     runs-on: ubuntu-latest
     steps:
-
       - name: Download web dist artifact
         uses: actions/download-artifact@v4
         with:
-          name: web-dist
+          name: web-dist-pages
           path: ./ui/dist
 
       - name: Setup Pages
