@@ -279,19 +279,20 @@ jobs:
       - name: Copy CLI binary to expected path for release
         shell: bash
         run: |
-          # compute source path (use CARGO_TARGET_DIR if set, else default target)
           SRC_DIR="${CARGO_TARGET_DIR:-target}"
-          SRC="${SRC_DIR}/x86_64-unknown-linux-gnu/release/rustatio"
-          DST_DIR="target/x86_64-unknown-linux-gnu/release"
-          mkdir -p "$DST_DIR"
-          if [ -f "$SRC" ]; then
-            cp "$SRC" "$DST_DIR/" || true
-            echo "Copied $SRC -> $DST_DIR/"
-          else
-            echo "Binary not found at $SRC"
-            ls -la "$SRC_DIR/x86_64-unknown-linux-gnu/release" || true
+          echo "Looking for built binaries under $SRC_DIR"
+          # find an executable in any release folder matching rustatio*
+          BIN_PATH=$(find "$SRC_DIR" -type f -path "*/release/*" -executable -name 'rustatio*' | head -n 1 || true)
+          if [ -z "$BIN_PATH" ]; then
+            echo "No rustatio* binary found under $SRC_DIR. Listing release dirs:"
+            find "$SRC_DIR" -type d -name release -maxdepth 4 -print -exec ls -la {} \; || true
             exit 1
           fi
+          echo "Found binary: $BIN_PATH"
+          DST_DIR="target/x86_64-unknown-linux-gnu/release"
+          mkdir -p "$DST_DIR"
+          cp "$BIN_PATH" "$DST_DIR/" || true
+          echo "Copied $BIN_PATH -> $DST_DIR/"
 
       - name: Upload CLI binary to release
         uses: softprops/action-gh-release@v2
@@ -494,7 +495,6 @@ jobs:
         shell: bash
         run: |
           echo "Cleaning ui/dist and cargo target"
-          rm -rf ui/dist
           rm -rf target
           cargo clean || true
           find . -type l -delete || true
