@@ -1,3 +1,6 @@
+# Wasm
+ui/src/lib/wasm/
+
 # Rust
 /target
 
