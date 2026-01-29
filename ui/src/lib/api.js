@@ -120,6 +120,16 @@ async function detectServerMode() {
   return false;
 }
 
+// Only import WASM if not in Tauri
+if (!isTauri) {
+  try {
+    const wasmModule = await import('$lib/wasm/rustatio_wasm.js');
+    wasm = wasmModule;
+  } catch {
+    // WASM not available, will use server mode
+  }
+}
+
 export async function initWasm() {
   if (isTauri) {
     // In Tauri, no WASM initialization needed
