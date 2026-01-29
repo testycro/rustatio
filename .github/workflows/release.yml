@@ -128,6 +128,7 @@ jobs:
           sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" package.json
 
       - name: Clean previous build outputs
+        shell: bash
         run: |
           echo "Cleaning ui/dist and cargo target"
           rm -rf ui/dist
@@ -228,6 +229,7 @@ jobs:
           sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
 
       - name: Clean previous build outputs
+        shell: bash
         run: |
           echo "Cleaning ui/dist and cargo target"
           rm -rf ui/dist
@@ -434,6 +436,7 @@ jobs:
         run: rustup target add wasm32-unknown-unknown
 
       - name: Clean previous build outputs
+        shell: bash
         run: |
           echo "Cleaning ui/dist and cargo target"
           rm -rf ui/dist
@@ -492,6 +495,7 @@ jobs:
           fi
 
       - name: Clean previous build outputs
+        shell: bash
         run: |
           echo "Cleaning ui/dist and cargo target"
           rm -rf ui/dist
