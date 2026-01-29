@@ -126,10 +126,15 @@ jobs:
           VERSION="${{ needs.prepare-release.outputs.version }}"
           sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" package.json
 
+      - name: Install all dependencies
+        run: mise run install
+      
       - name: Build Web Version for GitHub Pages
+        working-directory: ui
         env:
           GITHUB_PAGES: true
-        run: mise run build:web
+        run: npm run build
+
 
       - name: Upload GitHub Pages artifact
         uses: actions/upload-artifact@v4
