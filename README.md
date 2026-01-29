@@ -372,6 +372,7 @@ MIT License - see LICENSE file for details
 
 ## 🙏 Credits
 
+- Forked from takitsu21 [Rustatio](https://github.com/takitsu21/rustatio)
 - Inspired by [RatioMaster.NET](https://github.com/NikolayIT/RatioMaster.NET)
 - Built with [Tauri](https://tauri.app/), [Svelte 5](https://svelte.dev/), [Tailwind CSS](https://tailwindcss.com/), and [shadcn-svelte](https://www.shadcn-svelte.com/)
 
