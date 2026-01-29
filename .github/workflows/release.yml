@@ -153,7 +153,6 @@ jobs:
       - name: Clean WASM build artifacts
         run: |
           rm -rf rustatio-wasm/pkg
-          rm -rf ui/dist
           rm -rf ui/node_modules/.vite
 
       - name: Install mise
