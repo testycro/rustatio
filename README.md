@@ -1,4 +1,4 @@
-<div align="center">
+5<div align="center">
   <img src="rustatio-desktop/icons/icon.png" alt="Rustatio Logo" width="128" height="128">
 </div>
 
@@ -326,7 +326,7 @@ default_stop_downloaded_enabled = false
 default_stop_seed_time_enabled = true
 default_random_range_percent = 50.0
 default_announce_max_retries = 10
-default_announce_retry_delay_seconds = 5000
+default_announce_retry_delay_seconds = 5
 default_infinite_retry_after_max = false
 
 [ui]
