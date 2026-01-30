@@ -561,7 +561,6 @@ jobs:
         shell: bash
         run: |
           echo "Cleaning ui/dist and cargo target"
-          rm -rf ui/dist
           rm -rf target
           cargo clean || true
           find . -type l -delete || true
