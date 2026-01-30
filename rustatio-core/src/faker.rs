@@ -433,35 +433,18 @@ impl RatioFaker {
         }
     }
 
-    /// Start the ratio faking session
-    pub async fn start(&mut self) -> Result<()> {
-        log_info!("Starting ratio faker for torrent: {}", self.torrent.name);
-
-        // Update state
-        *write_lock!(self.state) = FakerState::Running;
-        self.start_time = Instant::now();
-        self.last_update = Instant::now();
-
-        // Send started event
-        let response = match self.announce(TrackerEvent::Started).await {
-            Ok(r) => r,
-            Err(e) => {
-                // UI doit savoir que le start a échoué
-                log_info!("Initial announce failed: {}", e);
-                *write_lock!(self.state) = FakerState::Stopped;
-                return Err(e);
-            }
-        };
+    async fn initial_announce_task(&mut self) -> Result<()> {
+        let response = self.announce(TrackerEvent::Started).await?;
 
         // Update announce interval
         self.announce_interval = Duration::from_secs(response.interval as u64);
 
-        // Store tracker ID if provided
+        // Store tracker ID
         self.tracker_id = response.tracker_id;
 
-        // Update stats with tracker response
+        // Update stats
         let mut stats = write_lock!(self.stats);
-        stats.state = FakerState::Running; // Ensure state is synced
+        stats.state = FakerState::Running;
         stats.seeders = response.complete;
         stats.leechers = response.incomplete;
         stats.last_announce = Some(Instant::now());
@@ -475,6 +458,39 @@ impl RatioFaker {
             response.interval
         );
 
+        Ok(())
+    }
+
+    /// Start the ratio faking session
+    pub async fn start(&mut self) -> Result<()> {
+        log_info!("Starting ratio faker for torrent: {}", self.torrent.name);
+    
+        // Mark as running immediately (UI becomes responsive)
+        *write_lock!(self.state) = FakerState::Running;
+        self.start_time = Instant::now();
+        self.last_update = Instant::now();
+    
+        // Clone what we need for the async task
+        let mut this = self.clone_for_spawn();
+    
+        // === Spawn the initial announce in background ===
+        #[cfg(not(target_arch = "wasm32"))]
+        tokio::spawn(async move {
+            if let Err(e) = this.initial_announce_task().await {
+                log_info!("Initial announce failed: {}", e);
+                *write_lock!(this.state) = FakerState::Stopped;
+            }
+        });
+    
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(async move {
+            if let Err(e) = this.initial_announce_task().await {
+                log_info!("Initial announce failed: {}", e);
+                *write_lock!(this.state) = FakerState::Stopped;
+            }
+        });
+    
+        // Return immediately → UI never freezes
         Ok(())
     }
 
@@ -635,29 +651,9 @@ impl RatioFaker {
 
         drop(stats); // Release lock before async call
 
-        // Pour ne pas bloquer l'UI lors de l'ajout de torrent, on ne fait PAS
-        // de retry sur l'announce initial (Started). On renvoie l'erreur tout de suite.
-        let response = match event {
-            TrackerEvent::Started => self.send_announce_no_retry(request).await?,
-            _ => self.send_announce_with_retry(request).await?,
-        };
+        let response = self.send_announce_with_retry(request).await?;
 
         Ok(response)
-    }
-
-    /// Announce sans retry (utilisé pour TrackerEvent::Started)
-    async fn send_announce_no_retry(&mut self, request: AnnounceRequest) -> Result<AnnounceResponse> {
-        match self
-            .tracker_client
-            .announce(self.torrent.get_tracker_url(), &request)
-            .await
-        {
-            Ok(resp) => Ok(resp),
-            Err(e) => {
-                log_info!("Announce (no retry) failed: {}", e.to_string());
-                Err(FakerError::TrackerError(e))
-            }
-        }
     }
 
     /// Send announce with retry/fixed-delay
