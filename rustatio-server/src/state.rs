@@ -483,6 +483,10 @@ impl AppState {
         // Start the faker (sends "started" announce)
         faker_arc.write().await.start().await.map_err(|e| e.to_string())?;
 
+        if let Err(e) = self.save_state().await {
+            tracing::warn!("Failed to save state after start: {}", e);
+        }
+
         // Spawn background update task
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
         let id_clone = id.to_string();
@@ -522,6 +526,7 @@ impl AppState {
         let update_interval = Duration::from_secs(5);
         let save_interval = Duration::from_secs(30);
         let mut last_save = std::time::Instant::now();
+        let mut last_state: Option<FakerState> = None;
 
         tracing::info!("Background update loop started for instance {}", id);
 
@@ -532,26 +537,35 @@ impl AppState {
                     break;
                 }
                 _ = tokio::time::sleep(update_interval) => {
-                    // Check if instance still exists and is running
-                    let should_continue = {
-                        let instances_guard = instances.read().await;
-                        if let Some(instance) = instances_guard.get(&id) {
-                            let stats = instance.faker.read().await.get_stats().await;
-                            matches!(stats.state, FakerState::Running)
-                        } else {
-                            false
-                        }
+                    // 🔥 Check if instance still exists
+                    let exists = {
+                        let guard = instances.read().await;
+                        guard.contains_key(&id)
                     };
 
-                    if !should_continue {
-                        tracing::info!("Instance {} no longer running, stopping background loop", id);
+                    if !exists {
+                        tracing::info!("Instance {} no longer exists, stopping background loop", id);
                         break;
                     }
 
-                    // Update the faker (calculates stats, may trigger tracker announce)
-                    set_instance_context_str(Some(&id));
+                    // Update the faker
                     if let Err(e) = faker.write().await.update().await {
                         tracing::warn!("Background update failed for instance {}: {}", id, e);
+                    }
+
+                    // Detect state change
+                    let stats = faker.read().await.get_stats().await;
+                    if last_state != Some(stats.state.clone()) {
+                        last_state = Some(stats.state.clone());
+                        if let Err(e) = state.save_state().await {
+                            tracing::warn!("Failed to save state after state change: {}", e);
+                        }
+                    }
+
+                    // Stop loop if no longer running
+                    if stats.state != FakerState::Running {
+                        tracing::info!("Instance {} no longer running, stopping background loop", id);
+                        break;
                     }
 
                     // Periodically save state
@@ -598,6 +612,10 @@ impl AppState {
         // Stop the faker (sends "stopped" announce)
         faker_arc.write().await.stop().await.map_err(|e| e.to_string())?;
 
+        if let Err(e) = self.save_state().await {
+            tracing::warn!("Failed to save state after stop: {}", e);
+        }
+
         // Update cumulative stats
         {
             let mut instances = self.instances.write().await;
@@ -642,6 +660,10 @@ impl AppState {
         // Pause the faker
         faker_arc.write().await.pause().await.map_err(|e| e.to_string())?;
 
+        if let Err(e) = self.save_state().await {
+            tracing::warn!("Failed to save state after pause: {}", e);
+        }
+
         // Save state after pausing
         if let Err(e) = self.save_state().await {
             tracing::warn!("Failed to save state after pausing instance: {}", e);
@@ -672,6 +694,10 @@ impl AppState {
 
         // Resume the faker
         faker_arc.write().await.resume().await.map_err(|e| e.to_string())?;
+
+        if let Err(e) = self.save_state().await {
+            tracing::warn!("Failed to save state after resume: {}", e);
+        }
 
         // Spawn background update task
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
