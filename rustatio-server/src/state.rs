@@ -565,7 +565,25 @@ impl AppState {
                     // Stop loop if no longer running
                     if stats.state != FakerState::Running {
                         tracing::info!("Instance {} no longer running, stopping background loop", id);
-                        break;
+
+                        if stats.state == FakerState::Stopped {
+                            if state.config.faker.delete_instead_of_stop {
+                                tracing::info!("Instance {} stopped due to stop condition → deleting", id);
+                        
+                                {
+                                    let mut guard = instances.write().await;
+                                    guard.remove(&id);
+                                }
+                        
+                                state.emit_instance_event(InstanceEvent::Deleted { id: id.clone() });
+                                let _ = state.save_state().await;
+
+                                break;
+                            } else {
+                                break;
+                            }
+                        }
+
                     }
 
                     // Periodically save state
