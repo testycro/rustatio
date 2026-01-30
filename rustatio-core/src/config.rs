@@ -130,6 +130,9 @@ pub struct FakerSettings {
     #[serde(default = "default_progressive_duration_hours")]
     pub default_progressive_duration_hours: f64,
 
+    #[serde(default = "default_delete_instead_of_stop")]
+    pub default_delete_instead_of_stop: bool,
+
     #[serde(default = "default_stop_ratio_enabled")]
     pub default_stop_ratio_enabled: bool,
 
@@ -259,6 +262,10 @@ fn default_progressive_duration_hours() -> f64 {
     1.0
 }
 
+fn default_delete_instead_of_stop() -> bool {
+    false
+}
+
 fn default_stop_ratio_enabled() -> bool {
     false
 }
@@ -319,6 +326,7 @@ impl Default for FakerSettings {
             default_target_upload_rate: default_target_upload_rate(),
             default_target_download_rate: default_target_download_rate(),
             default_progressive_duration_hours: default_progressive_duration_hours(),
+            default_delete_instead_of_stop: default_delete_instead_of_stop(),
             default_stop_ratio_enabled: default_stop_ratio_enabled(),
             default_stop_uploaded_enabled: default_stop_uploaded_enabled(),
             default_stop_downloaded_enabled: default_stop_downloaded_enabled(),
