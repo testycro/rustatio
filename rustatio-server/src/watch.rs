@@ -433,12 +433,32 @@ async fn process_torrent_file(
         .create_instance_with_event(&instance_id, torrent.clone(), config, auto_start)
         .await?;
 
+    // 🔥 Déplacer le fichier torrent dans /archived après importation
+    let archived_dir = path.parent().unwrap().join("archived");
+    if !archived_dir.exists() {
+        if let Err(e) = std::fs::create_dir_all(&archived_dir) {
+            tracing::warn!("Failed to create archived directory: {}", e);
+        }
+    }
+    
+    let filename = path.file_name().unwrap();
+    let archived_path = archived_dir.join(filename);
+    
+    if let Err(e) = std::fs::rename(path, &archived_path) {
+        tracing::warn!("Failed to archive torrent file {:?}: {}", path, e);
+    } else {
+        tracing::info!("Archived torrent file to {:?}", archived_path);
+    
+        // Mettre à jour le mapping path_to_hash
+        let canonical_archived = archived_path.canonicalize().unwrap_or(archived_path.clone());
+        path_to_hash.write().await.insert(canonical_archived, info_hash);
+    }
+
     // Track as loaded
     loaded_hashes.write().await.insert(info_hash);
 
     // Record the path to info_hash mapping for deletion handling
-    let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    path_to_hash.write().await.insert(canonical_path, info_hash);
+    path_to_hash.write().await.insert(canonical_archived, info_hash);
 
     tracing::info!(
         "Loaded torrent '{}' from watch folder as instance {}",
