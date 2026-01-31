@@ -443,22 +443,30 @@ async fn process_torrent_file(
     
     let filename = path.file_name().unwrap();
     let archived_path = archived_dir.join(filename);
-    
+
+    // Déclarer ici pour qu'il soit visible partout
+    let mut canonical_archived: Option<PathBuf> = None;
+
     if let Err(e) = std::fs::rename(path, &archived_path) {
         tracing::warn!("Failed to archive torrent file {:?}: {}", path, e);
     } else {
         tracing::info!("Archived torrent file to {:?}", archived_path);
-    
-        // Mettre à jour le mapping path_to_hash
-        let canonical_archived = archived_path.canonicalize().unwrap_or(archived_path.clone());
-        path_to_hash.write().await.insert(canonical_archived, info_hash);
+
+        let canonical = archived_path
+            .canonicalize()
+            .unwrap_or_else(|_| archived_path.clone());
+
+        path_to_hash.write().await.insert(canonical.clone(), info_hash);
+        canonical_archived = Some(canonical);
     }
 
     // Track as loaded
     loaded_hashes.write().await.insert(info_hash);
 
-    // Record the path to info_hash mapping for deletion handling
-    path_to_hash.write().await.insert(canonical_archived, info_hash);
+    // Record mapping for deletion handling
+    if let Some(canonical) = canonical_archived {
+        path_to_hash.write().await.insert(canonical, info_hash);
+    }
 
     tracing::info!(
         "Loaded torrent '{}' from watch folder as instance {}",
