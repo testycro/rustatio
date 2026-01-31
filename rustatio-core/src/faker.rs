@@ -433,6 +433,27 @@ impl RatioFaker {
         }
     }
 
+    impl RatioFaker {
+        pub fn clone_for_spawn(&self) -> Self {
+            RatioFaker {
+                torrent: self.torrent.clone(),
+                config: self.config.clone(),
+                tracker_client: self.tracker_client.clone(),
+
+                state: self.state.clone(),
+                stats: self.stats.clone(),
+
+                peer_id: self.peer_id.clone(),
+                key: self.key.clone(),
+                tracker_id: self.tracker_id.clone(),
+
+                start_time: self.start_time,
+                last_update: self.last_update,
+                announce_interval: self.announce_interval,
+            }
+        }
+    }
+
     async fn initial_announce_task(&mut self) -> Result<()> {
         let response = self.announce(TrackerEvent::Started).await?;
 
