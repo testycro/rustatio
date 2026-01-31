@@ -214,7 +214,7 @@ impl Default for FakerConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum FakerState {
     Idle,
     Running,
