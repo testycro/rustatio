@@ -433,22 +433,39 @@ impl RatioFaker {
         }
     }
 
-    pub fn clone_for_spawn(&self) -> Self {
-        RatioFaker {
-            torrent: self.torrent.clone(),
-            config: self.config.clone(),
-            tracker_client: self.tracker_client.clone(),
+    fn clone_for_spawn(&self) -> Self {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            RatioFaker {
+                torrent: self.torrent.clone(),
+                config: self.config.clone(),
+                tracker_client: self.tracker_client.clone(),
+                state: self.state.clone(),
+                stats: self.stats.clone(),
+                peer_id: self.peer_id.clone(),
+                key: self.key.clone(),
+                tracker_id: self.tracker_id.clone(),
+                start_time: Instant::now(),
+                last_update: Instant::now(),
+                announce_interval: self.announce_interval,
+            }
+        }
 
-            state: self.state.clone(),
-            stats: self.stats.clone(),
-
-            peer_id: self.peer_id.clone(),
-            key: self.key.clone(),
-            tracker_id: self.tracker_id.clone(),
-
-            start_time: self.start_time,
-            last_update: self.last_update,
-            announce_interval: self.announce_interval,
+        #[cfg(target_arch = "wasm32")]
+        {
+            RatioFaker {
+                torrent: self.torrent.clone(),
+                config: self.config.clone(),
+                tracker_client: self.tracker_client.clone(),
+                state: RefCell::new(self.state.borrow().clone()),
+                stats: RefCell::new(self.stats.borrow().clone()),
+                peer_id: self.peer_id.clone(),
+                key: self.key.clone(),
+                tracker_id: self.tracker_id.clone(),
+                start_time: Instant::now(),
+                last_update: Instant::now(),
+                announce_interval: self.announce_interval,
+            }
         }
     }
 
