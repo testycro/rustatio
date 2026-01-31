@@ -316,12 +316,6 @@ pub struct RatioFaker {
 }
 
 impl RatioFaker {
-    pub fn mark_running(&mut self) {
-        *write_lock!(self.state) = FakerState::Running;
-        self.start_time = Instant::now();
-        self.last_update = Instant::now();
-    }
-
     pub fn new(torrent: TorrentInfo, config: FakerConfig) -> Result<Self> {
         log_debug!(
             "Creating RatioFaker for '{}' (size: {} bytes)",
