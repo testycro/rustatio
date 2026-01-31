@@ -638,26 +638,11 @@ impl RatioFaker {
         // Pour ne pas bloquer l'UI lors de l'ajout de torrent, on ne fait PAS
         // de retry sur l'announce initial (Started). On renvoie l'erreur tout de suite.
         let response = match event {
-            TrackerEvent::Started => self.send_announce_no_retry(request).await?,
+            TrackerEvent::Started => self.send_announce_with_retry(request).await?,
             _ => self.send_announce_with_retry(request).await?,
         };
 
         Ok(response)
-    }
-
-    /// Announce sans retry (utilisé pour TrackerEvent::Started)
-    async fn send_announce_no_retry(&mut self, request: AnnounceRequest) -> Result<AnnounceResponse> {
-        match self
-            .tracker_client
-            .announce(self.torrent.get_tracker_url(), &request)
-            .await
-        {
-            Ok(resp) => Ok(resp),
-            Err(e) => {
-                log_info!("Announce (no retry) failed: {}", e.to_string());
-                Err(FakerError::TrackerError(e))
-            }
-        }
     }
 
     /// Send announce with retry/fixed-delay
