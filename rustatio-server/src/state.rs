@@ -567,7 +567,7 @@ impl AppState {
                         tracing::info!("Instance {} no longer running, stopping background loop", id);
 
                         if stats.state == FakerState::Stopped {
-                            if state.config.faker.delete_instead_of_stop {
+                            if state.config.faker.default_delete_instead_of_stop {
                                 tracing::info!("Instance {} stopped due to stop condition → deleting", id);
                         
                                 {
