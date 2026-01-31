@@ -464,15 +464,15 @@ impl RatioFaker {
     /// Start the ratio faking session
     pub async fn start(&mut self) -> Result<()> {
         log_info!("Starting ratio faker for torrent: {}", self.torrent.name);
-    
+
         // Mark as running immediately (UI becomes responsive)
         *write_lock!(self.state) = FakerState::Running;
         self.start_time = Instant::now();
         self.last_update = Instant::now();
-    
+
         // Clone what we need for the async task
         let mut this = self.clone_for_spawn();
-    
+
         // === Spawn the initial announce in background ===
         #[cfg(not(target_arch = "wasm32"))]
         tokio::spawn(async move {
@@ -481,7 +481,7 @@ impl RatioFaker {
                 *write_lock!(this.state) = FakerState::Stopped;
             }
         });
-    
+
         #[cfg(target_arch = "wasm32")]
         wasm_bindgen_futures::spawn_local(async move {
             if let Err(e) = this.initial_announce_task().await {
@@ -489,7 +489,7 @@ impl RatioFaker {
                 *write_lock!(this.state) = FakerState::Stopped;
             }
         });
-    
+
         // Return immediately → UI never freezes
         Ok(())
     }
