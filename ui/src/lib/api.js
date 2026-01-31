@@ -1,6 +1,26 @@
 // Check if running in Tauri
 const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
+// Optional external API URL (for proxy CORS usage)
+function getApiBaseUrl() {
+  const stored = localStorage.getItem('rustatio-api-url');
+  return stored && stored.trim() ? stored.trim() : '';
+}
+
+// Optional proxy CORS URL
+function getProxyBaseUrl() {
+  const stored = localStorage.getItem('rustatio-proxy-url');
+  return stored && stored.trim() ? stored.trim() : '';
+}
+
+// Safe URL joiner
+function joinUrl(...parts) {
+  return parts
+    .filter(Boolean)
+    .map(p => p.replace(/\/+$/, '').replace(/^\/+/, ''))
+    .join('/');
+}
+
 // Check if running in server mode (served by rustatio-server)
 // We detect this by checking if /api/health endpoint responds
 let isServerMode = false;
@@ -103,13 +123,25 @@ export async function verifyAuthToken() {
 // Detect server mode by checking the public /api/auth/status endpoint
 async function detectServerMode() {
   try {
-    const response = await fetch('/api/auth/status', { method: 'GET' });
+    // If user defined an explicit API URL, test that instead
+    const apiBase = getApiBaseUrl();
+    const testUrl = apiBase
+      ? joinUrl(apiBase, 'api/auth/status')
+      : '/api/auth/status';
+
+    const response = await fetch(testUrl, { method: 'GET' });
     if (response.ok) {
       // Verify it's actually JSON (not Vite's HTML fallback)
       const contentType = response.headers.get('content-type');
       if (contentType && contentType.includes('application/json')) {
         isServerMode = true;
-        serverBaseUrl = '';
+
+        // If explicit API URL is set, use it
+        if (apiBase) {
+          serverBaseUrl = apiBase;
+        } else {
+          serverBaseUrl = '';
+        }
 
         return true;
       }
@@ -271,7 +303,20 @@ export function emitLog(level, message) {
 
 // Server API helper with logging and authentication
 async function serverFetch(endpoint, options = {}, logMessage = null) {
-  const url = `${serverBaseUrl}/api${endpoint}`;
+  // Build API base URL
+  const apiBase = serverBaseUrl || getApiBaseUrl() || '';
+
+  // Build final API URL
+  let finalUrl = joinUrl(apiBase, 'api', endpoint);
+
+  // Apply proxy if defined
+  const proxy = getProxyBaseUrl();
+  if (proxy) {
+    // Proxy expects: proxy + full API URL
+    finalUrl = joinUrl(proxy, finalUrl);
+  }
+
+  const url = finalUrl;
   const token = getAuthToken();
 
   // Build headers with optional auth
