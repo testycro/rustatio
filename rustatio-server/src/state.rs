@@ -481,7 +481,31 @@ impl AppState {
         };
 
         // Start the faker (sends "started" announce)
-        faker_arc.write().await.start().await.map_err(|e| e.to_string())?;
+        {
+            let mut f = faker_arc.write().await;
+            f.mark_running();
+        }
+
+        // Spawn initial announce in background
+        let faker_clone = faker_arc.clone();
+        
+        #[cfg(not(target_arch = "wasm32"))]
+        tokio::spawn(async move {
+            let mut me = faker_clone.write().await;
+            if let Err(e) = me.initial_announce_task().await {
+                log_info!("Initial announce failed: {}", e);
+                *write_lock!(me.state) = FakerState::Stopped;
+            }
+        });
+        
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(async move {
+            let mut me = faker_clone.write().await;
+            if let Err(e) = me.initial_announce_task().await {
+                log_info!("Initial announce failed: {}", e);
+                *write_lock!(me.state) = FakerState::Stopped;
+            }
+        });
 
         if let Err(e) = self.save_state().await {
             tracing::warn!("Failed to save state after start: {}", e);
