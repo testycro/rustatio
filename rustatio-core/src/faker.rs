@@ -277,7 +277,7 @@ pub struct FakerStats {
 pub struct RatioFaker {
     torrent: TorrentInfo,
     config: FakerConfig,
-    tracker_client: TrackerClient,
+    tracker_client: Arc<TrackerClient>,
 
     // Runtime state
     state: Arc<RwLock<FakerState>>,
@@ -298,7 +298,7 @@ pub struct RatioFaker {
 pub struct RatioFaker {
     torrent: TorrentInfo,
     config: FakerConfig,
-    tracker_client: TrackerClient,
+    tracker_client: Arc<TrackerClient>,
 
     // Runtime state (RefCell for single-threaded WASM)
     state: RefCell<FakerState>,
@@ -403,7 +403,7 @@ impl RatioFaker {
             Ok(RatioFaker {
                 torrent,
                 config,
-                tracker_client,
+                tracker_client: Arc::new(tracker_client),
                 state: Arc::new(RwLock::new(FakerState::Idle)),
                 stats: Arc::new(RwLock::new(stats)),
                 peer_id,
@@ -420,7 +420,7 @@ impl RatioFaker {
             Ok(RatioFaker {
                 torrent,
                 config,
-                tracker_client,
+                tracker_client: Arc::new(tracker_client),
                 state: RefCell::new(FakerState::Idle),
                 stats: RefCell::new(stats),
                 peer_id,
@@ -430,42 +430,6 @@ impl RatioFaker {
                 last_update: Instant::now(),
                 announce_interval: Duration::from_secs(1800), // Default 30 minutes
             })
-        }
-    }
-
-    fn clone_for_spawn(&self) -> Self {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            RatioFaker {
-                torrent: self.torrent.clone(),
-                config: self.config.clone(),
-                tracker_client: self.tracker_client.clone(),
-                state: self.state.clone(),
-                stats: self.stats.clone(),
-                peer_id: self.peer_id.clone(),
-                key: self.key.clone(),
-                tracker_id: self.tracker_id.clone(),
-                start_time: Instant::now(),
-                last_update: Instant::now(),
-                announce_interval: self.announce_interval,
-            }
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            RatioFaker {
-                torrent: self.torrent.clone(),
-                config: self.config.clone(),
-                tracker_client: self.tracker_client.clone(),
-                state: RefCell::new(self.state.borrow().clone()),
-                stats: RefCell::new(self.stats.borrow().clone()),
-                peer_id: self.peer_id.clone(),
-                key: self.key.clone(),
-                tracker_id: self.tracker_id.clone(),
-                start_time: Instant::now(),
-                last_update: Instant::now(),
-                announce_interval: self.announce_interval,
-            }
         }
     }
 
@@ -498,33 +462,40 @@ impl RatioFaker {
     }
 
     /// Start the ratio faking session
-    pub async fn start(&mut self) -> Result<()> {
-        log_info!("Starting ratio faker for torrent: {}", self.torrent.name);
+    pub async fn start(self: Arc<RwLock<Self>>) -> Result<()> {
+        {
+            let mut me = self.write().await;
+            log_info!("Starting ratio faker for torrent: {}", me.torrent.name);
 
-        // Mark as running immediately (UI becomes responsive)
-        *write_lock!(self.state) = FakerState::Running;
-        self.start_time = Instant::now();
-        self.last_update = Instant::now();
-
-        // Clone what we need for the async task
-        let mut this = self.clone_for_spawn();
+            *write_lock!(me.state) = FakerState::Running;
+            me.start_time = Instant::now();
+            me.last_update = Instant::now();
+        }
 
         // === Spawn the initial announce in background ===
         #[cfg(not(target_arch = "wasm32"))]
-        tokio::spawn(async move {
-            if let Err(e) = this.initial_announce_task().await {
-                log_info!("Initial announce failed: {}", e);
-                *write_lock!(this.state) = FakerState::Stopped;
-            }
-        });
+        {
+            let faker_arc = self.clone();
+            tokio::spawn(async move {
+                let mut me = faker_arc.write().await;
+                if let Err(e) = me.initial_announce_task().await {
+                    log_info!("Initial announce failed: {}", e);
+                    *write_lock!(me.state) = FakerState::Stopped;
+                }
+            });
+        }
 
         #[cfg(target_arch = "wasm32")]
-        wasm_bindgen_futures::spawn_local(async move {
-            if let Err(e) = this.initial_announce_task().await {
-                log_info!("Initial announce failed: {}", e);
-                *write_lock!(this.state) = FakerState::Stopped;
-            }
-        });
+        {
+            let faker_arc = self.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let mut me = faker_arc.write().await;
+                if let Err(e) = me.initial_announce_task().await {
+                    log_info!("Initial announce failed: {}", e);
+                    *write_lock!(me.state) = FakerState::Stopped;
+                }
+            });
+        }
 
         // Return immediately → UI never freezes
         Ok(())
