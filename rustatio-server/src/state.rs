@@ -1,1103 +1,1006 @@
-use crate::protocol::{AnnounceRequest, AnnounceResponse, TrackerClient, TrackerError, TrackerEvent};
-use crate::torrent::{ClientConfig, ClientType, TorrentInfo};
-use crate::{log_debug, log_info, log_trace};
-use instant::Instant;
-use rand::Rng;
-use serde::{Deserialize, Serialize};
-use std::time::Duration;
-use thiserror::Error;
-
-#[cfg(not(target_arch = "wasm32"))]
+use crate::persistence::{now_timestamp, InstanceSource, PersistedInstance, PersistedState, Persistence};
+use rustatio_core::logger::set_instance_context_str;
+use rustatio_core::{FakerConfig, FakerState, FakerStats, RatioFaker, TorrentInfo, AppConfig};
+use serde::Serialize;
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::{broadcast, mpsc, RwLock};
+use tokio::task::JoinHandle;
 
-#[cfg(not(target_arch = "wasm32"))]
-use tokio::sync::RwLock;
-
-#[cfg(target_arch = "wasm32")]
-use std::cell::RefCell;
-
-#[cfg(target_arch = "wasm32")]
-use js_sys;
-
-#[cfg(target_arch = "wasm32")]
-use gloo_timers::future::sleep as wasm_sleep;
-
-// Macros for platform-specific lock access
-#[cfg(not(target_arch = "wasm32"))]
-macro_rules! read_lock {
-    ($lock:expr) => {
-        $lock.read().await
-    };
+/// Log event sent to UI via SSE
+#[derive(Clone, Debug, Serialize)]
+pub struct LogEvent {
+    pub timestamp: u64,
+    pub level: String,
+    pub message: String,
 }
 
-#[cfg(target_arch = "wasm32")]
-macro_rules! read_lock {
-    ($lock:expr) => {
-        $lock.borrow()
-    };
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-macro_rules! write_lock {
-    ($lock:expr) => {
-        $lock.write().await
-    };
-}
-
-#[cfg(target_arch = "wasm32")]
-macro_rules! write_lock {
-    ($lock:expr) => {
-        $lock.borrow_mut()
-    };
-}
-
-#[derive(Debug, Error)]
-pub enum FakerError {
-    #[error("Tracker error: {0}")]
-    TrackerError(#[from] TrackerError),
-    #[error("Invalid state: {0}")]
-    InvalidState(String),
-    #[error("Configuration error: {0}")]
-    ConfigError(String),
-}
-
-pub type Result<T> = std::result::Result<T, FakerError>;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FakerConfig {
-    /// Upload rate in KB/s
-    pub upload_rate: f64,
-
-    /// Download rate in KB/s
-    pub download_rate: f64,
-
-    /// Port to announce
-    pub port: u16,
-
-    /// Client to emulate
-    pub client_type: ClientType,
-
-    /// Client version (optional, uses default if None)
-    pub client_version: Option<String>,
-
-    /// Initial uploaded amount in bytes
-    pub initial_uploaded: u64,
-
-    /// Initial downloaded amount in bytes
-    pub initial_downloaded: u64,
-
-    /// Percentage already downloaded (0-100)
-    pub completion_percent: f64,
-
-    /// Number of peers to request
-    pub num_want: u32,
-
-    /// Enable randomization of rates
-    #[serde(default = "default_randomize_rates")]
-    pub randomize_rates: bool,
-
-    /// Randomization range percentage (e.g., 20 means ±20%)
-    #[serde(default = "default_random_range")]
-    pub random_range_percent: f64,
-
-    // Stop conditions
-    /// Stop when ratio reaches this value (optional)
-    pub stop_at_ratio: Option<f64>,
-
-    /// Stop after uploading this many bytes (optional)
-    pub stop_at_uploaded: Option<u64>,
-
-    /// Stop after downloading this many bytes (optional)
-    pub stop_at_downloaded: Option<u64>,
-
-    /// Stop after seeding for this many seconds (optional)
-    pub stop_at_seed_time: Option<u64>,
-
-    /// Stop when there are no leechers (optional, default false)
-    #[serde(default)]
-    pub stop_when_no_leechers: bool,
-
-    // Progressive rate adjustment
-    /// Enable progressive rate adjustment
-    #[serde(default)]
-    pub progressive_rates: bool,
-
-    /// Target upload rate to reach (KB/s)
-    pub target_upload_rate: Option<f64>,
-
-    /// Target download rate to reach (KB/s)
-    pub target_download_rate: Option<f64>,
-
-    /// Time in seconds to reach target rates
-    #[serde(default = "default_progressive_duration")]
-    pub progressive_duration: u64,
-
-    /// How many times to retry an announce on failure (default 10)
-    #[serde(default = "default_announce_max_retries")]
-    pub announce_max_retries: u32,
-
-    /// Base delay in secondss for announce retry (default 5s)
-    #[serde(default = "default_announce_retry_delay_seconds", alias = "announce_retry_delay_ms")]
-    pub announce_retry_delay_seconds: u64,
-
-    #[serde(default = "default_announce_interval")]
-    pub announce_interval: u64,
-
-    #[serde(default = "default_update_interval")]
-    pub update_interval: u64,
-
-    #[serde(default = "default_infinite_retry_after_max")]
-    pub infinite_retry_after_max: bool,
-}
-
-fn default_randomize_rates() -> bool {
-    true
-}
-
-fn default_progressive_duration() -> u64 {
-    3600 // 1 hour
-}
-
-fn default_random_range() -> f64 {
-    20.0
-}
-
-fn default_announce_max_retries() -> u32 {
-    10
-}
-
-fn default_announce_retry_delay_seconds() -> u64 {
-    5
-}
-
-fn default_announce_interval() -> u64 {
-    1800
-}
-
-fn default_update_interval() -> u64 {
-    5
-}
-
-fn default_infinite_retry_after_max() -> bool {
-    false
-}
-
-impl Default for FakerConfig {
-    fn default() -> Self {
-        FakerConfig {
-            upload_rate: 700.0, // 50 KB/s
-            download_rate: 0.0, // 100 KB/s
-            port: 59859,
-            client_type: ClientType::Transmission,
-            client_version: None,
-            initial_uploaded: 0,
-            initial_downloaded: 0,
-            completion_percent: 100.0,
-            num_want: 50,
-            randomize_rates: true,
-            random_range_percent: 50.0,
-            stop_at_ratio: None,
-            stop_at_uploaded: None,
-            stop_at_downloaded: None,
-            stop_at_seed_time: Some(2678400),
-            stop_when_no_leechers: false,
-            progressive_rates: false,
-            target_upload_rate: None,
-            target_download_rate: None,
-            progressive_duration: 3600,
-            announce_max_retries: 10,
-            announce_retry_delay_seconds: 5,
-            announce_interval: 1800,
-            update_interval: 5,
-            infinite_retry_after_max: false,
+impl LogEvent {
+    pub fn new(level: &str, message: String) -> Self {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        Self {
+            timestamp,
+            level: level.to_string(),
+            message,
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum FakerState {
-    Idle,
-    Running,
-    Paused,
-    Stopped,
-    Completed,
+/// Instance event sent to UI via SSE for real-time sync
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum InstanceEvent {
+    /// A new instance was created (e.g., from watch folder)
+    Created {
+        id: String,
+        torrent_name: String,
+        info_hash: String,
+        auto_started: bool,
+    },
+    /// An instance was deleted
+    Deleted { id: String },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FakerStats {
-    // === CUMULATIVE STATS (lifetime totals for display) ===
-    pub uploaded: u64,   // Total uploaded across all sessions
-    pub downloaded: u64, // Total downloaded across all sessions
-    pub ratio: f64,      // Cumulative ratio: uploaded / torrent_size
-
-    // === TORRENT STATE ===
-    pub left: u64,     // Bytes left to download for THIS torrent
-    pub seeders: i64,  // Seeders from tracker
-    pub leechers: i64, // Leechers from tracker
-    pub state: FakerState,
-
-    // === SESSION STATS (current session only) ===
-    pub session_uploaded: u64,   // Uploaded in current session
-    pub session_downloaded: u64, // Downloaded in current session
-    pub session_ratio: f64,      // Session ratio: session_uploaded / torrent_size
-    pub elapsed_time: Duration,  // Time since session started
-
-    // === RATES ===
-    pub current_upload_rate: f64,   // Current upload rate KB/s
-    pub current_download_rate: f64, // Current download rate KB/s
-    pub average_upload_rate: f64,   // Average upload rate KB/s (session)
-    pub average_download_rate: f64, // Average download rate KB/s (session)
-
-    // === PROGRESS (session-based for stop conditions) ===
-    pub upload_progress: f64,    // 0-100% toward stop_at_uploaded
-    pub download_progress: f64,  // 0-100% toward stop_at_downloaded
-    pub ratio_progress: f64,     // 0-100% toward stop_at_ratio
-    pub seed_time_progress: f64, // 0-100% toward stop_at_seed_time
-
-    // === ETA ===
-    pub eta_ratio: Option<Duration>,
-    pub eta_uploaded: Option<Duration>,
-    pub eta_seed_time: Option<Duration>,
-
-    // === HISTORY (for graphs) ===
-    pub upload_rate_history: Vec<f64>,
-    pub download_rate_history: Vec<f64>,
-    pub ratio_history: Vec<f64>,
-    pub history_timestamps: Vec<u64>, // Unix timestamps in milliseconds
-
-    // === INTERNAL ===
-    #[serde(skip)]
-    pub last_announce: Option<Instant>,
-    #[serde(skip)]
-    pub next_announce: Option<Instant>,
-    pub announce_count: u32,
+/// Instance data with cumulative stats tracking
+pub struct FakerInstance {
+    pub faker: Arc<RwLock<RatioFaker>>,
+    pub torrent: TorrentInfo,
+    pub config: FakerConfig,
+    pub torrent_info_hash: [u8; 20],
+    pub cumulative_uploaded: u64,
+    pub cumulative_downloaded: u64,
+    pub created_at: u64,
+    /// Source of this instance (manual or watch folder)
+    pub source: InstanceSource,
+    /// Background task handle (if running)
+    task_handle: Option<JoinHandle<()>>,
+    /// Shutdown signal sender for background task
+    shutdown_tx: Option<mpsc::Sender<()>>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub struct RatioFaker {
-    torrent: TorrentInfo,
-    config: FakerConfig,
-    tracker_client: TrackerClient,
-
-    // Runtime state
-    state: Arc<RwLock<FakerState>>,
-    stats: Arc<RwLock<FakerStats>>,
-
-    // Session data
-    peer_id: String,
-    key: String,
-    tracker_id: Option<String>,
-
-    // Timing
-    start_time: Instant,
-    last_update: Instant,
-    announce_interval: Duration,
+/// Shared application state
+#[derive(Clone)]
+pub struct AppState {
+    /// Active faker instances
+    pub instances: Arc<RwLock<HashMap<String, FakerInstance>>>,
+    /// Loaded torrents (not yet started)
+    pub torrents: Arc<RwLock<HashMap<String, TorrentInfo>>>,
+    /// Broadcast channel for log events (SSE)
+    pub log_sender: broadcast::Sender<LogEvent>,
+    /// Broadcast channel for instance events (SSE)
+    pub instance_sender: broadcast::Sender<InstanceEvent>,
+    /// Persistence manager
+    persistence: Arc<Persistence>,
+    /// Core Config
+    pub config: AppConfig,
 }
 
-#[cfg(target_arch = "wasm32")]
-pub struct RatioFaker {
-    torrent: TorrentInfo,
-    config: FakerConfig,
-    tracker_client: TrackerClient,
+impl AppState {
+    fn apply_faker_defaults(&self, mut config: FakerConfig) -> FakerConfig {
+        let f = &self.config.faker;
+        let c = &self.config.client;
+        let base = FakerConfig::default();
 
-    // Runtime state (RefCell for single-threaded WASM)
-    state: RefCell<FakerState>,
-    stats: RefCell<FakerStats>,
+        // Client-related
+        if config.port == base.port {
+            config.port = c.default_port;
+        }
+        if config.num_want == base.num_want {
+            config.num_want = c.default_num_want;
+        }
+        if config.client_type == base.client_type {
+            config.client_type = c.default_type.clone();
+        }
+        if config.client_version.is_none() {
+            config.client_version = c.default_version.clone();
+        }
 
-    // Session data
-    peer_id: String,
-    key: String,
-    tracker_id: Option<String>,
+        // Rates
+        if config.upload_rate == base.upload_rate {
+            config.upload_rate = f.default_upload_rate;
+        }
+        if config.download_rate == base.download_rate {
+            config.download_rate = f.default_download_rate;
+        }
 
-    // Timing
-    start_time: Instant,
-    last_update: Instant,
-    announce_interval: Duration,
-}
+        // Completion
+        if config.completion_percent == base.completion_percent {
+            config.completion_percent = f.default_completion_percent;
+        }
 
-impl RatioFaker {
-    pub fn new(torrent: TorrentInfo, config: FakerConfig) -> Result<Self> {
-        log_debug!(
-            "Creating RatioFaker for '{}' (size: {} bytes)",
-            torrent.name,
-            torrent.total_size
-        );
-        log_trace!(
-            "Config: upload_rate={} KB/s, download_rate={} KB/s, client={:?}",
-            config.upload_rate,
-            config.download_rate,
-            config.client_type
-        );
-
-        // Create client configuration
-        let client_config = ClientConfig::get(config.client_type.clone(), config.client_version.clone());
-
-        // Generate session identifiers
-        let peer_id = client_config.generate_peer_id();
-        let key = ClientConfig::generate_key();
-
-        log_trace!("Generated peer_id: {}, key: {}", peer_id, key);
-
-        // Create tracker client
-        let tracker_client =
-            TrackerClient::new(client_config.clone()).map_err(|e| FakerError::ConfigError(e.to_string()))?;
-
-        // Calculate how much of THIS torrent is already downloaded
-        let completion = config.completion_percent.clamp(0.0, 100.0) / 100.0;
-        let torrent_downloaded = (torrent.total_size as f64 * completion) as u64;
-        let left = torrent.total_size.saturating_sub(torrent_downloaded);
-
-        let stats = FakerStats {
-            // Cumulative stats from previous sessions
-            uploaded: config.initial_uploaded,
-            downloaded: config.initial_downloaded,
-            ratio: if config.initial_downloaded > 0 {
-                config.initial_uploaded as f64 / config.initial_downloaded as f64
-            } else {
-                0.0
-            },
-
-            // Torrent state
-            left,
-            seeders: 0,
-            leechers: 0,
-            state: FakerState::Idle,
-
-            // Session stats (starts fresh at 0)
-            session_uploaded: 0,
-            session_downloaded: 0,
-            session_ratio: 0.0,
-            elapsed_time: Duration::from_secs(0),
-
-            // Rates
-            current_upload_rate: 0.0,
-            current_download_rate: 0.0,
-            average_upload_rate: 0.0,
-            average_download_rate: 0.0,
-
-            // Progress
-            upload_progress: 0.0,
-            download_progress: 0.0,
-            ratio_progress: 0.0,
-            seed_time_progress: 0.0,
-
-            // ETA
-            eta_ratio: None,
-            eta_uploaded: None,
-            eta_seed_time: None,
-
-            // History
-            upload_rate_history: Vec::new(),
-            download_rate_history: Vec::new(),
-            ratio_history: Vec::new(),
-            history_timestamps: Vec::new(),
-
-            // Internal
-            last_announce: None,
-            next_announce: None,
-            announce_count: 0,
+        // Stop conditions
+        config.stop_at_ratio = if f.default_stop_ratio_enabled {
+            Some(f.default_stop_ratio)
+        } else {
+            None
         };
 
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            Ok(RatioFaker {
-                torrent,
-                config,
-                tracker_client,
-                state: Arc::new(RwLock::new(FakerState::Idle)),
-                stats: Arc::new(RwLock::new(stats)),
-                peer_id,
-                key,
-                tracker_id: None,
-                start_time: Instant::now(),
-                last_update: Instant::now(),
-                announce_interval: Duration::from_secs(1800), // Default 30 minutes
-            })
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            Ok(RatioFaker {
-                torrent,
-                config,
-                tracker_client,
-                state: RefCell::new(FakerState::Idle),
-                stats: RefCell::new(stats),
-                peer_id,
-                key,
-                tracker_id: None,
-                start_time: Instant::now(),
-                last_update: Instant::now(),
-                announce_interval: Duration::from_secs(1800), // Default 30 minutes
-            })
-        }
-    }
-
-    /// Start the ratio faking session
-    pub async fn start(&mut self) -> Result<()> {
-        log_info!("Starting ratio faker for torrent: {}", self.torrent.name);
-
-        // Update state
-        *write_lock!(self.state) = FakerState::Running;
-        self.start_time = Instant::now();
-        self.last_update = Instant::now();
-
-        // Send started event
-        let response = match self.announce(TrackerEvent::Started).await {
-            Ok(r) => r,
-            Err(e) => {
-                // UI doit savoir que le start a échoué
-                log_info!("Initial announce failed: {}", e);
-                *write_lock!(self.state) = FakerState::Stopped;
-                return Err(e);
-            }
+        config.stop_at_uploaded = if f.default_stop_uploaded_enabled {
+            Some((f.default_stop_uploaded_gb * 1024.0 * 1024.0 * 1024.0) as u64)
+        } else {
+            None
         };
 
-        // Update announce interval
-        self.announce_interval = Duration::from_secs(response.interval as u64);
-
-        // Store tracker ID if provided
-        self.tracker_id = response.tracker_id;
-
-        // Update stats with tracker response
-        let mut stats = write_lock!(self.stats);
-        stats.state = FakerState::Running; // Ensure state is synced
-        stats.seeders = response.complete;
-        stats.leechers = response.incomplete;
-        stats.last_announce = Some(Instant::now());
-        stats.next_announce = Some(Instant::now() + self.announce_interval);
-        stats.announce_count += 1;
-
-        log_info!(
-            "Started successfully. Seeders: {}, Leechers: {}, Interval: {}s",
-            response.complete,
-            response.incomplete,
-            response.interval
-        );
-
-        Ok(())
-    }
-
-    /// Stop the ratio faking session
-    pub async fn stop(&mut self) -> Result<()> {
-        log_info!("Stopping ratio faker");
-
-        // Send stopped event
-        self.announce(TrackerEvent::Stopped).await?;
-
-        // Update state
-        *write_lock!(self.state) = FakerState::Stopped;
-
-        // CRITICAL: Also update the state in stats so frontend can detect the stop
-        let mut stats = write_lock!(self.stats);
-        stats.state = FakerState::Stopped;
-        stats.announce_count += 1;
-
-        Ok(())
-    }
-
-    /// Update the fake stats (call this periodically)
-    pub async fn update(&mut self) -> Result<()> {
-        let now = Instant::now();
-        let elapsed = now.duration_since(self.last_update);
-        self.last_update = now;
-
-        let mut stats = write_lock!(self.stats);
-
-        // Calculate and apply rates
-        let (upload_rate, download_rate) = self.calculate_current_rates(&stats);
-        self.update_rate_stats(&mut stats, upload_rate, download_rate);
-
-        // Update transfer amounts
-        let upload_delta = (upload_rate * 1024.0 * elapsed.as_secs_f64()) as u64;
-        let download_delta = (download_rate * 1024.0 * elapsed.as_secs_f64()) as u64;
-
-        log_trace!(
-            "Update: elapsed={:.2}s, upload_rate={:.2} KB/s, download_rate={:.2} KB/s, upload_delta={} bytes",
-            elapsed.as_secs_f64(),
-            upload_rate,
-            download_rate,
-            upload_delta
-        );
-
-        let completed = self.update_transfer_stats(&mut stats, upload_delta, download_delta);
-
-        if completed {
-            drop(stats);
-            self.on_completed().await?;
-            stats = write_lock!(self.stats);
-        }
-
-        // Update derived stats
-        self.update_derived_stats(&mut stats, now);
-
-        // Check stop conditions
-        if self.check_stop_conditions(&stats) {
-            log_info!("Stop condition met, stopping faker");
-            drop(stats);
-            self.stop().await?;
-            return Ok(());
-        }
-
-        // Check if we need to announce
-        if let Some(next_announce) = stats.next_announce {
-            if now >= next_announce {
-                drop(stats);
-                self.periodic_announce().await?;
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Update only the stats without announcing to tracker (for live updates)
-    pub async fn update_stats_only(&mut self) -> Result<()> {
-        let now = Instant::now();
-        let elapsed = now.duration_since(self.last_update);
-        self.last_update = now;
-
-        let mut stats = write_lock!(self.stats);
-
-        // Calculate and apply rates
-        let (upload_rate, download_rate) = self.calculate_current_rates(&stats);
-        self.update_rate_stats(&mut stats, upload_rate, download_rate);
-
-        // Update transfer amounts
-        let upload_delta = (upload_rate * 1024.0 * elapsed.as_secs_f64()) as u64;
-        let download_delta = (download_rate * 1024.0 * elapsed.as_secs_f64()) as u64;
-
-        let completed = self.update_transfer_stats(&mut stats, upload_delta, download_delta);
-
-        if completed {
-            drop(stats);
-            self.on_completed().await?;
-            stats = write_lock!(self.stats);
-        }
-
-        // Update derived stats
-        self.update_derived_stats(&mut stats, now);
-
-        // Check stop conditions
-        if self.check_stop_conditions(&stats) {
-            log_info!("Stop condition met, stopping faker");
-            drop(stats);
-            self.stop().await?;
-            return Ok(());
-        }
-
-        // NOTE: We don't check for periodic announce here - that's handled by update()
-
-        Ok(())
-    }
-
-    /// Get current stats
-    pub async fn get_stats(&self) -> FakerStats {
-        read_lock!(self.stats).clone()
-    }
-
-    /// Get torrent info
-    pub fn get_torrent(&self) -> &TorrentInfo {
-        &self.torrent
-    }
-
-    /// Build announce request (helper)
-    fn build_announce_request(&self, stats: &FakerStats, event: TrackerEvent) -> AnnounceRequest {
-        AnnounceRequest {
-            info_hash: self.torrent.info_hash,
-            peer_id: self.peer_id.clone(),
-            port: self.config.port,
-            uploaded: stats.uploaded,
-            downloaded: stats.downloaded,
-            left: stats.left,
-            compact: true,
-            no_peer_id: false,
-            event,
-            ip: None,
-            numwant: Some(self.config.num_want),
-            key: Some(self.key.clone()),
-            tracker_id: self.tracker_id.clone(),
-        }
-    }
-
-    /// Send an announce to the tracker with retries on failure
-    async fn announce(&mut self, event: TrackerEvent) -> Result<AnnounceResponse> {
-        let stats = read_lock!(self.stats);
-
-        log_debug!(
-            "Preparing announce: event={:?}, uploaded={}, downloaded={}, left={}",
-            event,
-            stats.uploaded,
-            stats.downloaded,
-            stats.left
-        );
-
-        let request = self.build_announce_request(&stats, event.clone());
-
-        drop(stats); // Release lock before async call
-
-        // Pour ne pas bloquer l'UI lors de l'ajout de torrent, on ne fait PAS
-        // de retry sur l'announce initial (Started). On renvoie l'erreur tout de suite.
-        let response = match event {
-            TrackerEvent::Started => self.send_announce_no_retry(request).await?,
-            _ => self.send_announce_with_retry(request).await?,
+        config.stop_at_downloaded = if f.default_stop_downloaded_enabled {
+            Some((f.default_stop_downloaded_gb * 1024.0 * 1024.0 * 1024.0) as u64)
+        } else {
+            None
         };
 
-        Ok(response)
-    }
+        config.stop_at_seed_time = if f.default_stop_seed_time_enabled {
+            Some((f.default_stop_seed_time_hours * 3600.0) as u64)
+        } else {
+            None
+        };
 
-    /// Announce sans retry (utilisé pour TrackerEvent::Started)
-    async fn send_announce_no_retry(&mut self, request: AnnounceRequest) -> Result<AnnounceResponse> {
-        match self
-            .tracker_client
-            .announce(self.torrent.get_tracker_url(), &request)
-            .await
-        {
-            Ok(resp) => Ok(resp),
-            Err(e) => {
-                log_info!("Announce (no retry) failed: {}", e.to_string());
-                Err(FakerError::TrackerError(e))
-            }
+        config.stop_when_no_leechers = f.default_stop_when_no_leechers;
+
+        // Progressive
+        config.progressive_rates = f.default_progressive_rates_enabled;
+
+        config.target_upload_rate = if f.default_progressive_rates_enabled {
+            Some(f.default_target_upload_rate)
+        } else {
+            None
+        };
+
+        config.target_download_rate = if f.default_progressive_rates_enabled {
+            Some(f.default_target_download_rate)
+        } else {
+            None
+        };
+
+        config.progressive_duration =
+            (f.default_progressive_duration_hours * 3600.0) as u64;
+
+        // Randomization
+        config.random_range_percent = f.default_random_range_percent;
+
+        // Announce / update intervals (actuellement ignorés)
+        if config.announce_interval == base.announce_interval {
+            config.announce_interval = f.default_announce_interval;
+        }
+        if config.update_interval == base.update_interval {
+            config.update_interval = f.update_interval;
+        }
+
+        // Announce retry settings
+        config.announce_max_retries = f.default_announce_max_retries;
+        config.announce_retry_delay_seconds = f.default_announce_retry_delay_seconds;
+        config.infinite_retry_after_max = f.default_infinite_retry_after_max;
+
+        config
+    }
+}
+
+impl AppState {
+    pub fn new(data_dir: &str, config: AppConfig) -> Self {
+        let (log_sender, _) = broadcast::channel(256);
+        let (instance_sender, _) = broadcast::channel(64);
+        Self {
+            instances: Arc::new(RwLock::new(HashMap::new())),
+            torrents: Arc::new(RwLock::new(HashMap::new())),
+            log_sender,
+            instance_sender,
+            persistence: Arc::new(Persistence::new(data_dir)),
+            config,
         }
     }
 
-    /// Send announce with retry/fixed-delay
-    async fn send_announce_with_retry(&mut self, request: AnnounceRequest) -> Result<AnnounceResponse> {
-        // Number of retries after the initial attempt
-        let max_retries = self.config.announce_max_retries;
-        let delay_secs = self.config.announce_retry_delay_seconds;
-        let delay = Duration::from_secs(delay_secs);
+    /// Load saved state and restore instances
+    pub async fn load_saved_state(&self) -> Result<usize, String> {
+        let saved = self.persistence.load().await;
 
-        // Attempt counter starts at 1 for the first attempt
-        let mut attempt: u32 = 0;
+        let mut restored_count = 0;
 
-        loop {
-            attempt += 1;
+        // Restore all instances (including Idle ones so they persist across refreshes)
+        for (id, persisted) in saved.instances {
+            tracing::info!(
+                "Restoring instance {} ({}) - state: {:?}",
+                id,
+                persisted.torrent.name,
+                persisted.state
+            );
 
-            match self
-                .tracker_client
-                .announce(self.torrent.get_tracker_url(), &request)
-                .await
-            {
-                Ok(resp) => {
-                    return Ok(resp);
+            // Create config with saved cumulative stats for RatioFaker
+            // But store the original persisted.config in FakerInstance
+            let mut faker_config = persisted.config.clone();
+            faker_config.initial_uploaded = persisted.cumulative_uploaded;
+            faker_config.initial_downloaded = persisted.cumulative_downloaded;
+
+            match RatioFaker::new(persisted.torrent.clone(), faker_config) {
+                Ok(faker) => {
+                    let instance = FakerInstance {
+                        faker: Arc::new(RwLock::new(faker)),
+                        torrent: persisted.torrent.clone(),
+                        config: persisted.config,
+                        torrent_info_hash: persisted.torrent.info_hash,
+                        cumulative_uploaded: persisted.cumulative_uploaded,
+                        cumulative_downloaded: persisted.cumulative_downloaded,
+                        created_at: persisted.created_at,
+                        source: persisted.source,
+                        task_handle: None,
+                        shutdown_tx: None,
+                    };
+
+                    self.instances.write().await.insert(id.clone(), instance);
+
+                    // Auto-start if it was running
+                    if matches!(persisted.state, FakerState::Running) {
+                        if let Err(e) = self.start_instance(&id).await {
+                            tracing::warn!("Failed to auto-start instance {}: {}", id, e);
+                        }
+                    }
+
+                    restored_count += 1;
                 }
                 Err(e) => {
-                    // If we've exhausted retries (attempt > max_retries), return the error.
-                    // Note: this allows up to `max_retries` retries after the first attempt,
-                    // resulting in up to `max_retries + 1` total attempts.
-                    if attempt > max_retries {
-                        if self.config.infinite_retry_after_max {
-                            // Infinite retry mode: use announce_interval instead of retry_delay
-                            let wait_secs = self.announce_interval.as_secs();
+                    tracing::error!("Failed to restore instance {}: {}", id, e);
+                }
+            }
+        }
 
-                            log_info!(
-                                "Announce failed after {} retries. Switching to infinite retry mode (every {} s)",
-                                max_retries,
-                                wait_secs
-                            );
+        if restored_count > 0 {
+            tracing::info!("Restored {} instances from saved state", restored_count);
+        }
 
-                            #[cfg(not(target_arch = "wasm32"))]
-                            {
-                                tokio::time::sleep(Duration::from_secs(wait_secs)).await;
+        Ok(restored_count)
+    }
+
+    /// Save current state to disk
+    pub async fn save_state(&self) -> Result<(), String> {
+        let instances = self.instances.read().await;
+
+        let mut persisted = PersistedState {
+            instances: HashMap::new(),
+            version: 1,
+        };
+
+        for (id, instance) in instances.iter() {
+            let stats = instance.faker.read().await.get_stats().await;
+
+            persisted.instances.insert(
+                id.clone(),
+                PersistedInstance {
+                    id: id.clone(),
+                    torrent: instance.torrent.clone(),
+                    config: instance.config.clone(),
+                    cumulative_uploaded: stats.uploaded,
+                    cumulative_downloaded: stats.downloaded,
+                    state: stats.state,
+                    created_at: instance.created_at,
+                    updated_at: now_timestamp(),
+                    source: instance.source,
+                },
+            );
+        }
+
+        self.persistence.save(&persisted).await
+    }
+
+    /// Subscribe to log events
+    pub fn subscribe_logs(&self) -> broadcast::Receiver<LogEvent> {
+        self.log_sender.subscribe()
+    }
+
+    /// Subscribe to instance events (for real-time sync with frontend)
+    pub fn subscribe_instance_events(&self) -> broadcast::Receiver<InstanceEvent> {
+        self.instance_sender.subscribe()
+    }
+
+    /// Emit an instance event to all subscribers
+    pub fn emit_instance_event(&self, event: InstanceEvent) {
+        // Ignore send errors (no subscribers is fine)
+        let _ = self.instance_sender.send(event);
+    }
+
+    /// Generate a new unique instance ID using nanoid
+    pub async fn next_instance_id(&self) -> String {
+        nanoid::nanoid!(10) // 10 chars is short but collision-resistant enough
+    }
+
+    /// Check if an instance exists
+    pub async fn instance_exists(&self, id: &str) -> bool {
+        self.instances.read().await.contains_key(id)
+    }
+
+    /// Update an existing instance's config (used when starting an existing instance with new config)
+    pub async fn update_instance_config(&self, id: &str, config: FakerConfig) -> Result<(), String> {
+        let mut instances = self.instances.write().await;
+        let instance = instances.get_mut(id).ok_or("Instance not found")?;
+
+        // Create a separate config for RatioFaker with cumulative stats as initial values
+        let mut faker_config = config.clone();
+        faker_config.initial_uploaded = instance.cumulative_uploaded;
+        faker_config.initial_downloaded = instance.cumulative_downloaded;
+
+        let faker = RatioFaker::new(instance.torrent.clone(), faker_config).map_err(|e| e.to_string())?;
+
+        instance.faker = Arc::new(RwLock::new(faker));
+        instance.config = config.clone(); // Store original user config (not modified)
+
+        Ok(())
+    }
+
+    /// Update only the config for an instance (without recreating the faker)
+    /// Used to persist form changes before the faker is started
+    pub async fn update_instance_config_only(&self, id: &str, config: FakerConfig) -> Result<(), String> {
+        let mut instances = self.instances.write().await;
+        let instance = instances.get_mut(id).ok_or("Instance not found")?;
+
+        // Just update the stored config, don't recreate the faker
+        instance.config = config;
+
+        // Save state to persist the config change
+        drop(instances); // Release lock before calling save_state
+        if let Err(e) = self.save_state().await {
+            tracing::warn!("Failed to save state after config update: {}", e);
+        }
+
+        Ok(())
+    }
+
+    /// Create a new faker instance (manual creation via API)
+    pub async fn create_instance(&self, id: &str, torrent: TorrentInfo, config: FakerConfig) -> Result<(), String> {
+        let config = self.apply_faker_defaults(config);
+        self.create_instance_internal(id, torrent, config, InstanceSource::Manual).await
+    }
+
+    /// Create a new idle faker instance (torrent loaded but not started)
+    /// Used when user loads a torrent via UI - creates server-side instance so it persists on refresh
+    pub async fn create_idle_instance(&self, id: &str, torrent: TorrentInfo) -> Result<(), String> {
+        // Use default config for idle instance
+        let config = self.apply_faker_defaults(FakerConfig::default());
+        self.create_instance_internal(id, torrent.clone(), config, InstanceSource::Manual)
+            .await?;
+
+        // Emit event for real-time sync
+        self.emit_instance_event(InstanceEvent::Created {
+            id: id.to_string(),
+            torrent_name: torrent.name,
+            info_hash: hex::encode(torrent.info_hash),
+            auto_started: false,
+        });
+
+        Ok(())
+    }
+
+    /// Create a new faker instance and emit an event for real-time sync
+    /// Used by watch folder to notify connected frontends
+    pub async fn create_instance_with_event(
+        &self,
+        id: &str,
+        torrent: TorrentInfo,
+        mut config: FakerConfig,
+        auto_started: bool,
+    ) -> Result<(), String> {
+        config = self.apply_faker_defaults(config);
+        self.create_instance_internal(id, torrent.clone(), config, InstanceSource::WatchFolder)
+            .await?;
+
+        // Emit event for real-time sync
+        self.emit_instance_event(InstanceEvent::Created {
+            id: id.to_string(),
+            torrent_name: torrent.name,
+            info_hash: hex::encode(torrent.info_hash),
+            auto_started,
+        });
+
+        Ok(())
+    }
+
+    /// Internal implementation for creating instances
+    async fn create_instance_internal(
+        &self,
+        id: &str,
+        torrent: TorrentInfo,
+        config: FakerConfig,
+        source: InstanceSource,
+    ) -> Result<(), String> {
+        // Set instance context for logging
+        set_instance_context_str(Some(id));
+
+        let torrent_info_hash = torrent.info_hash;
+
+        // Check if instance exists and has same torrent - preserve cumulative stats and source
+        let (cumulative_uploaded, cumulative_downloaded, created_at, existing_source) = {
+            let instances = self.instances.read().await;
+            if let Some(existing) = instances.get(id) {
+                if existing.torrent_info_hash == torrent_info_hash {
+                    (
+                        existing.cumulative_uploaded,
+                        existing.cumulative_downloaded,
+                        existing.created_at,
+                        Some(existing.source),
+                    )
+                } else {
+                    (0, 0, now_timestamp(), None)
+                }
+            } else {
+                (0, 0, now_timestamp(), None)
+            }
+        };
+
+        // Preserve existing source if instance already exists, otherwise use provided source
+        let final_source = existing_source.unwrap_or(source);
+
+        // Create a separate config for RatioFaker with cumulative stats as initial values
+        // This ensures the faker starts from cumulative totals, but we preserve the
+        // original user config for display in the frontend
+        let mut faker_config = config.clone();
+        faker_config.initial_uploaded = cumulative_uploaded;
+        faker_config.initial_downloaded = cumulative_downloaded;
+
+        let faker = RatioFaker::new(torrent.clone(), faker_config).map_err(|e| e.to_string())?;
+
+        let instance = FakerInstance {
+            faker: Arc::new(RwLock::new(faker)),
+            torrent: torrent.clone(),
+            config: config.clone(), // Store original user config (not modified)
+            torrent_info_hash,
+            cumulative_uploaded,
+            cumulative_downloaded,
+            created_at,
+            source: final_source,
+            task_handle: None,
+            shutdown_tx: None,
+        };
+
+        self.instances.write().await.insert(id.to_string(), instance);
+
+        // Save state after creating instance
+        if let Err(e) = self.save_state().await {
+            tracing::warn!("Failed to save state after creating instance: {}", e);
+        }
+
+        Ok(())
+    }
+
+    /// Start a faker instance
+    pub async fn start_instance(&self, id: &str) -> Result<(), String> {
+        // Set instance context for logging
+        set_instance_context_str(Some(id));
+
+        let faker_arc = {
+            let mut instances = self.instances.write().await;
+            let instance = instances.get_mut(id).ok_or("Instance not found")?;
+
+            // Stop existing background task if any
+            if let Some(tx) = instance.shutdown_tx.take() {
+                let _ = tx.send(()).await;
+            }
+            if let Some(handle) = instance.task_handle.take() {
+                handle.abort();
+            }
+
+            instance.faker.clone()
+        };
+
+        // Start the faker (sends "started" announce)
+        faker_arc.write().await.start().await.map_err(|e| e.to_string())?;
+
+        if let Err(e) = self.save_state().await {
+            tracing::warn!("Failed to save state after start: {}", e);
+        }
+
+        // Spawn background update task
+        let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
+        let id_clone = id.to_string();
+        let faker_clone = faker_arc.clone();
+        let instances_clone = self.instances.clone();
+        let persistence_self = self.clone();
+
+        let task_handle = tokio::spawn(async move {
+            Self::background_update_loop(id_clone, faker_clone, instances_clone, persistence_self, shutdown_rx).await;
+        });
+
+        // Store task handle and shutdown sender
+        {
+            let mut instances = self.instances.write().await;
+            if let Some(instance) = instances.get_mut(id) {
+                instance.task_handle = Some(task_handle);
+                instance.shutdown_tx = Some(shutdown_tx);
+            }
+        }
+
+        // Save state after starting
+        if let Err(e) = self.save_state().await {
+            tracing::warn!("Failed to save state after starting instance: {}", e);
+        }
+
+        Ok(())
+    }
+
+    /// Background update loop that runs independently of client polling
+    async fn background_update_loop(
+        id: String,
+        faker: Arc<RwLock<RatioFaker>>,
+        instances: Arc<RwLock<HashMap<String, FakerInstance>>>,
+        state: AppState,
+        mut shutdown_rx: mpsc::Receiver<()>,
+    ) {
+        let update_interval = Duration::from_secs(5);
+        let save_interval = Duration::from_secs(30);
+        let mut last_save = std::time::Instant::now();
+        let mut last_state: Option<FakerState> = None;
+
+        tracing::info!("Background update loop started for instance {}", id);
+
+        loop {
+            tokio::select! {
+                _ = shutdown_rx.recv() => {
+                    tracing::info!("Background update loop received shutdown signal for instance {}", id);
+                    break;
+                }
+                _ = tokio::time::sleep(update_interval) => {
+                    // 🔥 Check if instance still exists
+                    let exists = {
+                        let guard = instances.read().await;
+                        guard.contains_key(&id)
+                    };
+
+                    if !exists {
+                        tracing::info!("Instance {} no longer exists, stopping background loop", id);
+                        break;
+                    }
+
+                    // Update the faker
+                    if let Err(e) = faker.write().await.update().await {
+                        tracing::warn!("Background update failed for instance {}: {}", id, e);
+                    }
+
+                    // Detect state change
+                    let stats = faker.read().await.get_stats().await;
+                    if last_state != Some(stats.state.clone()) {
+                        last_state = Some(stats.state.clone());
+                        if let Err(e) = state.save_state().await {
+                            tracing::warn!("Failed to save state after state change: {}", e);
+                        }
+                    }
+
+                    // Stop loop if no longer running
+                    if stats.state != FakerState::Running {
+                        tracing::info!("Instance {} no longer running, stopping background loop", id);
+
+                        if stats.state == FakerState::Stopped {
+                            if state.config.faker.delete_instead_of_stop {
+                                tracing::info!("Instance {} stopped due to stop condition → deleting", id);
+                        
+                                {
+                                    let mut guard = instances.write().await;
+                                    guard.remove(&id);
+                                }
+                        
+                                state.emit_instance_event(InstanceEvent::Deleted { id: id.clone() });
+                                let _ = state.save_state().await;
+
+                                break;
+                            } else {
+                                break;
                             }
-
-                            #[cfg(target_arch = "wasm32")]
-                            {
-                                wasm_sleep(Duration::from_secs(wait_secs)).await;
-                            }
-
-                            continue; // retry forever
                         }
 
-                        log_info!("Announce failed after {} attempts: {}", attempt - 1, e.to_string());
-                        return Err(FakerError::TrackerError(e));
                     }
 
-                    // Normal retry (before max_retries)
-                    log_info!(
-                        "Announce attempt {}/{} failed: {}. Retrying in {} s",
-                        attempt,
-                        max_retries,
-                        e.to_string(),
-                        delay_secs
-                    );
-
-                    #[cfg(not(target_arch = "wasm32"))]
-                    {
-                        tokio::time::sleep(delay).await;
-                    }
-
-                    #[cfg(target_arch = "wasm32")]
-                    {
-                        wasm_sleep(delay).await;
+                    // Periodically save state
+                    if last_save.elapsed() >= save_interval {
+                        if let Err(e) = state.save_state().await {
+                            tracing::warn!("Failed to save state in background loop: {}", e);
+                        }
+                        last_save = std::time::Instant::now();
                     }
                 }
             }
         }
+
+        tracing::info!("Background update loop stopped for instance {}", id);
     }
 
-    /// Periodic announce (no event)
-    async fn periodic_announce(&mut self) -> Result<()> {
-        log_info!("Sending periodic announce");
+    /// Stop a faker instance
+    pub async fn stop_instance(&self, id: &str) -> Result<FakerStats, String> {
+        // Set instance context for logging
+        set_instance_context_str(Some(id));
 
-        let response = self.announce(TrackerEvent::None).await?;
-
-        // Update interval if changed
-        self.announce_interval = Duration::from_secs(response.interval as u64);
-
-        // Update stats
-        let mut stats = write_lock!(self.stats);
-        stats.seeders = response.complete;
-        stats.leechers = response.incomplete;
-        stats.last_announce = Some(Instant::now());
-        stats.next_announce = Some(Instant::now() + self.announce_interval);
-        stats.announce_count += 1;
-
-        log_info!(
-            "Periodic announce complete. Seeders: {}, Leechers: {}",
-            response.complete,
-            response.incomplete
-        );
-
-        Ok(())
-    }
-
-    /// Handle completion event
-    async fn on_completed(&mut self) -> Result<()> {
-        log_info!("Torrent completed! Sending completed event");
-
-        let response = self.announce(TrackerEvent::Completed).await?;
-
-        // Update state
-        *write_lock!(self.state) = FakerState::Completed;
-
-        // Update stats
-        let mut stats = write_lock!(self.stats);
-        stats.state = FakerState::Completed; // CRITICAL: Update state in stats too
-        stats.seeders = response.complete;
-        stats.leechers = response.incomplete;
-        stats.announce_count += 1;
-
-        Ok(())
-    }
-
-    /// Scrape the tracker for stats
-    pub async fn scrape(&self) -> Result<crate::protocol::ScrapeResponse> {
-        log_info!("Scraping tracker");
-
-        let response = self
-            .tracker_client
-            .scrape(self.torrent.get_tracker_url(), &self.torrent.info_hash)
-            .await?;
-
-        log_info!(
-            "Scrape complete. Seeders: {}, Leechers: {}, Downloaded: {}",
-            response.complete,
-            response.incomplete,
-            response.downloaded
-        );
-
-        Ok(response)
-    }
-
-    /// Pause the faker
-    pub async fn pause(&mut self) -> Result<()> {
-        log_info!("Pausing ratio faker");
-        *write_lock!(self.state) = FakerState::Paused;
-        write_lock!(self.stats).state = FakerState::Paused;
-        Ok(())
-    }
-
-    /// Resume the faker
-    pub async fn resume(&mut self) -> Result<()> {
-        log_info!("Resuming ratio faker");
-        *write_lock!(self.state) = FakerState::Running;
-        write_lock!(self.stats).state = FakerState::Running;
-        self.last_update = Instant::now(); // Reset to avoid large delta
-        Ok(())
-    }
-
-    /// Check if any stop conditions are met
-    /// Calculate current upload and download rates with progressive and random adjustments
-    fn calculate_current_rates(&self, stats: &FakerStats) -> (f64, f64) {
-        let base_upload_rate = if self.config.progressive_rates {
-            self.calculate_progressive_rate(
-                self.config.upload_rate,
-                self.config.target_upload_rate.unwrap_or(self.config.upload_rate),
-                stats.elapsed_time.as_secs(),
-                self.config.progressive_duration,
+        let (faker_arc, shutdown_tx, task_handle) = {
+            let mut instances = self.instances.write().await;
+            let instance = instances.get_mut(id).ok_or("Instance not found")?;
+            (
+                instance.faker.clone(),
+                instance.shutdown_tx.take(),
+                instance.task_handle.take(),
             )
-        } else {
-            self.config.upload_rate
         };
 
-        let base_download_rate = if self.config.progressive_rates {
-            self.calculate_progressive_rate(
-                self.config.download_rate,
-                self.config.target_download_rate.unwrap_or(self.config.download_rate),
-                stats.elapsed_time.as_secs(),
-                self.config.progressive_duration,
+        // Signal background task to stop
+        if let Some(tx) = shutdown_tx {
+            let _ = tx.send(()).await;
+        }
+        // Wait for task to finish (with timeout)
+        if let Some(handle) = task_handle {
+            let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
+        }
+
+        // Get final stats before stopping
+        let stats = faker_arc.read().await.get_stats().await;
+
+        // Stop the faker (sends "stopped" announce)
+        faker_arc.write().await.stop().await.map_err(|e| e.to_string())?;
+
+        if let Err(e) = self.save_state().await {
+            tracing::warn!("Failed to save state after stop: {}", e);
+        }
+
+        // Update cumulative stats
+        {
+            let mut instances = self.instances.write().await;
+            if let Some(instance) = instances.get_mut(id) {
+                instance.cumulative_uploaded = stats.uploaded;
+                instance.cumulative_downloaded = stats.downloaded;
+            }
+        }
+
+        // Save state after stopping
+        if let Err(e) = self.save_state().await {
+            tracing::warn!("Failed to save state after stopping instance: {}", e);
+        }
+
+        Ok(stats)
+    }
+
+    /// Pause a faker instance
+    pub async fn pause_instance(&self, id: &str) -> Result<(), String> {
+        // Set instance context for logging
+        set_instance_context_str(Some(id));
+
+        let (faker_arc, shutdown_tx, task_handle) = {
+            let mut instances = self.instances.write().await;
+            let instance = instances.get_mut(id).ok_or("Instance not found")?;
+            (
+                instance.faker.clone(),
+                instance.shutdown_tx.take(),
+                instance.task_handle.take(),
             )
-        } else {
-            self.config.download_rate
         };
 
-        // Apply randomization
-        let mut upload_rate = self.apply_randomization(base_upload_rate);
-        let mut download_rate = self.apply_randomization(base_download_rate);
-
-        // Can't download if there are no seeders (and we still have data left to download)
-        if stats.seeders <= 0 && stats.left > 0 {
-            download_rate = 0.0;
+        // Signal background task to stop
+        if let Some(tx) = shutdown_tx {
+            let _ = tx.send(()).await;
+        }
+        // Wait for task to finish (with timeout)
+        if let Some(handle) = task_handle {
+            let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
         }
 
-        // Can't upload if there are no leechers
-        if stats.leechers <= 0 {
-            upload_rate = 0.0;
+        // Pause the faker
+        faker_arc.write().await.pause().await.map_err(|e| e.to_string())?;
+
+        if let Err(e) = self.save_state().await {
+            tracing::warn!("Failed to save state after pause: {}", e);
         }
 
-        (upload_rate, download_rate)
-    }
-
-    /// Apply randomization to a rate if enabled
-    fn apply_randomization(&self, base_rate: f64) -> f64 {
-        if self.config.randomize_rates {
-            let mut rng = rand::rng();
-            let range = self.config.random_range_percent / 100.0;
-            let variation = 1.0 + (rng.random::<f64>() * (range * 2.0) - range);
-            base_rate * variation
-        } else {
-            base_rate
+        // Save state after pausing
+        if let Err(e) = self.save_state().await {
+            tracing::warn!("Failed to save state after pausing instance: {}", e);
         }
+
+        Ok(())
     }
 
-    /// Update rate statistics and history
-    fn update_rate_stats(&self, stats: &mut FakerStats, upload_rate: f64, download_rate: f64) {
-        stats.current_upload_rate = upload_rate;
-        stats.current_download_rate = download_rate;
+    /// Resume a faker instance
+    pub async fn resume_instance(&self, id: &str) -> Result<(), String> {
+        // Set instance context for logging
+        set_instance_context_str(Some(id));
 
-        // Record timestamp for this data point (Unix millis)
-        let timestamp = Self::current_timestamp_millis();
-        Self::add_to_history_u64(&mut stats.history_timestamps, timestamp, 60);
+        let faker_arc = {
+            let mut instances = self.instances.write().await;
+            let instance = instances.get_mut(id).ok_or("Instance not found")?;
 
-        Self::add_to_history(&mut stats.upload_rate_history, upload_rate, 60);
-        Self::add_to_history(&mut stats.download_rate_history, download_rate, 60);
-    }
+            // Stop existing background task if any (shouldn't have one when paused, but be safe)
+            if let Some(tx) = instance.shutdown_tx.take() {
+                let _ = tx.send(()).await;
+            }
+            if let Some(handle) = instance.task_handle.take() {
+                handle.abort();
+            }
 
-    /// Update transfer stats (uploaded, downloaded, left). Returns true if just completed.
-    fn update_transfer_stats(&self, stats: &mut FakerStats, upload_delta: u64, download_delta: u64) -> bool {
-        stats.uploaded += upload_delta;
-        stats.session_uploaded += upload_delta;
-
-        if stats.left > 0 {
-            let actual_download = download_delta.min(stats.left);
-            stats.downloaded += actual_download;
-            stats.session_downloaded += actual_download;
-            stats.left = stats.left.saturating_sub(actual_download);
-
-            stats.left == 0
-        } else {
-            false
-        }
-    }
-
-    /// Update derived statistics (ratio, elapsed time, average rates, progress)
-    fn update_derived_stats(&self, stats: &mut FakerStats, now: Instant) {
-        // Cumulative ratio (for display in Total Stats)
-        let current_ratio = if self.torrent.total_size > 0 {
-            stats.uploaded as f64 / self.torrent.total_size as f64
-        } else {
-            0.0
-        };
-        stats.ratio = current_ratio;
-        Self::add_to_history(&mut stats.ratio_history, current_ratio, 60);
-
-        // Session ratio (for stop conditions) = session_uploaded / torrent_size
-        stats.session_ratio = if self.torrent.total_size > 0 {
-            stats.session_uploaded as f64 / self.torrent.total_size as f64
-        } else {
-            0.0
+            instance.faker.clone()
         };
 
-        stats.elapsed_time = now.duration_since(self.start_time);
+        // Resume the faker
+        faker_arc.write().await.resume().await.map_err(|e| e.to_string())?;
 
-        let elapsed_secs = stats.elapsed_time.as_secs_f64();
-        if elapsed_secs > 0.0 {
-            stats.average_upload_rate = (stats.session_uploaded as f64 / 1024.0) / elapsed_secs;
-            stats.average_download_rate = (stats.session_downloaded as f64 / 1024.0) / elapsed_secs;
+        if let Err(e) = self.save_state().await {
+            tracing::warn!("Failed to save state after resume: {}", e);
         }
 
-        self.update_progress_and_eta(stats);
-    }
+        // Spawn background update task
+        let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
+        let id_clone = id.to_string();
+        let faker_clone = faker_arc.clone();
+        let instances_clone = self.instances.clone();
+        let persistence_self = self.clone();
 
-    /// Add a value to a history vec, keeping only the last `max_len` items
-    fn add_to_history(history: &mut Vec<f64>, value: f64, max_len: usize) {
-        history.push(value);
-        if history.len() > max_len {
-            history.remove(0);
-        }
-    }
+        let task_handle = tokio::spawn(async move {
+            Self::background_update_loop(id_clone, faker_clone, instances_clone, persistence_self, shutdown_rx).await;
+        });
 
-    /// Add a u64 value to a history vec, keeping only the last `max_len` items
-    fn add_to_history_u64(history: &mut Vec<u64>, value: u64, max_len: usize) {
-        history.push(value);
-        if history.len() > max_len {
-            history.remove(0);
-        }
-    }
-
-    /// Get current timestamp in milliseconds (cross-platform)
-    fn current_timestamp_millis() -> u64 {
-        #[cfg(not(target_arch = "wasm32"))]
+        // Store task handle and shutdown sender
         {
-            use std::time::{SystemTime, UNIX_EPOCH};
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as u64
+            let mut instances = self.instances.write().await;
+            if let Some(instance) = instances.get_mut(id) {
+                instance.task_handle = Some(task_handle);
+                instance.shutdown_tx = Some(shutdown_tx);
+            }
         }
-        #[cfg(target_arch = "wasm32")]
-        {
-            js_sys::Date::now() as u64
+
+        // Save state after resuming
+        if let Err(e) = self.save_state().await {
+            tracing::warn!("Failed to save state after resuming instance: {}", e);
         }
+
+        Ok(())
     }
 
-    fn check_stop_conditions(&self, stats: &FakerStats) -> bool {
-        // Check ratio target (use session ratio, not cumulative)
-        if let Some(target_ratio) = self.config.stop_at_ratio {
-            if stats.session_ratio >= target_ratio - 0.001 {
-                log_info!(
-                    "Target ratio reached: {:.3} >= {:.3} (session)",
-                    stats.session_ratio,
-                    target_ratio
-                );
-                return true;
-            }
-        }
+    /// Update faker (send tracker announce)
+    pub async fn update_instance(&self, id: &str) -> Result<FakerStats, String> {
+        // Set instance context for logging
+        set_instance_context_str(Some(id));
 
-        // Check uploaded target (session uploaded, not total)
-        if let Some(target_uploaded) = self.config.stop_at_uploaded {
-            if stats.session_uploaded >= target_uploaded {
-                log_info!(
-                    "Target uploaded reached: {} >= {} bytes (session)",
-                    stats.session_uploaded,
-                    target_uploaded
-                );
-                return true;
-            }
-        }
+        let faker_arc = {
+            let instances = self.instances.read().await;
+            let instance = instances.get(id).ok_or("Instance not found")?;
+            instance.faker.clone()
+        };
 
-        // Check downloaded target (session downloaded, not total)
-        if let Some(target_downloaded) = self.config.stop_at_downloaded {
-            if stats.session_downloaded >= target_downloaded {
-                log_info!(
-                    "Target downloaded reached: {} >= {} bytes (session)",
-                    stats.session_downloaded,
-                    target_downloaded
-                );
-                return true;
-            }
-        }
-
-        // Check seed time target
-        if let Some(target_seed_time) = self.config.stop_at_seed_time {
-            if stats.elapsed_time.as_secs() >= target_seed_time {
-                log_info!(
-                    "Target seed time reached: {}s >= {}s",
-                    stats.elapsed_time.as_secs(),
-                    target_seed_time
-                );
-                return true;
-            }
-        }
-
-        // Check no leechers condition (only after at least one announce)
-        if self.config.stop_when_no_leechers && stats.leechers == 0 {
-            log_info!("No leechers remaining, stopping");
-            return true;
-        }
-
-        false
+        faker_arc.write().await.update().await.map_err(|e| e.to_string())?;
+        let stats = faker_arc.read().await.get_stats().await;
+        Ok(stats)
     }
 
-    /// Calculate progressive rate (linear interpolation)
-    fn calculate_progressive_rate(
+    /// Update stats only (no tracker announce)
+    pub async fn update_stats_only(&self, id: &str) -> Result<FakerStats, String> {
+        // Set instance context for logging
+        set_instance_context_str(Some(id));
+
+        let faker_arc = {
+            let instances = self.instances.read().await;
+            let instance = instances.get(id).ok_or("Instance not found")?;
+            instance.faker.clone()
+        };
+
+        faker_arc
+            .write()
+            .await
+            .update_stats_only()
+            .await
+            .map_err(|e| e.to_string())?;
+        let stats = faker_arc.read().await.get_stats().await;
+        Ok(stats)
+    }
+
+    /// Get stats for an instance
+    pub async fn get_stats(&self, id: &str) -> Result<FakerStats, String> {
+        let faker_arc = {
+            let instances = self.instances.read().await;
+            let instance = instances.get(id).ok_or("Instance not found")?;
+            instance.faker.clone()
+        };
+        let stats = faker_arc.read().await.get_stats().await;
+        Ok(stats)
+    }
+
+    /// Delete an instance (idempotent - returns Ok even if not found)
+    /// Note: Watch folder instances cannot be deleted via API unless force=true
+    /// Use force=true for orphaned watch folder instances (file no longer exists)
+    pub async fn delete_instance(&self, id: &str, force: bool) -> Result<(), String> {
+        // Check if instance exists and if it's from watch folder (unless force=true)
+        if !force {
+            let instances = self.instances.read().await;
+            if let Some(instance) = instances.get(id) {
+                if instance.source == InstanceSource::WatchFolder {
+                    return Err(
+                        "Cannot delete watch folder instance. Delete the torrent file from the watch folder instead, or use force delete."
+                            .to_string(),
+                    );
+                }
+            }
+        }
+
+        // Stop background task if running
+        let (shutdown_tx, task_handle) = {
+            let mut instances = self.instances.write().await;
+            if let Some(instance) = instances.get_mut(id) {
+                (instance.shutdown_tx.take(), instance.task_handle.take())
+            } else {
+                (None, None)
+            }
+        };
+
+        // Signal background task to stop
+        if let Some(tx) = shutdown_tx {
+            let _ = tx.send(()).await;
+        }
+        // Wait for task to finish (with timeout)
+        if let Some(handle) = task_handle {
+            let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
+        }
+
+        // Remove instance
+        let removed = self.instances.write().await.remove(id);
+
+        // Emit event if instance was actually removed
+        if removed.is_some() {
+            self.emit_instance_event(InstanceEvent::Deleted { id: id.to_string() });
+        }
+
+        // Save state after deleting
+        if let Err(e) = self.save_state().await {
+            tracing::warn!("Failed to save state after deleting instance: {}", e);
+        }
+
+        Ok(())
+    }
+
+    /// Store a loaded torrent
+    pub async fn store_torrent(&self, id: &str, torrent: TorrentInfo) {
+        self.torrents.write().await.insert(id.to_string(), torrent);
+    }
+
+    /// Get a stored torrent
+    #[allow(dead_code)]
+    pub async fn get_torrent(&self, id: &str) -> Option<TorrentInfo> {
+        self.torrents.read().await.get(id).cloned()
+    }
+
+    /// List all instances with their current stats
+    pub async fn list_instances(&self) -> Vec<InstanceInfo> {
+        let instances = self.instances.read().await;
+        let mut result = Vec::new();
+
+        for (id, instance) in instances.iter() {
+            let stats = instance.faker.read().await.get_stats().await;
+
+            result.push(InstanceInfo {
+                id: id.clone(),
+                torrent: instance.torrent.clone(),
+                config: instance.config.clone(),
+                stats,
+                created_at: instance.created_at,
+                source: instance.source,
+            });
+        }
+
+        result
+    }
+
+    /// Find instance ID by info_hash
+    pub async fn find_instance_by_info_hash(&self, info_hash: &[u8; 20]) -> Option<String> {
+        let instances = self.instances.read().await;
+        for (id, instance) in instances.iter() {
+            if &instance.torrent_info_hash == info_hash {
+                return Some(id.clone());
+            }
+        }
+        None
+    }
+
+    /// Update an instance's source
+    pub async fn update_instance_source(&self, id: &str, source: InstanceSource) -> Result<(), String> {
+        let mut instances = self.instances.write().await;
+        let instance = instances.get_mut(id).ok_or("Instance not found")?;
+        instance.source = source;
+        drop(instances);
+
+        // Save state after updating source
+        if let Err(e) = self.save_state().await {
+            tracing::warn!("Failed to save state after updating instance source: {}", e);
+        }
+
+        Ok(())
+    }
+
+    /// Update an instance's source by info_hash
+    pub async fn update_instance_source_by_info_hash(
         &self,
-        start_rate: f64,
-        target_rate: f64,
-        elapsed_secs: u64,
-        duration_secs: u64,
-    ) -> f64 {
-        if elapsed_secs >= duration_secs {
-            return target_rate;
-        }
-
-        let progress = elapsed_secs as f64 / duration_secs as f64;
-        start_rate + (target_rate - start_rate) * progress
+        info_hash: &[u8; 20],
+        source: InstanceSource,
+    ) -> Result<(), String> {
+        let id = match self.find_instance_by_info_hash(info_hash).await {
+            Some(id) => id,
+            None => return Ok(()), // No instance found, nothing to update
+        };
+        self.update_instance_source(&id, source).await
     }
 
-    /// Update progress percentages and ETAs
-    fn update_progress_and_eta(&self, stats: &mut FakerStats) {
-        // Upload progress (based on session uploaded)
-        if let Some(target) = self.config.stop_at_uploaded {
-            stats.upload_progress = ((stats.session_uploaded as f64 / target as f64) * 100.0).min(100.0);
+    /// Delete an instance by info_hash (internal use - bypasses source check)
+    /// Used when torrent file is removed from watch folder
+    pub async fn delete_instance_by_info_hash(&self, info_hash: &[u8; 20]) -> Result<(), String> {
+        // Find the instance ID
+        let id = match self.find_instance_by_info_hash(info_hash).await {
+            Some(id) => id,
+            None => return Ok(()), // No instance found, nothing to delete
+        };
 
-            // Calculate ETA
-            if stats.average_upload_rate > 0.0 {
-                let remaining = target.saturating_sub(stats.session_uploaded);
-                let eta_secs = (remaining as f64 / 1024.0) / stats.average_upload_rate;
-                stats.eta_uploaded = Some(Duration::from_secs_f64(eta_secs));
+        // Stop background task if running
+        let (shutdown_tx, task_handle) = {
+            let mut instances = self.instances.write().await;
+            if let Some(instance) = instances.get_mut(&id) {
+                (instance.shutdown_tx.take(), instance.task_handle.take())
+            } else {
+                (None, None)
             }
-        } else {
-            stats.upload_progress = 0.0;
-            stats.eta_uploaded = None;
+        };
+
+        // Signal background task to stop
+        if let Some(tx) = shutdown_tx {
+            let _ = tx.send(()).await;
+        }
+        // Wait for task to finish (with timeout)
+        if let Some(handle) = task_handle {
+            let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
         }
 
-        // Download progress (based on session downloaded)
-        if let Some(target) = self.config.stop_at_downloaded {
-            stats.download_progress = ((stats.session_downloaded as f64 / target as f64) * 100.0).min(100.0);
-        } else {
-            stats.download_progress = 0.0;
+        // Remove instance
+        let removed = self.instances.write().await.remove(&id);
+
+        // Emit event if instance was actually removed
+        if removed.is_some() {
+            tracing::info!("Deleted instance {} (torrent file removed from watch folder)", id);
+            self.emit_instance_event(InstanceEvent::Deleted { id: id.clone() });
         }
 
-        // Ratio progress (use session ratio for progress tracking)
-        if let Some(target_ratio) = self.config.stop_at_ratio {
-            stats.ratio_progress = ((stats.session_ratio / target_ratio) * 100.0).min(100.0);
-
-            // Calculate ETA for ratio (based on session stats)
-            if stats.average_upload_rate > 0.0 && self.torrent.total_size > 0 {
-                let target_session_uploaded = (target_ratio * self.torrent.total_size as f64) as u64;
-                let remaining = target_session_uploaded.saturating_sub(stats.session_uploaded);
-                let eta_secs = (remaining as f64 / 1024.0) / stats.average_upload_rate;
-                stats.eta_ratio = Some(Duration::from_secs_f64(eta_secs));
-            }
-        } else {
-            stats.ratio_progress = 0.0;
-            stats.eta_ratio = None;
+        // Save state after deleting
+        if let Err(e) = self.save_state().await {
+            tracing::warn!("Failed to save state after deleting instance: {}", e);
         }
 
-        // Seed time progress
-        if let Some(target_time) = self.config.stop_at_seed_time {
-            let elapsed = stats.elapsed_time.as_secs();
-            stats.seed_time_progress = ((elapsed as f64 / target_time as f64) * 100.0).min(100.0);
-
-            let remaining = target_time.saturating_sub(elapsed);
-            stats.eta_seed_time = Some(Duration::from_secs(remaining));
-        } else {
-            stats.seed_time_progress = 0.0;
-            stats.eta_seed_time = None;
-        }
+        Ok(())
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// Information about an instance for the list endpoint
+#[derive(Debug, Clone, Serialize)]
+pub struct InstanceInfo {
+    pub id: String,
+    pub torrent: TorrentInfo,
+    pub config: FakerConfig,
+    pub stats: FakerStats,
+    pub created_at: u64,
+    pub source: InstanceSource,
+}
 
-    #[test]
-    fn test_faker_config_default() {
-        let config = FakerConfig::default();
-        assert_eq!(config.upload_rate, 700.0);
-        assert_eq!(config.download_rate, 0.0);
+impl AppState {
+    /// Stop all background tasks (call on server shutdown)
+    pub async fn shutdown_all(&self) {
+        tracing::info!("Shutting down all background tasks...");
+
+        let mut instances = self.instances.write().await;
+        let mut handles = Vec::new();
+
+        for (id, instance) in instances.iter_mut() {
+            // Signal background task to stop
+            if let Some(tx) = instance.shutdown_tx.take() {
+                let _ = tx.send(()).await;
+            }
+            // Collect handles for waiting
+            if let Some(handle) = instance.task_handle.take() {
+                handles.push((id.clone(), handle));
+            }
+        }
+        drop(instances);
+
+        // Wait for all tasks to finish (with timeout)
+        for (id, handle) in handles {
+            match tokio::time::timeout(Duration::from_secs(5), handle).await {
+                Ok(_) => tracing::debug!("Background task for instance {} stopped", id),
+                Err(_) => tracing::warn!("Timeout waiting for background task {} to stop", id),
+            }
+        }
+
+        tracing::info!("All background tasks stopped");
     }
 }
