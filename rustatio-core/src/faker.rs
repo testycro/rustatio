@@ -462,7 +462,7 @@ impl RatioFaker {
     }
 
     /// Start the ratio faking session
-    pub async fn start(self: Arc<RwLock<Self>>) -> Result<()> {
+    pub async fn start(&mut self) -> Result<()> {
         {
             let mut me = self.write().await;
             log_info!("Starting ratio faker for torrent: {}", me.torrent.name);
