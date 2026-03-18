@@ -4,30 +4,9 @@
 
 ```yaml
 services:
-  gluetun:
-    image: qmcgaw/gluetun
-    cap_add:
-      - NET_ADMIN
-    devices:
-      - /dev/net/tun:/dev/net/tun
-    environment:
-      # Configure your VPN provider - see https://github.com/qdm12/gluetun-wiki
-      - VPN_SERVICE_PROVIDER=protonvpn  # or: mullvad, nordvpn, expressvpn, etc.
-      - VPN_TYPE=wireguard              # or: openvpn
-      # Provider-specific settings (example for ProtonVPN WireGuard)
-      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY}
-      - SERVER_COUNTRIES=${SERVER_COUNTRIES:-Switzerland}
-      # Gluetun control server auth (v3.39.1+ defaults to private routes)
-      # If you want to have your network status available you have to disable the gluetun auth
-      # Since the control server is only reachable within the container network namespace it is safe
-      - HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE={"auth":"none"}
-    ports:
-      - "${WEBUI_PORT:-8080}:8080"  # Rustatio Web UI
-    restart: unless-stopped
-
   rustatio:
     image: ghcr.io/takitsu21/rustatio:latest
-    entrypoint: ["/entrypoint.sh"]
+    <b>entrypoint: ["/entrypoint.sh"]</b>
     container_name: rustatio
     environment:
       - PORT=8080
