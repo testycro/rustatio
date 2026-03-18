@@ -1,0 +1,39 @@
+# < CONDITIONS > |  <ACTION > | < ASSIGN >
+# Any data can be used for conditions exept elapsed_time and eta_seed_time
+# Operator are, : , = , < , > , != , <= , >=
+# No multi-value, no spaces in values or use " "
+# Use AND / OR to add more conditions
+# info_hash must be a tring
+# Special test can be done, some.data: 1.1 - 2.4 , test if some.data is greater than a random generated number within the range
+# announce have special operator ~ to test if string exist
+# Actions are start / stop / delete / update / addtags / removetags
+# Update action can update any config value only, 1 value at a time
+# You can add or remove many tags at a time
+# Delete can accept 3 params comma separated, instance,watchfile,archive
+# Delete's watchfile param will delete file AND instance (internal API feature), can't delete file without instance
+# It'not perfect but can do all the things i need
+# There is a full data sample at the end of the script
+
+# Sample 1
+config.upload_rate >= 4000 | addtags | speed,seedbox
+
+# Sample announce
+torrent.announce ~ "nyaa" | addtags | Nyaa
+
+# Sample 2
+stats.ratio: 0.3 - 0.6 AND config.upload_rate >= 4000 | update | config.upload_rate = 2900
+
+# Sample 104856
+config.upload_rate <= 4000 | removetags | speed
+
+# Another comment for fun :)
+config.upload_rate <= 3000 | addtags | soft
+
+# Another sample
+stats.ratio >= 0.9 AND config.upload_rate >= 1000 | stop |
+
+# The end
+tags = Nyaa | delete | archive
+
+# 2nd the end
+stats.state: Stopped | delete | watchfile
