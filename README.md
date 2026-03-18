@@ -1,4 +1,4 @@
-<h1>This is a shell script that allows you to modify the behavior of Rustatio with custom rules.</h1>
+<h1>This is a shell script that allows you to modify the behavior of Rustatio with custom rules and run in same container.</h1>
 
 - Place the files according to the indicated paths.
 - Edit "rustatio_daemon.sh" to match your config
