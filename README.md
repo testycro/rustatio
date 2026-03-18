@@ -1,7 +1,7 @@
 - Place the files according to the indicated paths.
 - Edit "rustatio_daemon.sh" to match your config
-- Don't forget tu create your rules's file in the right folder, there is a sample
-- This is only the changes youy have to made
+- Don't forget to create your rules's file in the right folder, there is a sample
+- Add following lines to your docker-compose
 
 ```yaml
 services:
