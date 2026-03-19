@@ -228,14 +228,20 @@ cond_to_jq() {
 
     # support "contains" operator: path ~ "value"
     EXPR="$(echo "${EXPR}" | sed -E \
-    -e 's#([a-zA-Z0-9_.]+)[[:space:]]*~[[:space:]]*\"([^\"]+)\"#((.\1 // \"\") | tostring | ascii_downcase) | contains(\"\2\")#g' \
-    -e 's#([a-zA-Z0-9_.]+)[[:space:]]*~[[:space:]]*([A-Za-z0-9_@./:-]+)#((.\1 // \"\") | tostring | ascii_downcase) | contains(\"\2\")#g')"
+	-e 's#torrent\.announce[[:space:]]*~[[:space:]]*\"([^\"]+)\"#((.torrent.announce // \"\") | tostring | ascii_downcase) | contains(\"\1\")#g' \
+	-e 's#torrent\.announce[[:space:]]*~[[:space:]]*([A-Za-z0-9_@./:-]+)#((.torrent.announce // \"\") | tostring | ascii_downcase) | contains(\"\1\")#g' \
+	-e 's#torrent\.name[[:space:]]*~[[:space:]]*\"([^\"]+)\"#((torrent.name // \"\") | tostring | ascii_downcase) | contains(\"\1\")#g' \
+	-e 's#torrent\.name[[:space:]]*~[[:space:]]*([A-Za-z0-9_@./:-]+)#((torrent.name // \"\") | tostring | ascii_downcase) | contains(\"\1\")#g' \
+	-e 's#torrent\.comment[[:space:]]*~[[:space:]]*\"([^\"]+)\"#((torrent.comment // \"\") | tostring | ascii_downcase) | contains(\"\1\")#g' \
+	-e 's#torrent\.comment[[:space:]]*~[[:space:]]*([A-Za-z0-9_@./:-]+)#((torrent.comment // \"\") | tostring | ascii_downcase) | contains(\"\1\")#g' \
+	-e 's#torrent\.created_by[[:space:]]*~[[:space:]]*\"([^\"]+)\"#((torrent.created_by // \"\") | tostring | ascii_downcase) | contains(\"\1\")#g' \
+	-e 's#torrent\.created_by[[:space:]]*~[[:space:]]*([A-Za-z0-9_@./:-]+)#((torrent.created_by // \"\") | tostring | ascii_downcase) | contains(\"\1\")#g')"
 
     # numeric comparisons
     EXPR="$(echo "${EXPR}" | sed -E \
+    -e 's#([a-zA-Z0-9_.]+)[[:space:]]*!=[[:space:]]*([0-9]+(\.[0-9]+)?)#((.\1 // 0) | tonumber) != \2#g' \
     -e 's#([a-zA-Z0-9_.]+)[[:space:]]*>=[[:space:]]*([0-9]+(\.[0-9]+)?)#((.\1 // 0) | tonumber) >= \2#g' \
     -e 's#([a-zA-Z0-9_.]+)[[:space:]]*<=[[:space:]]*([0-9]+(\.[0-9]+)?)#((.\1 // 0) | tonumber) <= \2#g' \
-    -e 's#([a-zA-Z0-9_.]+)[[:space:]]*!=[[:space:]]*([0-9]+(\.[0-9]+)?)#((.\1 // 0) | tonumber) != \2#g' \
     -e 's#([a-zA-Z0-9_.]+)[[:space:]]*<[[:space:]]*([0-9]+(\.[0-9]+)?)#((.\1 // 0) | tonumber) < \2#g' \
     -e 's#([a-zA-Z0-9_.]+)[[:space:]]*>[[:space:]]*([0-9]+(\.[0-9]+)?)#((.\1 // 0) | tonumber) > \2#g')"
 
@@ -248,26 +254,26 @@ cond_to_jq() {
     -e 's#tags[[:space:]]*=[[:space:]]*\"([^\"]+)\"#((.tags // []) | index("\1") != null)#g' \
     -e 's#tags[[:space:]]*=[[:space:]]*([A-Za-z0-9_@./:-]+)#((.tags // []) | index("\1") != null)#g')"
 
-    # torrent.info_hash = HEX  → comparer le hash hexadécimal
-    EXPR="$(echo "${EXPR}" | sed -E \
-    -e 's#torrent\.info_hash[[:space:]]*=[[:space:]]*\"?([A-Fa-f0-9]+)\"?#((.torrent.info_hash // []) | map(printf("%02x"; .)) | join("") == "\1")#g')"
-
     # torrent.info_hash: HEX  → comparer le hash hexadécimal
     EXPR="$(echo "${EXPR}" | sed -E \
-    -e 's#torrent\.info_hash:[[:space:]]*\"?([A-Fa-f0-9]+)\"?#((.torrent.info_hash // []) | map(printf("%02x"; .)) | join("") == "\1")#g')"
+	-e 's#torrent\.info_hash:[[:space:]]*\"?([A-Fa-f0-9]+)\"?#((.torrent.info_hash // []) | map(printf("%02x"; .)) | join("") == "\1")#g' \
+	-e 's#torrent\.info_hash[[:space:]]*\"?([A-Fa-f0-9]+)\"?#((.torrent.info_hash // []) | map(printf("%02x"; .)) | join("") == "\1")#g' \
+	-e 's#torrent\.info_hash[[:space:]]*=[[:space:]]*\"?([A-Fa-f0-9]+)\"?#((.torrent.info_hash // []) | map(printf("%02x"; .)) | join("") == "\1")#g' \
+	-e 's#torrent\.info_hash[[:space:]]*=[[:space:]]*?([A-Fa-f0-9]+)?#((.torrent.info_hash // []) | map(printf("%02x"; .)) | join("") == "\1")#g')"
 
     # boolean/null literal equality: key = true|false|null
     EXPR="$(echo "${EXPR}" | sed -E \
+	-e 's#([a-zA-Z0-9_.]+):[[:space:]]*(true|false|null)#((.\1 // null) == \2)#g' \
     -e 's#([a-zA-Z0-9_.]+)[[:space:]]*=[[:space:]]*(true|false|null)#((.\1 // null) == \2)#g')"
 
     # string equality: path: Value or path = "Value"
     EXPR="$(echo "${EXPR}" | sed -E \
+    -e 's#([a-zA-Z0-9_.]+)[[:space:]]*!=[[:space:]]*\"([^\"]+)\"#((.\1 // \"\") | tostring) != \"\2\"#g' \
+    -e 's#([a-zA-Z0-9_.]+)[[:space:]]*!=[[:space:]]*([A-Za-z0-9_@./:-]+)#((.\1 // \"\") | tostring) != \"\2\"#g' \
     -e 's#([a-zA-Z0-9_.]+):[[:space:]]*\"([^\"]+)\"#((.\1 // \"\") | tostring) == \"\2\"#g' \
     -e 's#([a-zA-Z0-9_.]+):[[:space:]]*([A-Za-z0-9_@./:-]+)#((.\1 // \"\") | tostring) == \"\2\"#g' \
     -e 's#([a-zA-Z0-9_.]+)[[:space:]]*=[[:space:]]*\"([^\"]+)\"#((.\1 // \"\") | tostring) == \"\2\"#g' \
-    -e 's#([a-zA-Z0-9_.]+)[[:space:]]*=[[:space:]]*([A-Za-z0-9_@./:-]+)#((.\1 // \"\") | tostring) == \"\2\"#g' \
-    -e 's#([a-zA-Z0-9_.]+)[[:space:]]*!=[[:space:]]*\"([^\"]+)\"#((.\1 // \"\") | tostring) != \"\2\"#g' \
-    -e 's#([a-zA-Z0-9_.]+)[[:space:]]*!=[[:space:]]*([A-Za-z0-9_@./:-]+)#((.\1 // \"\") | tostring) != \"\2\"#g')"
+    -e 's#([a-zA-Z0-9_.]+)[[:space:]]*=[[:space:]]*([A-Za-z0-9_@./:-]+)#((.\1 // \"\") | tostring) == \"\2\"#g')"
 
     printf '%s' "${EXPR}"
 }
@@ -849,30 +855,30 @@ fi
             "id": "id-LGQsBtj",
             "torrent": {
                 "info_hash": [
-                    119,
+                    219,
                     212,
-                    102,
+                    112,
                     78,
                     17,
-                    289,
+                    229,
                     46,
                     24,
                     10,
-                    36,
+                    41,
                     187,
                     13,
                     188,
-                    126,
-                    12,
-                    12,
+                    246,
+                    57,
+                    27,
                     152,
                     24,
                     40,
-                    112
+                    145
                 ],
                 "announce": "https://sample.com/announce",
                 "name": "Sample.2025.MULTi.TRUEFRENCH.1080p.WEB-DL.H264-Slay3R.mkv",
-                "total_size": 869094537,
+                "total_size": 9869094537,
                 "piece_length": 2097152,
                 "num_pieces": 4706,
                 "comment": "Ce torrent a été téléchargé depuis Sample. https://sample.com/torrents/12345",
@@ -883,7 +889,7 @@ fi
             "config": {
                 "upload_rate": 700.0,
                 "download_rate": 0.0,
-                "port": 6881,
+                "port": 59859,
                 "client_type": "transmission",
                 "client_version": "4.0.5",
                 "initial_uploaded": 0,
@@ -939,7 +945,7 @@ fi
                 "eta_download_completion": null,
                 "announce_count": 121
             },
-            "created_at": 1711689826,
+            "created_at": 1771680826,
             "source": "watch_folder",
             "tags": []
         }
