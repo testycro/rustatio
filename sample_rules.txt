@@ -17,23 +17,40 @@
 # Sample 1
 config.upload_rate >= 4000 | addtags | speed,seedbox
 
+config.upload_rate >= 4000 | update | config.upload_rate = 1000
+
 # Sample announce
 torrent.announce ~ "nyaa" | addtags | Nyaa
 
 # Sample 2
-stats.ratio: 0.3 - 0.6 AND config.upload_rate >= 4000 | update | config.upload_rate = 2900
+stats.ratio: 0.3 - 0.6 AND config.upload_rate >= 1000 | update | config.upload_rate = 500
 
 # Sample 104856
-config.upload_rate <= 4000 | removetags | speed
+config.upload_rate < 1000 | removetags | speed
 
 # Another comment for fun :)
-config.upload_rate <= 3000 | addtags | soft
+config.upload_rate < 1000 | addtags | soft
 
 # Another sample
-stats.ratio >= 0.9 AND config.upload_rate >= 1000 | stop |
+stats.ratio >= 0.9 AND config.upload_rate >= 500 | stop |
+
+# Test
+stats.leechers > 10 AND config.upload_rate != 500 | update | config.upload_rate = 500
+
+# Why not
+stats.leechers > 10 | removetags | slow
+
+# Test 2
+stats.leechers <= 5 AND config.upload_rate != 1.1 | update | config.upload_rate = 1.1
+
+# I like
+stats.leechers <= 5 | addtags | slow
 
 # The end
 tags = Nyaa | delete | archive
 
+# The end test
+tags: Nyaa AND stats.state = Stopped | addtags | Done
+
 # 2nd the end
-stats.state: Stopped | delete | watchfile
+stats.state: Stopped AND tags = Done AND tags = Nyaa | delete | watchfile
