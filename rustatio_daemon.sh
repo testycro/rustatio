@@ -116,7 +116,6 @@ rustatio_api_request() (
             set -e
             if is_valid_json "${RESPONSE}"; then
                 if jq -e -c '.success == true' <<< "${RESPONSE}" >/dev/null 2>&1; then
-                    # imprimer la réponse si .data non vide ou .stats non vide ou .config non vide
                     if jq -e -c '(.data and .data != {} and .data != []) or (.stats and .stats != {}) or (.config and .config != {})' <<< "${RESPONSE}" >/dev/null 2>&1; then
                         printf '%s\n' "${RESPONSE}"
                     fi
@@ -173,16 +172,13 @@ rustatio_tags() {
     rustatio_api_request "grid/tag" "${1}" "POST"
 }
 
-# Load rules file (returns content)
 load_rules_file() {
     local F="${1:-${RULES_FILE}}"
     [[ -f "${F}" ]] && sed -e 's/\r$//' "${F}" || printf ''
 }
 
-# Trim helper
 _trim() { sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' <<<"${1}"; }
 
-# Parse a rule line into condition, action, assignment (null-separated)
 parse_rule_line() {
     local LINE="${1}"
 
@@ -196,23 +192,19 @@ parse_rule_line() {
     printf '%s\x1F%s\x1F%s' "$(_trim "${COND}")" "$(_trim "${ACTION}")" "$(_trim "${ASSIGN}")"
 }
 
-# Convert a simple condition expression into a jq expression
 cond_to_jq() {
     local EXPR="${1}"
 
     EXPR="$(echo "${EXPR}" | sed -E 's/\bAND\b/ and /g; s/\bOR\b/ or /g')"
 
-    # regex pour les ranges
     local RANGE_REGEX='([A-Za-z0-9_.]+):[[:space:]]*([0-9]+(\.[0-9]+)?) *- *([0-9]+(\.[0-9]+)?)'
 
-    # traiter chaque occurrence path: a - b
     while [[ ${EXPR} =~ ${RANGE_REGEX} ]]; do
         local FULL_MATCH="${BASH_REMATCH[0]}"
         local WAY="${BASH_REMATCH[1]}"
         local a="${BASH_REMATCH[2]}"
         local b="${BASH_REMATCH[4]}"
 
-        # générer un nombre aléatoire à 2 décimales entre a et b avec awk
         local rand
         rand="$(awk -v a="$a" -v b="$b" 'BEGIN {
             if (a == b) { printf("%.2f", a); exit }
@@ -222,11 +214,9 @@ cond_to_jq() {
             printf("%.2f", r)
         }')"
 
-        # remplacer la première occurrence trouvée
         EXPR="${EXPR/"${FULL_MATCH}"/((.${WAY} // 0) | tonumber) > ${rand}}"
     done
 
-    # support "contains" operator: path ~ "value"
     EXPR="$(echo "${EXPR}" | sed -E \
 	-e 's#torrent\.announce[[:space:]]*~[[:space:]]*\"([^\"]+)\"#((.torrent.announce // \"\") | tostring | ascii_downcase) | contains(\"\1\")#g' \
 	-e 's#torrent\.announce[[:space:]]*~[[:space:]]*([A-Za-z0-9_@./:-]+)#((.torrent.announce // \"\") | tostring | ascii_downcase) | contains(\"\1\")#g' \
@@ -237,7 +227,6 @@ cond_to_jq() {
 	-e 's#torrent\.created_by[[:space:]]*~[[:space:]]*\"([^\"]+)\"#((torrent.created_by // \"\") | tostring | ascii_downcase) | contains(\"\1\")#g' \
 	-e 's#torrent\.created_by[[:space:]]*~[[:space:]]*([A-Za-z0-9_@./:-]+)#((torrent.created_by // \"\") | tostring | ascii_downcase) | contains(\"\1\")#g')"
 
-    # numeric comparisons
     EXPR="$(echo "${EXPR}" | sed -E \
     -e 's#([a-zA-Z0-9_.]+)[[:space:]]*!=[[:space:]]*([0-9]+(\.[0-9]+)?)#((.\1 // 0) | tonumber) != \2#g' \
     -e 's#([a-zA-Z0-9_.]+)[[:space:]]*>=[[:space:]]*([0-9]+(\.[0-9]+)?)#((.\1 // 0) | tonumber) >= \2#g' \
@@ -245,8 +234,6 @@ cond_to_jq() {
     -e 's#([a-zA-Z0-9_.]+)[[:space:]]*<[[:space:]]*([0-9]+(\.[0-9]+)?)#((.\1 // 0) | tonumber) < \2#g' \
     -e 's#([a-zA-Z0-9_.]+)[[:space:]]*>[[:space:]]*([0-9]+(\.[0-9]+)?)#((.\1 // 0) | tonumber) > \2#g')"
 
-    # tags: value  →  (.tags // []) | index("value") != null
-    # tags = value  →  (.tags // []) | index("value") != null
     EXPR="$(echo "${EXPR}" | sed -E \
     -e 's#tags[[:space:]]*!=[[:space:]]*\"?([A-Za-z0-9_@./:-]+)\"?#((.tags // []) | index("\1") == null)#g' \
     -e 's#tags:[[:space:]]*\"([^\"]+)\"#((.tags // []) | index("\1") != null)#g' \
@@ -254,19 +241,16 @@ cond_to_jq() {
     -e 's#tags[[:space:]]*=[[:space:]]*\"([^\"]+)\"#((.tags // []) | index("\1") != null)#g' \
     -e 's#tags[[:space:]]*=[[:space:]]*([A-Za-z0-9_@./:-]+)#((.tags // []) | index("\1") != null)#g')"
 
-    # torrent.info_hash: HEX  → comparer le hash hexadécimal
     EXPR="$(echo "${EXPR}" | sed -E \
 	-e 's#torrent\.info_hash:[[:space:]]*\"?([A-Fa-f0-9]+)\"?#((.torrent.info_hash // []) | map(printf("%02x"; .)) | join("") == "\1")#g' \
 	-e 's#torrent\.info_hash[[:space:]]*\"?([A-Fa-f0-9]+)\"?#((.torrent.info_hash // []) | map(printf("%02x"; .)) | join("") == "\1")#g' \
 	-e 's#torrent\.info_hash[[:space:]]*=[[:space:]]*\"?([A-Fa-f0-9]+)\"?#((.torrent.info_hash // []) | map(printf("%02x"; .)) | join("") == "\1")#g' \
 	-e 's#torrent\.info_hash[[:space:]]*=[[:space:]]*?([A-Fa-f0-9]+)?#((.torrent.info_hash // []) | map(printf("%02x"; .)) | join("") == "\1")#g')"
 
-    # boolean/null literal equality: key = true|false|null
     EXPR="$(echo "${EXPR}" | sed -E \
 	-e 's#([a-zA-Z0-9_.]+):[[:space:]]*(true|false|null)#((.\1 // null) == \2)#g' \
     -e 's#([a-zA-Z0-9_.]+)[[:space:]]*=[[:space:]]*(true|false|null)#((.\1 // null) == \2)#g')"
 
-    # string equality: path: Value or path = "Value"
     EXPR="$(echo "${EXPR}" | sed -E \
     -e 's#([a-zA-Z0-9_.]+)[[:space:]]*!=[[:space:]]*\"([^\"]+)\"#((.\1 // \"\") | tostring) != \"\2\"#g' \
     -e 's#([a-zA-Z0-9_.]+)[[:space:]]*!=[[:space:]]*([A-Za-z0-9_@./:-]+)#((.\1 // \"\") | tostring) != \"\2\"#g' \
@@ -278,11 +262,6 @@ cond_to_jq() {
     printf '%s' "${EXPR}"
 }
 
-# -------------------------
-# Actions implementations
-# -------------------------
-
-# action: stop
 action_stop() {
     local ID="${1}"
     local RESP
@@ -291,7 +270,6 @@ action_stop() {
         log "Would stop ID='${ID}'" f_recycle
     else
         if RESP="$(rustatio_stop_instance "${ID}" 2>&1)"; then
-            # retourner le JSON modifié pour mise à jour d'INSTANCES_JSON
             PAYLOAD=$(jq -c '.data // {}' <<<"${RESP}")
             printf '%s' "${PAYLOAD}"
             return 0
@@ -303,47 +281,38 @@ action_stop() {
     fi
 }
 
-# action: update (patch config.upload_rate)
 action_update() {
     local INST_JSON="${1}"
-    local ASSIGN="${2}"   # ex: config.upload_rate = 1.0
+    local ASSIGN="${2}"
     local RESP
 
-    # extraire gauche et droite, trim espaces
     local LHS=$(sed -E 's/[[:space:]]*=.*$//' <<<"${ASSIGN}" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')
     local RHS=$(sed -E 's/^.*=[[:space:]]*//' <<<"${ASSIGN}" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' | sed -E 's/;$//')
 
     [[ -z "${LHS}" || -z "${RHS}" ]] && { log "Invalid assign '${ASSIGN}'" f_warning; return 1; }
 
-    # vérifier que LHS commence par config.
     if [[ "${LHS}" != config.* ]]; then
         log "LHS must start with 'config.' (got '${LHS}')" f_warning
         return 1
     fi
 
-    # enlever le préfixe config. pour la suite
     local FIELD="${LHS#config.}"
-    # protéger contre LHS = "config." seul
     if [[ -z "${FIELD}" ]]; then
         log "Field after 'config.' is empty in '${ASSIGN}'" f_warning
         return 1
     fi
 
-    # construire l'expression jq dynamique
     local JQ_EXPR=".${FIELD} = \$val"
 
     local ID=$(jq -r '.id // empty' <<<"${INST_JSON}")
     local PAYLOAD=$(jq -c '.config // {}' <<<"${INST_JSON}")
 
-    # déterminer si RHS est du JSON valide
     if printf '%s' "${RHS}" | jq -e . >/dev/null 2>&1; then
-        # RHS est du JSON (nombre, bool, objet, array, string JSON)
         if ! PAYLOAD=$(jq -c --argjson val "${RHS}" "${JQ_EXPR}" <<<"${PAYLOAD}"); then
             log "jq --argjson failed for '${ASSIGN}'" f_error
             return 1
         fi
     else
-        # RHS n'est pas du JSON valide -> traiter comme chaîne
         if ! PAYLOAD=$(jq -c --arg val "${RHS}" "${JQ_EXPR}" <<<"${PAYLOAD}"); then
             log "jq --arg failed for '${ASSIGN}'" f_error
             return 1
@@ -354,7 +323,6 @@ action_update() {
         log "Would patch config ID='${ID}' PAYLOAD='${PAYLOAD}'" f_recycle
     else
         if RESP="$(rustatio_patch_instance "${ID}" "${PAYLOAD}" 2>&1)"; then
-            # retourner le JSON modifié pour mise à jour d'INSTANCES_JSON
             printf '%s' "${PAYLOAD}"
             return 0
         else
@@ -365,19 +333,16 @@ action_update() {
     fi
 }
 
-# action: start (start instance with modified config.upload_rate)
 action_start() {
     local INST_JSON="${1}"
-    local ASSIGN="${2}"   # ex: config.upload_rate = 1.0
+    local ASSIGN="${2}"
     local RESP
 
-    # extraire gauche et droite, trim espaces
     local LHS=$(sed -E 's/[[:space:]]*=.*$//' <<<"${ASSIGN}" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')
     local RHS=$(sed -E 's/^.*=[[:space:]]*//' <<<"${ASSIGN}" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' | sed -E 's/;$//')
 
     [[ -z "${LHS}" || -z "${RHS}" ]] && { log "update: invalid assign '${ASSIGN}'" warning; return 1; }
 
-    # construire l'expression jq dynamique
     local JQ_EXPR=".$LHS = \$val"
 
     local PAYLOAD=$(jq -c '
@@ -387,15 +352,12 @@ action_start() {
         }
     ' <<<"${INST_JSON}")
 
-    # déterminer si RHS est du JSON valide
     if printf '%s' "${RHS}" | jq -e . >/dev/null 2>&1; then
-        # RHS est du JSON (nombre, bool, objet, array, string JSON)
         if ! PAYLOAD=$(jq -c --argjson val "${RHS}" "${JQ_EXPR}" <<<"${INST_JSON}"); then
             log "jq --argjson failed for '${ASSIGN}'" f_error
             return 1
         fi
     else
-        # RHS n'est pas du JSON valide -> traiter comme chaîne
         if ! PAYLOAD=$(jq -c --arg val "${RHS}" "${JQ_EXPR}" <<<"${INST_JSON}"); then
             log "jq --arg failed for '${ASSIGN}'" f_error
             return 1
@@ -407,12 +369,10 @@ action_start() {
     if [[ "${DRY_RUN}" = true ]]; then
         log "Would start ID='${ID}' PAYLOAD='${PAYLOAD}'" f_recycle
 
-        # en dry-run on retourne quand même le payload pour que la boucle puisse l'utiliser
         printf '%s' "${PAYLOAD}"
         return 0
     else
         if RESP="$(rustatio_start_instance "${ID}" "${PAYLOAD}" 2>&1)"; then
-            # retourner le JSON modifié pour mise à jour d'INSTANCES_JSON
             PAYLOAD=$(jq -c '.data // {}' <<<"${RESP}")
             printf '%s' "${PAYLOAD}"
             return 0
@@ -424,8 +384,6 @@ action_start() {
     fi
 }
 
-# action: delete (delete watch file by filename or by info_hash)
-# Requires FILES_JSON_GLOBAL to be set
 action_delete() {
     local INST_JSON="${1}"
     local ASSIGN="${2}"
@@ -497,19 +455,6 @@ action_delete() {
                     fi
                 fi
             fi
-
-#           if [[ "${ASSIGN}" == *"fileonly"* ]]; then
-#               if [[ "${DRY_RUN}" = true ]]; then
-#                   log "Would delete file '${FILENAME}' at '${WAY}'" f_recycle
-#               else
-#                   if RESP=$(rm -rf -- "${WAY}" 2>&1); then
-#                       log "Delete succeeded for filename='${FILENAME}'" f_succes
-#                   else
-#                       log "Failed to delete for filename='${FILENAME}'" f_error
-#                       log "${RESP}" data
-#                   fi
-#               fi
-#           fi
         done <<<"${MATCHES}"
     fi
 }
@@ -523,23 +468,17 @@ action_addtags() {
     ID="$(jq -r '.id // empty' <<<"${INST_JSON}")"
     IFS=',' read -r -a TAGS_ARRAY <<< "${ASSIGN}"
 
-    # Construire un JSON array pour assign (comme avant)
     TAGS_JSON=$(printf '%s\n' "${TAGS_ARRAY[@]}" | jq -R . | jq -s -c .)
 
-    # Récupérer les tags existants depuis INST_JSON (attend un array de strings)
     EXISTING_TAGS_JSON=$(jq -c '.tags // []' <<<"${INST_JSON}")
 
-    # Calculer les tags qui ne sont pas déjà présents
     NEW_TAGS_JSON=$(jq -n --argjson assign "${TAGS_JSON}" --argjson existing "${EXISTING_TAGS_JSON}" \
         '$assign | map(select(. as $t | $existing | index($t) | not))' | jq -c .)
 
-    # Si aucun tag nouveau, ne rien faire
     if [[ "$(jq 'length' <<<"${NEW_TAGS_JSON}")" -eq 0 ]]; then
-        # log "No new tags to add for ID='${ID}'" warning
         return 0
     fi
 
-    # Construire le payload avec seulement les nouveaux tags
     PAYLOAD=$(jq -n --arg id "${ID}" --argjson add_tags "${NEW_TAGS_JSON}" \
         '{ids: [$id], add_tags: $add_tags, remove_tags: []}' | jq -c .)
 
@@ -547,7 +486,6 @@ action_addtags() {
         log "Would add tags to ID='${ID}' TAGS='${PAYLOAD}'" f_recycle
     else
         if RESP="$(rustatio_tags "${PAYLOAD}" 2>&1)"; then
-            # retourner le JSON pour mise à jour d'INSTANCES_JSON
             printf '%s' "${PAYLOAD}"
             return 0
         else
@@ -567,23 +505,17 @@ action_removetags() {
     ID="$(jq -r '.id // empty' <<<"${INST_JSON}")"
     IFS=',' read -r -a TAGS_ARRAY <<< "${ASSIGN}"
 
-    # Construire un JSON array pour les tags demandés
     TAGS_JSON=$(printf '%s\n' "${TAGS_ARRAY[@]}" | jq -R . | jq -s -c .)
 
-    # Récupérer les tags existants depuis INST_JSON (attend un array de strings)
     EXISTING_TAGS_JSON=$(jq -c '.tags // []' <<<"${INST_JSON}")
 
-    # Calculer les tags à supprimer qui existent réellement (intersection)
     DEL_TAGS_JSON=$(jq -n --argjson want "${TAGS_JSON}" --argjson exist "${EXISTING_TAGS_JSON}" \
         '$want | map(select(. as $t | $exist | index($t)))' | jq -c .)
 
-    # Si aucun tag à supprimer, ne rien faire
     if [[ "$(jq 'length' <<<"${DEL_TAGS_JSON}")" -eq 0 ]]; then
-        # log "No existing tags to remove for ID='${ID}'" task
         return 0
     fi
 
-    # Construire le payload avec seulement les tags à supprimer
     PAYLOAD=$(jq -n --arg id "${ID}" --argjson del_tags "${DEL_TAGS_JSON}" \
         '{ids: [$id], add_tags: [], remove_tags: $del_tags}' | jq -c .)
 
@@ -591,7 +523,6 @@ action_removetags() {
         log "Would remove tags from ID='${ID}' TAGS='${PAYLOAD}'" f_recycle
     else
         if RESP="$(rustatio_tags "${PAYLOAD}" 2>&1)"; then
-            # retourner le JSON pour mise à jour d'INSTANCES_JSON
             printf '%s' "${PAYLOAD}"
             return 0
         else
@@ -602,21 +533,45 @@ action_removetags() {
     fi
 }
 
-# Dispatcher action -> implementation
+is_action_valid() {
+    local ACTION="${1}"
+    local STATE="${2}"
+
+    case "${ACTION}" in
+        start)
+            [[ "${STATE}" == "Stopped" ]] && return 0 || return 1
+            ;;
+        stop)
+            [[ "${STATE}" == "Running" ]] && return 0 || return 1
+            ;;
+        update|addtags|removetags)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 run_action_for_instance() {
     local ACTION="${1}"
     local INST_JSON="${2}"
     local ASSIGN="${3}"
+	local STATE="${4}"
 
     case "${ACTION}" in
         update)
-            action_update "${INST_JSON}" "${ASSIGN}"
+			action_update "${INST_JSON}" "${ASSIGN}"
             ;;
         start)
-            action_start "${INST_JSON}" "${ASSIGN}"
+			if is_action_valid "${ACTION}" "${STATE}"; then
+				action_start "${INST_JSON}" "${ASSIGN}"
+			fi
             ;;
         stop)
-            action_stop "$(jq -r '.id // empty' <<<"${INST_JSON}")"
+			if is_action_valid "${ACTION}" "${STATE}"; then
+				action_stop "$(jq -r '.id // empty' <<<"${INST_JSON}")"
+			fi
             ;;
         delete)
             action_delete "${INST_JSON}" "${ASSIGN}"
@@ -632,9 +587,6 @@ run_action_for_instance() {
     esac
 }
 
-# -------------------------
-# Main processing: process_rules refactorisé pour règles
-# -------------------------
 process_rules() {
     local INSTANCES_JSON="$(rustatio_get_instances)" || { log "${INSTANCES_JSON}"; }
 
@@ -649,19 +601,14 @@ process_rules() {
         return 1
     fi
 
-    # rendre disponible globalement pour action_delete
     FILES_JSON_GLOBAL="${FILES_JSON}"
 
-    # charger règles
     #local RULES_TEXT="$(load_rules_file "${RULES_FILE}")"
 
-    # itérer sur chaque ligne de règle
     while IFS= read -r LINE || [[ -n "${LINE}" ]]; do
-        # ignorer vides/commentaires
         [[ -z "${LINE//[[:space:]]/}" ]] && continue
         [[ "${LINE}" =~ ^[[:space:]]*# ]] && continue
 
-        # call parse_rule_line and read fields using unit separator
         PARSED="$(parse_rule_line "${LINE}" 2>/dev/null || printf '')"
         if [[ -z "${PARSED}" ]]; then
             log "Invalid rule: ${LINE}" warning
@@ -675,132 +622,90 @@ process_rules() {
             continue
         fi
 
-        # récupérer instances correspondantes
         mapfile -t MATCHES < <(jq -c ".data[] | select(${JQCOND})" <<<"${INSTANCES_JSON}")
         if [[ "${#MATCHES[@]}" -eq 0 ]]; then
-            # log "Aucune instance ne correspond à la règle: ${LINE}" data
             continue
         fi
 
         for INST in "${MATCHES[@]}"; do
-            # appeler l'action et capturer la sortie JSON (si présente)
-            local UPDATED_OUT="$(run_action_for_instance "${ACTION}" "${INST}" "${ASSIGN}" 2>/dev/null || printf '')"
             local ID=$(jq -r '.id // empty' <<<"${INST}")
             local STATE=$(jq -r '.stats.state // empty' <<<"${INST}")
+			local UPDATED_OUT="$(run_action_for_instance "${ACTION}" "${INST}" "${ASSIGN}" "${STATE}" 2>/dev/null || printf '')"
 
-            # si rien de retourné, continuer
             if [[ -z "${UPDATED_OUT//[[:space:]]/}" ]]; then
                 continue
             fi
 
-            if [[ "${ACTION}" == "update" ]]; then
-                if is_valid_json "${UPDATED_OUT}" && is_valid_json "${INST}"; then
-                    log "ID: ${ID} => Rule applied: ${LINE}" task
+			if is_valid_json "${UPDATED_OUT}" && is_valid_json "${INST}"; then
 
-                    NEW_INST=$(jq --argjson cfg "${UPDATED_OUT}" '.config = $cfg' <<<"${INST}")
-                    INSTANCES_JSON=$(jq --arg id "${ID}" --argjson new "${NEW_INST}" \
-                        '.data |= map(if .id == $id then $new else . end) | .' <<<"${INSTANCES_JSON}")
-                    INST=$(jq -c '.data[] | select(.id == "'"${ID}"'")' <<<"${INSTANCES_JSON}")
+				if is_action_valid "${ACTION}" "${STATE}"; then
+					log "ID: ${ID} => Rule applied: ${LINE}" task
+				fi
 
-                    log "Patch succeeded for instance ${ID}" f_succes
-                fi
-            fi
+				if [[ "${ACTION}" == "update" ]]; then
+					NEW_INST=$(jq --argjson cfg "${UPDATED_OUT}" '.config = $cfg' <<<"${INST}")
 
-            if [[ "${ACTION}" == "stop" ]] && [[ ! "${STATE}" == "Stopped" ]]; then
-                if is_valid_json "${UPDATED_OUT}" && is_valid_json "${INST}"; then
-                    log "ID: ${ID} => Rule applied: ${LINE}" task
+					log "Patch succeeded for instance ${ID}" f_succes
+				fi
 
-                    NEW_INST=$(
-                      jq \
-                        --argjson cfg "${UPDATED_OUT}" \
-                        '.stats = $cfg
-                         | if (.stats.state // "") != "Stopped" then
-                             .stats.state = "Stopped"
-                           else
-                             .
-                           end' <<< "$INST"
-                    )
-                    INSTANCES_JSON=$(jq --arg id "${ID}" --argjson new "${NEW_INST}" \
-                        '.data |= map(if .id == $id then $new else . end) | .' <<<"${INSTANCES_JSON}")
-                    INST=$(jq -c '.data[] | select(.id == "'"${ID}"'")' <<<"${INSTANCES_JSON}")
+				if [[ "${ACTION}" == "stop" ]] && [[ ! "${STATE}" == "Stopped" ]]; then
+					NEW_INST=$(
+					  jq \
+						--argjson cfg "${UPDATED_OUT}" \
+						'.stats = $cfg
+						 | .stats.state = "Stopped"' <<< "${INST}"
+					)
 
-                    log "Stop succeeded for instance ${ID}" f_succes
-                fi
-            fi
+					log "Stop succeeded for instance ${ID}" f_succes
+				fi
 
-            if [[ "${ACTION}" == "start" ]] && [[ ! "${STATE}" == "Running" ]]; then
-                if is_valid_json "${UPDATED_OUT}" && is_valid_json "${INST}"; then
-                    log "ID: ${ID} => Rule applied: ${LINE}" task
+				if [[ "${ACTION}" == "start" ]] && [[ ! "${STATE}" == "Running" ]]; then
+					NEW_INST=$(
+					  jq \
+						--argjson cfg "${UPDATED_OUT}" \
+						'.stats = $cfg
+						 | .stats.state = "Running"' <<< "${INST}"
+					)
 
-                    NEW_INST=$(
-                      jq \
-                        --argjson cfg "${UPDATED_OUT}" \
-                        '.stats = $cfg
-                         | if (.stats.state // "") != "Running" then
-                             .stats.state = "Running"
-                           else
-                             .
-                           end' <<< "$INST"
-                    )
-                    INSTANCES_JSON=$(jq --arg id "${ID}" --argjson new "${NEW_INST}" \
-                        '.data |= map(if .id == $id then $new else . end) | .' <<<"${INSTANCES_JSON}")
-                    INST=$(jq -c '.data[] | select(.id == "'"${ID}"'")' <<<"${INSTANCES_JSON}")
+					log "Start succeeded for instance ${ID}" f_succes
+				fi
 
-                    log "Start succeeded for instance ${ID}" f_succes
-                fi
-            fi
+				if [[ "${ACTION}" == "addtags" ]] || [[ "${ACTION}" == "removetags" ]]; then
+					NEW_INST=$(jq -n --argjson inst "${INST}" --argjson p "${UPDATED_OUT}" \
+						'($inst) as $i | $i | .tags = (
+						((($i.tags // []) + ($p.add_tags // [])) | unique)
+						| map(select(($p.remove_tags // []) | index(.) | not))
+						)')
 
-            if [[ "${ACTION}" == "addtags" ]] || [[ "${ACTION}" == "removetags" ]]; then
-                if is_valid_json "${UPDATED_OUT}" && is_valid_json "${INST}"; then
-                    log "ID: ${ID} => Rule applied: ${LINE}" task
+					log "Tags applied for instance for ID='${ID}'" f_succes
+				fi
 
-                    # construire le nouvel objet instance en appliquant add/remove
-                    NEW_INST=$(jq -n --argjson inst "${INST}" --argjson p "${UPDATED_OUT}" \
-                        '($inst) as $i | $i | .tags = (
-                        ((($i.tags // []) + ($p.add_tags // [])) | unique)
-                        | map(select(($p.remove_tags // []) | index(.) | not))
-                        )')
+				if is_action_valid "${ACTION}" "${STATE}"; then
+					INSTANCES_JSON=$(jq --arg id "${ID}" --argjson new "${NEW_INST}" \
+						'.data |= map(if .id == $id then $new else . end) | .' <<<"${INSTANCES_JSON}")
 
-                    # remplacer l'instance dans INSTANCES_JSON
-                    INSTANCES_JSON=$(jq --arg id "${ID}" --argjson new "${NEW_INST}" \
-                        '.data |= map(if .id == $id then $new else . end) | .' <<<"${INSTANCES_JSON}")
+					INST=$(jq -c '.data[] | select(.id == "'"${ID}"'")' <<<"${INSTANCES_JSON}")
+				fi
+			else
+				if [[ "${ACTION}" == "delete" ]]; then
+					log "ID: ${ID} => Rule applied: ${LINE}" task
+					INSTANCES_JSON=$(
+						jq --arg id "${ID}" \
+						   '.data |= map(select(.id != $id))' \
+						   <<< "${INSTANCES_JSON}"
+					)
+					INST=""
+				fi
 
-                    # recharger INST pour la suite
-                    INST=$(jq -c '.data[] | select(.id == "'"${ID}"'")' <<<"${INSTANCES_JSON}")
-
-                    log "Tags applied for instance for ID='${ID}'" f_succes
-                fi
-            fi
-
-            if [[ "${ACTION}" == "delete" ]]; then
-                if is_valid_json "${INST}" && is_valid_json "${INSTANCES_JSON}"; then
-                    log "ID: ${ID} => Rule applied: ${LINE}" task
-
-                    INSTANCES_JSON=$(
-                        jq --arg id "${ID}" \
-                           '.data |= map(select(.id != $id))' \
-                           <<< "${INSTANCES_JSON}"
-                    )
-                    INST=""
-                fi
-            fi
-
-            if ! is_valid_json "${UPDATED_OUT}"; then
-                echo "${UPDATED_OUT}"
+				echo "${UPDATED_OUT}"
             fi
 
             sleep 1
         done
     done <<<"${RULES_TEXT}"
-
-    # log "Traitement terminé" finish
 }
 
-# -------------------------
-# Loop runner (5 minutes cycle)
-# -------------------------
 run_loop() {
-    # charger règles
     log "Loading rules" start
     RULES_TEXT="$(load_rules_file "${RULES_FILE}")"
     INITIAL_INTERVAL=5
@@ -812,7 +717,6 @@ run_loop() {
 
     while true; do
         sleep ${INITIAL_INTERVAL}
-        # Recréer le log si supprimé
         if [[ ! "${LOGFILE}" == "/dev/null" ]]; then
             if [[ ! -e "${LOGFILE}" ]]; then
                 touch "${LOGFILE}"
@@ -827,7 +731,6 @@ run_loop() {
     done
 }
 
-# Start background runner if API configured
 if [[ -n "${RUSTATIO_API}" ]]; then
     PIDFILE="/data/${BASE%.*}.pid"
     PIDFILE="/dev/null"
