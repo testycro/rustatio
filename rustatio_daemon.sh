@@ -544,7 +544,7 @@ is_action_valid() {
         stop)
             [[ "${STATE}" == "Running" ]] && return 0 || return 1
             ;;
-        update|addtags|removetags)
+        update|addtags|removetags|delete)
             return 0
             ;;
         *)
@@ -557,21 +557,16 @@ run_action_for_instance() {
     local ACTION="${1}"
     local INST_JSON="${2}"
     local ASSIGN="${3}"
-	local STATE="${4}"
 
     case "${ACTION}" in
         update)
 			action_update "${INST_JSON}" "${ASSIGN}"
             ;;
         start)
-			if is_action_valid "${ACTION}" "${STATE}"; then
-				action_start "${INST_JSON}" "${ASSIGN}"
-			fi
+			action_start "${INST_JSON}" "${ASSIGN}"
             ;;
         stop)
-			if is_action_valid "${ACTION}" "${STATE}"; then
-				action_stop "$(jq -r '.id // empty' <<<"${INST_JSON}")"
-			fi
+			action_stop "$(jq -r '.id // empty' <<<"${INST_JSON}")"
             ;;
         delete)
             action_delete "${INST_JSON}" "${ASSIGN}"
@@ -630,17 +625,19 @@ process_rules() {
         for INST in "${MATCHES[@]}"; do
             local ID=$(jq -r '.id // empty' <<<"${INST}")
             local STATE=$(jq -r '.stats.state // empty' <<<"${INST}")
-			local UPDATED_OUT="$(run_action_for_instance "${ACTION}" "${INST}" "${ASSIGN}" "${STATE}" 2>/dev/null || printf '')"
+			
+			if ! is_action_valid "${ACTION}" "${STATE}"; then
+				continue
+			fi
+			
+			local UPDATED_OUT="$(run_action_for_instance "${ACTION}" "${INST}" "${ASSIGN}" 2>/dev/null || printf '')"
 
             if [[ -z "${UPDATED_OUT//[[:space:]]/}" ]]; then
                 continue
             fi
 
 			if is_valid_json "${UPDATED_OUT}" && is_valid_json "${INST}"; then
-
-				if is_action_valid "${ACTION}" "${STATE}"; then
-					log "ID: ${ID} => Rule applied: ${LINE}" task
-				fi
+				log "ID: ${ID} => Rule applied: ${LINE}" task
 
 				if [[ "${ACTION}" == "update" ]]; then
 					NEW_INST=$(jq --argjson cfg "${UPDATED_OUT}" '.config = $cfg' <<<"${INST}")
@@ -648,7 +645,7 @@ process_rules() {
 					log "Patch succeeded for instance ${ID}" f_succes
 				fi
 
-				if [[ "${ACTION}" == "stop" ]] && [[ ! "${STATE}" == "Stopped" ]]; then
+				if [[ "${ACTION}" == "stop" ]]; then
 					NEW_INST=$(
 					  jq \
 						--argjson cfg "${UPDATED_OUT}" \
@@ -659,7 +656,7 @@ process_rules() {
 					log "Stop succeeded for instance ${ID}" f_succes
 				fi
 
-				if [[ "${ACTION}" == "start" ]] && [[ ! "${STATE}" == "Running" ]]; then
+				if [[ "${ACTION}" == "start" ]]; then
 					NEW_INST=$(
 					  jq \
 						--argjson cfg "${UPDATED_OUT}" \
@@ -680,12 +677,10 @@ process_rules() {
 					log "Tags applied for instance for ID='${ID}'" f_succes
 				fi
 
-				if is_action_valid "${ACTION}" "${STATE}"; then
-					INSTANCES_JSON=$(jq --arg id "${ID}" --argjson new "${NEW_INST}" \
-						'.data |= map(if .id == $id then $new else . end) | .' <<<"${INSTANCES_JSON}")
+				INSTANCES_JSON=$(jq --arg id "${ID}" --argjson new "${NEW_INST}" \
+					'.data |= map(if .id == $id then $new else . end) | .' <<<"${INSTANCES_JSON}")
 
-					INST=$(jq -c '.data[] | select(.id == "'"${ID}"'")' <<<"${INSTANCES_JSON}")
-				fi
+				INST=$(jq -c '.data[] | select(.id == "'"${ID}"'")' <<<"${INSTANCES_JSON}")
 			else
 				if [[ "${ACTION}" == "delete" ]]; then
 					log "ID: ${ID} => Rule applied: ${LINE}" task
