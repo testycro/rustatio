@@ -14,43 +14,26 @@
 # It'not perfect but can do all the things i need
 # There is a full data sample at the end of the script
 
-# Sample 1
-config.upload_rate >= 4000 | addtags | speed,seedbox
+torrent.announce ~ "test1" | addtags | Hidden
+torrent.announce ~ "test2" | addtags | 1337x
+torrent.announce ~ "test3" | addtags | NameLess
 
-config.upload_rate >= 4000 | update | config.upload_rate = 1000
+stats.seeders <= 2 AND tags != Protected | addtags | Protected
+stats.seeders > 2 AND tags = Protected | removetags | Protected
 
-# Sample announce
-torrent.announce ~ "nyaa" | addtags | Nyaa
+stats.leechers = 0 AND stats.seeders = 0 AND tags != Bugged | addtags | Bugged
+stats.leechers > 0 AND tags = Bugged | removetags | Bugged
+stats.seeders > 0 AND tags = Bugged | removetags | Bugged
 
-# Sample 2
-stats.ratio: 0.3 - 0.6 AND config.upload_rate >= 1000 | update | config.upload_rate = 500
+stats.ratio: 1.0 - 2.5 AND config.upload_rate > 10 AND tags != Slow AND tags != Protected | addtags | Slow
 
-# Sample 104856
-config.upload_rate < 1000 | removetags | speed
+tags = Protected AND config.upload_rate > 0 | update | config.upload_rate = 0
 
-# Another comment for fun :)
-config.upload_rate < 1000 | addtags | soft
+tags != Slow AND tags != Protected AND config.upload_rate = 0 | update | config.upload_rate = 1000
+tags = Forced AND tags != Protected AND config.upload_rate != 1000 | update | config.upload_rate = 1000
+tags = Slow AND tags != Protected AND tags != Forced AND config.upload_rate != 10 | update | config.upload_rate = 10
 
-# Another sample
-stats.ratio >= 0.9 AND config.upload_rate >= 500 | stop |
+id = "zBFDeAO4Y1" AND tags = Forced AND stats.announce_count > 3 | removetags | Forced
+id = "_TmcqvXrve" AND tags = Forced AND stats.announce_count > 3 | removetags | Forced
 
-# Test
-stats.leechers > 10 AND config.upload_rate != 500 | update | config.upload_rate = 500
-
-# Why not
-stats.leechers > 10 | removetags | slow
-
-# Test 2
-stats.leechers <= 5 AND config.upload_rate != 1.1 | update | config.upload_rate = 1.1
-
-# I like
-stats.leechers <= 5 | addtags | slow
-
-# The end
-tags = Nyaa | delete | archive
-
-# The end test
-tags: Nyaa AND stats.state = Stopped | addtags | Done
-
-# 2nd the end
-stats.state: Stopped AND tags = Done AND tags = Nyaa | delete | watchfile
+stats.state: Stopped | delete | watchfile,archive
