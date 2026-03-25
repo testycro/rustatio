@@ -1,5 +1,5 @@
 # < CONDITIONS > |  <ACTION > | < ASSIGN >
-# Any data can be used for conditions exept elapsed_time and eta_seed_time
+# Any data can be used for conditions exept history (upload_rate_history, download_rate_history, ratio_history, history_timestamps)
 # Operator are, : , = , < , > , != , <= , >=
 # No multi-value, no spaces in values or use " "
 # Use AND / OR to add more conditions
