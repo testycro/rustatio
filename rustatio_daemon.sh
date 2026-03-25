@@ -14,7 +14,7 @@ REFRESH_INTERVAL=5                          # Temps d'attente en seconds entre c
 
 ARCHIVE_FOLDER="/data/archived"             # Chemin vers le dossier d'archivage des .torrent
 
-RULES_FILE="/data/rules.txt"                # Chemin vers le fichier des règles. Se charge au démarrage
+RULES_FILE="/data/rules.txt"                # Chemin vers le fichier des règles. Se charge au démarrage ou lorsque LOGFILE est suprimé
 
 DRY_RUN=false                               # Aucuns appel API, test seulement true/false
 
@@ -747,107 +747,122 @@ fi
 
 : '
 {
-    "success": true,
-    "data": [
-        {
-            "id": "id-LGQsBtj",
-            "torrent": {
-                "info_hash": [
-                    219,
-                    212,
-                    112,
-                    78,
-                    17,
-                    229,
-                    46,
-                    24,
-                    10,
-                    41,
-                    187,
-                    13,
-                    188,
-                    246,
-                    57,
-                    27,
-                    152,
-                    24,
-                    40,
-                    145
-                ],
-                "announce": "https://sample.com/announce",
-                "name": "Sample.2025.MULTi.TRUEFRENCH.1080p.WEB-DL.H264-Slay3R.mkv",
-                "total_size": 9869094537,
-                "piece_length": 2097152,
-                "num_pieces": 4706,
-                "comment": "Ce torrent a été téléchargé depuis Sample. https://sample.com/torrents/12345",
-                "created_by": "ruTorrent (PHP Class - Adrien Gibrat). Edited by UNIT3D",
-                "is_single_file": true,
-                "file_count": 0
-            },
-            "config": {
-                "upload_rate": 700.0,
-                "download_rate": 0.0,
-                "port": 59859,
-                "client_type": "transmission",
-                "client_version": "4.0.5",
-                "initial_uploaded": 0,
-                "initial_downloaded": 0,
-                "completion_percent": 100.0,
-                "num_want": 50,
-                "randomize_rates": true,
-                "random_range_percent": 50.0,
-                "stop_at_ratio": null,
-                "stop_at_uploaded": null,
-                "stop_at_downloaded": null,
-                "stop_at_seed_time": 2678400,
-                "idle_when_no_leechers": true,
-                "idle_when_no_seeders": false,
-                "scrape_interval": 60,
-                "progressive_rates": false,
-                "target_upload_rate": 100.0,
-                "target_download_rate": 200.0,
-                "progressive_duration": 3600
-            },
-            "stats": {
-                "uploaded": 0,
-                "downloaded": 0,
-                "ratio": 0.0,
-                "left": 0,
-                "torrent_completion": 100.0,
-                "seeders": 16,
-                "leechers": 0,
-                "state": "Running",
-                "is_idling": true,
-                "idling_reason": "no_leechers",
-                "session_uploaded": 0,
-                "session_downloaded": 0,
-                "session_ratio": 0.0,
-                "elapsed_time": {
-                    "secs": 333755,
-                    "nanos": 498129348
-                },
-                "current_upload_rate": 0.0,
-                "current_download_rate": 0.0,
-                "average_upload_rate": 0.0,
-                "average_download_rate": 0.0,
-                "upload_progress": 0.0,
-                "download_progress": 0.0,
-                "ratio_progress": 0.0,
-                "seed_time_progress": 12.460984169653525,
-                "eta_ratio": null,
-                "eta_uploaded": null,
-                "eta_seed_time": {
-                    "secs": 2344645,
-                    "nanos": 0
-                },
-                "eta_download_completion": null,
-                "announce_count": 121
-            },
-            "created_at": 1771680826,
-            "source": "watch_folder",
-            "tags": []
-        }
-    ]
+	"success": true,
+	"data": [
+		{
+			"id": "_Mf6squnrq",
+			"torrent": {
+				"info_hash": [
+					123,
+					123,
+					123,
+					123,
+					12,
+					123,
+					12,
+					12,
+					12,
+					123,
+					12,
+					12,
+					123,
+					123,
+					123,
+					123,
+					123,
+					123,
+					12,
+					12
+				],
+				"announce": "https://test.com/announce",
+				"name": "Test.2025.MULTi.VF2.1080p.WEB.H264-SUPPLY",
+				"total_size": 1234567890,
+				"piece_length": 1234567,
+				"num_pieces": 1234,
+				"comment": "Ce torrent a été téléchargé depuis Test. https://Test.com/torrents/12345",
+				"created_by": "Edited by UNIT3D",
+				"is_single_file": false,
+				"file_count": 0
+			},
+			"config": {
+				"upload_rate": 1000,
+				"download_rate": 0.0,
+				"port": 6881,
+				"vpn_port_sync": false,
+				"client_type": "transmission",
+				"client_version": "4.0.5",
+				"initial_uploaded": 0,
+				"initial_downloaded": 0,
+				"completion_percent": 100.0,
+				"num_want": 50,
+				"randomize_rates": true,
+				"random_range_percent": 50.0,
+				"randomize_ratio": false,
+				"random_ratio_range_percent": 10.0,
+				"stop_at_ratio": null,
+				"effective_stop_at_ratio": null,
+				"stop_at_uploaded": null,
+				"stop_at_downloaded": null,
+				"stop_at_seed_time": 2678400,
+				"idle_when_no_leechers": true,
+				"idle_when_no_seeders": false,
+				"scrape_interval": 60,
+				"progressive_rates": false,
+				"target_upload_rate": 100.0,
+				"target_download_rate": 200.0,
+				"progressive_duration": 3600,
+				"post_stop_action": "idle"
+			},
+			"stats": {
+				"uploaded": 0,
+				"downloaded": 0,
+				"ratio": 0.0,
+				"left": 0,
+				"torrent_completion": 100.0,
+				"seeders": 136,
+				"leechers": 0,
+				"state": "Running",
+				"is_idling": true,
+				"idling_reason": "no_leechers",
+				"session_uploaded": 0,
+				"session_downloaded": 0,
+				"session_ratio": 0.0,
+				"elapsed_time": {
+					"secs": 123,
+					"nanos": 123
+				},
+				"current_upload_rate": 0.0,
+				"current_download_rate": 0.0,
+				"average_upload_rate": 0.0,
+				"average_download_rate": 0.0,
+				"upload_progress": 0.0,
+				"download_progress": 0.0,
+				"ratio_progress": 0.0,
+				"seed_time_progress": 0.0,
+				"effective_stop_at_ratio": null,
+				"eta_ratio": null,
+				"eta_uploaded": null,
+				"eta_seed_time": {
+					"secs": 123,
+					"nanos": 0
+				},
+				"eta_download_completion": null,
+				"upload_rate_history": [],
+				"download_rate_history": [],
+				"ratio_history": [],
+				"history_timestamps": [],
+				"stop_condition_met": false,
+				"post_stop_action": "idle",
+				"announce_count": 1
+			},
+			"created_at": 1771234567,
+			"source": "watch_folder",
+			"tags": [
+				"Test",
+				"Forced"
+			]
+		}
+	]
 }
 
 '
