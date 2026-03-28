@@ -371,10 +371,10 @@ action_stop() {
 action_update() {
     local INST_JSON="${1}"
     local ASSIGN="${2}"
-    local RESP NEW_RHS
+    local RESP NEW_RHS LHS RHS ID PAYLOAD
 
-    local LHS=$(sed -E 's/[[:space:]]*=.*$//' <<<"${ASSIGN}" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')
-    local RHS=$(sed -E 's/^.*=[[:space:]]*//' <<<"${ASSIGN}" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' | sed -E 's/;$//')
+    LHS=$(sed -E 's/[[:space:]]*=.*$//' <<<"${ASSIGN}" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')
+    RHS=$(sed -E 's/^.*=[[:space:]]*//' <<<"${ASSIGN}" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' | sed -E 's/;$//')
 
     [[ -z "${LHS}" || -z "${RHS}" ]] && { log "Invalid assign '${ASSIGN}'" f_warning; return 1; }
 
@@ -391,8 +391,8 @@ action_update() {
 
     local JQ_EXPR=".${FIELD} = \$val"
 
-    local ID=$(jq -r '.id // empty' <<<"${INST_JSON}")
-    local PAYLOAD=$(jq -c '.config // {}' <<<"${INST_JSON}")
+    ID=$(jq -r '.id // empty' <<<"${INST_JSON}")
+    PAYLOAD=$(jq -c '.config // {}' <<<"${INST_JSON}")
 
 	if ! NEW_RHS="$(resolve_default_config "${RHS}")"; then
 		log "default_config key '${RHS}' not found in defaults" f_error
@@ -431,16 +431,16 @@ action_update() {
 action_start() {
     local INST_JSON="${1}"
     local ASSIGN="${2}"
-    local RESP NEW_RHS
+    local RESP NEW_RHS LHS RHS PAYLOAD ID
 
-    local LHS=$(sed -E 's/[[:space:]]*=.*$//' <<<"${ASSIGN}" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')
-    local RHS=$(sed -E 's/^.*=[[:space:]]*//' <<<"${ASSIGN}" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' | sed -E 's/;$//')
+    LHS=$(sed -E 's/[[:space:]]*=.*$//' <<<"${ASSIGN}" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')
+    RHS=$(sed -E 's/^.*=[[:space:]]*//' <<<"${ASSIGN}" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' | sed -E 's/;$//')
 
     [[ -z "${LHS}" || -z "${RHS}" ]] && { log "update: invalid assign '${ASSIGN}'" warning; return 1; }
 
     local JQ_EXPR=".${LHS} = \$val"
 
-    local PAYLOAD=$(jq -c '
+    PAYLOAD=$(jq -c '
         {
             torrent: (.torrent // {}),
             config: (.config // {})
@@ -466,7 +466,7 @@ action_start() {
         fi
     fi
 
-    local ID=$(jq -r '.id // empty' <<<"${INST_JSON}")
+    ID=$(jq -r '.id // empty' <<<"${INST_JSON}")
 
     if [[ "${DRY_RUN}" = true ]]; then
         log "Would start ID='${ID}' PAYLOAD='${PAYLOAD}'" f_recycle
@@ -489,10 +489,10 @@ action_start() {
 action_delete() {
     local INST_JSON="${1}"
     local ASSIGN="${2}"
-    local FILENAME WAY FILE_OBJ MATCHES BYTES HEX RESP
+    local FILENAME WAY FILE_OBJ MATCHES BYTES HEX RESP ID
 
     if [[ "${ASSIGN}" == *"instance"* ]]; then
-        local ID=$(jq -r '.id // empty' <<<"${INST_JSON}")
+        ID=$(jq -r '.id // empty' <<<"${INST_JSON}")
         if RESP="$(rustatio_delete_instance "${ID}" 2>&1)"; then
             log "Delete succeeded for ID='${ID}'" f_succes
 			return 0
@@ -687,9 +687,9 @@ run_action_for_instance() {
 }
 
 process_rules() {
-	local JQCOND UPDATED_OUT RET
+	local JQCOND UPDATED_OUT RET INSTANCES_JSON
 
-    local INSTANCES_JSON="$(rustatio_get_instances)"
+    INSTANCES_JSON="$(rustatio_get_instances)"
 	RET=$?
     if ! is_valid_json "${INSTANCES_JSON}" && (( RET != 0 )); then
         log "INSTANCES_JSON invalid or non-JSON" error
@@ -737,8 +737,10 @@ process_rules() {
         fi
 
         for INST in "${MATCHES[@]}"; do
-            local ID=$(jq -r '.id // empty' <<<"${INST}")
-            local STATE=$(jq -r '.stats.state // empty' <<<"${INST}")
+			local ID STATE
+
+            ID=$(jq -r '.id // empty' <<<"${INST}")
+            STATE=$(jq -r '.stats.state // empty' <<<"${INST}")
 
 			if ! is_action_valid "${ACTION}" "${STATE}"; then
 				continue
