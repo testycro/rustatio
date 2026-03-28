@@ -264,6 +264,45 @@ resolve_default_config() {
     printf '%s' "${RHS}"
 }
 
+validate_rule_keys() {
+    local EXPR="${1:-}"
+    local SAMPLE_INST="$(printf '%s' "${2}" | base64 -d)"
+    local INST_KEYS=()
+    local VAL JQERR DEFAULT_KEYS RAW_KEYS PARTS JQ_ARRAY
+
+	if is_valid_json "${GLOBAL_DEFAULTS_JSON}" && [[ "${GLOBAL_DEFAULTS_JSON}" != "{}" ]]; then
+		mapfile -t DEFAULT_KEYS < <(grep -oE 'default_config\.([A-Za-z0-9_\.]+)' <<<"${EXPR}" | sed 's/^default_config\.//' | sort -u)
+		for K in "${DEFAULT_KEYS[@]}"; do
+			read -r -a PARTS <<< "$(sed 's/\./ /g' <<<"${K}")"
+			JQ_ARRAY=$(printf '"%s",' "${PARTS[@]}" | sed 's/,$//')
+			VAL="$(jq -c "getpath([${JQ_ARRAY}]) // \"__MISSING__\"" <<<"${GLOBAL_DEFAULTS_JSON}" 2>/dev/null || echo null)"
+			if [[ "${VAL}" == '"__MISSING__"' ]]; then
+				log "default_config key 'default_config.${K}' not found in defaults" f_error
+				return 1
+			fi
+		done
+	fi
+
+	if is_valid_json "${SAMPLE_INST}" && [[ "${SAMPLE_INST}" != "{}" ]]; then
+		mapfile -t RAW_KEYS < <(grep -oE '([A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+)' <<<"${EXPR}" | sort -u | grep -v '^default_config\.')
+
+		for K in "${RAW_KEYS[@]}"; do
+			INST_KEYS+=("${K}")
+		done
+
+		for K in "${INST_KEYS[@]}"; do
+			read -r -a PARTS <<< "$(sed 's/\./ /g' <<<"${K}")"
+			JQ_ARRAY=$(printf '"%s",' "${PARTS[@]}" | sed 's/,$//')
+			VAL="$(jq -c "getpath([${JQ_ARRAY}]) // \"__MISSING__\"" <<<"${SAMPLE_INST}" 2>/dev/null || echo null)"
+			if [[ "${VAL}" == '"__MISSING__"' ]]; then
+				log "Instance key '${K}' not found in Instance" f_error
+				return 1
+			fi
+		done
+	fi
+
+    return 0
+}
 
 cond_to_jq() {
     local EXPR="${1}"
@@ -335,12 +374,6 @@ cond_to_jq() {
 
 	for KEY in "${KEYS[@]}"; do
 		VAL="$(jq -c --arg k "${KEY}" '.[$k] // "__MISSING__"' <<<"${GLOBAL_DEFAULTS_JSON}" 2>/dev/null || echo null)"
-
-		if [[ "${VAL}" == '"__MISSING__"' ]]; then
-			log "default_config key 'default_config.${KEY}' not found in defaults" f_error
-			return 1
-		fi
-
 		EXPR="${EXPR//default_config.${KEY}/${VAL}}"
 	done
 
@@ -533,7 +566,7 @@ action_delete() {
                         mkdir -p "${ARCHIVE_FOLDER}"
 
                         if RESP=$(cp -f -- "${WAY}" "${ARCHIVE_FOLDER}/${FILENAME}" 2>&1); then
-                            log "Torrent archived ${ARCHIVE_FOLDER}/${FILENAME}" f_succes
+                            log "Torrent archived ${ARCHIVE_FOLDER}/${FILENAME}" f_saving
 							return 0
                         else
                             log "Failed to archive ${WAY}" f_error
@@ -687,7 +720,7 @@ run_action_for_instance() {
 }
 
 process_rules() {
-	local JQCOND UPDATED_OUT RET INSTANCES_JSON
+	local JQCOND UPDATED_OUT RET INSTANCES_JSON SAMPLE_INST
 
     INSTANCES_JSON="$(rustatio_get_instances)"
 	RET=$?
@@ -714,17 +747,26 @@ process_rules() {
 
         PARSED="$(parse_rule_line "${LINE}" 2>/dev/null || printf '')"
         if [[ -z "${PARSED}" ]]; then
-            log "Invalid rule: ${LINE}" warning
+            log "Invalid rule: ${LINE}" denied
             continue
         fi
+
+		SAMPLE_INST="$(jq -c '.data[0] // {}' <<<"${INSTANCES_JSON}" | base64 -w0)"
+		SAMPLE_INST="$(validate_rule_keys "${LINE}" "${SAMPLE_INST}")"
+		RET=$?
+		if (( RET != 0 )); then
+			log "Invalid rule: ${LINE}" denied
+			echo "${SAMPLE_INST}"
+			continue
+		fi
+
         IFS=$'\x1F' read -r COND ACTION ASSIGN <<<"${PARSED}"
 
 		JQCOND="$(cond_to_jq "${COND}")"
 		RET=$?
-
 		if (( RET != 0 )) || [[ -z "${JQCOND//[[:space:]]/}" ]]; then
 			if (( RET != 0 )); then
-				log "Invalid rule: ${LINE}" warning
+				log "Invalid rule: ${LINE}" denied
 				echo "${JQCOND}"
 			fi
 
