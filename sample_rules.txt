@@ -29,8 +29,8 @@ stats.ratio: 1.0 - 2.5 AND config.upload_rate > 10 AND tags != Slow AND tags != 
 
 tags = Protected AND config.upload_rate > 0 | update | config.upload_rate = 0
 
-tags != Slow AND tags != Protected AND config.upload_rate = 0 | update | config.upload_rate = 1000
-tags = Forced AND tags != Protected AND config.upload_rate != 1000 | update | config.upload_rate = 1000
+tags != Slow AND tags != Protected AND config.upload_rate = 0 | update | config.upload_rate = default_config.upload_rate
+tags = Forced AND tags != Protected AND config.upload_rate != default_config.upload_rate | update | config.upload_rate = default_config.upload_rate
 tags = Slow AND tags != Protected AND tags != Forced AND config.upload_rate != 10 | update | config.upload_rate = 10
 
 id = "zBFDeAO4Y1" AND tags = Forced AND stats.announce_count > 3 | removetags | Forced
