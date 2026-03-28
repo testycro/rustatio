@@ -16,6 +16,8 @@ ARCHIVE_FOLDER="/data/archived"             # Chemin vers le dossier d'archivage
 
 RULES_FILE="/data/rules.txt"                # Chemin vers le fichier des règles. Se charge au démarrage ou lorsque LOGFILE est suprimé
 
+DEFAULTS_FILE="/data/state.json"            # Chemin vers le fichier state.json contenant default_config, etc. Se charge au démarrage ou lorsque LOGFILE est suprimé
+
 DRY_RUN=false                               # Aucuns appel API, test seulement true/false
 
 LOGFILE="/data/${BASE%.*}.log"              # Chemins vers le fichier log ou /dev/null pour désactiver
@@ -60,7 +62,9 @@ log() {
 }
 
 cleanup() {
-    rm -f "${PIDFILE}"
+    if [[ -n "${PIDFILE}" && "${PIDFILE}" != "/dev/null" && -f "${PIDFILE}" ]]; then
+        rm -f "${PIDFILE}"
+    fi
 }
 
 url_encode() {
@@ -70,7 +74,16 @@ url_encode() {
 
 is_valid_json() {
     local S="${1}"
-    printf '%s' "$S" | jq -e . >/dev/null 2>&1
+
+	if [[ -z "${S//[[:space:]]/}" ]]; then
+		return 1
+	fi
+
+	if printf '%s' "${S}" | jq -e . >/dev/null 2>&1; then
+	    return 0
+	else
+	    return 1
+	fi
 }
 
 bytes_to_hex() {
@@ -160,6 +173,7 @@ rustatio_patch_instance() {
 
 rustatio_delete_file() {
     local ENCODED
+
     ENCODED=$(url_encode "${1}")
     rustatio_api_request "watch/files?path=${ENCODED}" "" "DELETE"
 }
@@ -174,7 +188,44 @@ rustatio_tags() {
 
 load_rules_file() {
     local F="${1:-${RULES_FILE}}"
-    [[ -f "${F}" ]] && sed -e 's/\r$//' "${F}" || printf ''
+
+	if [[ -f "${F}" ]]; then
+		RULES_TEXT=$(sed -e 's/\r$//' "${F}")
+		log "Rules loaded from ${F}" start
+	else
+		log "Rules file ${F} is not valid JSON" error
+	fi
+}
+
+load_defaults_file() {
+    local F="${1:-${DEFAULTS_FILE}}"
+
+    if [[ -f "${F}" ]]; then
+        local RAW
+
+        RAW="$(sed -e 's/\r$//' "${F}")"
+
+        if ! is_valid_json "${RAW}"; then
+            log "Defaults file ${F} is not valid JSON" error
+            GLOBAL_DEFAULTS_JSON="{}"
+            return
+        fi
+
+        if jq -e '.default_config' >/dev/null 2>&1 <<<"${RAW}"; then
+            GLOBAL_DEFAULTS_JSON="$(jq -c '.default_config' <<<"${RAW}")"
+        else
+            GLOBAL_DEFAULTS_JSON="$(jq -c '.' <<<"${RAW}")"
+        fi
+
+        log "Defaults loaded from ${F}" start
+    else
+        GLOBAL_DEFAULTS_JSON="{}"
+    fi
+}
+
+normalize_default_ref() {
+    local S="${1}"
+    sed -E 's#(^|[^a-zA-Z0-9_])default_config\.#\1.default_config.#g' <<<"${S}"
 }
 
 _trim() { sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' <<<"${1}"; }
@@ -192,13 +243,34 @@ parse_rule_line() {
     printf '%s\x1F%s\x1F%s' "$(_trim "${COND}")" "$(_trim "${ACTION}")" "$(_trim "${ASSIGN}")"
 }
 
+resolve_default_config() {
+    local RHS="${1}"
+    local KEY VAL
+
+	local RANGE_REGEX='^default_config\.([A-Za-z0-9_.]+)$'
+
+    if [[ ${RHS} =~ ${RANGE_REGEX} ]]; then
+        KEY="${BASH_REMATCH[1]}"
+        VAL="$(jq -c --arg k "${KEY}" '.[$k] // "__MISSING__"' <<<"${GLOBAL_DEFAULTS_JSON}")"
+
+        if [[ "${VAL}" == '"__MISSING__"' ]]; then
+            return 1
+        fi
+
+        printf '%s' "${VAL}"
+        return 0
+    fi
+
+    printf '%s' "${RHS}"
+}
+
+
 cond_to_jq() {
     local EXPR="${1}"
 
     EXPR="$(echo "${EXPR}" | sed -E 's/\bAND\b/ and /g; s/\bOR\b/ or /g')"
 
     local RANGE_REGEX='([A-Za-z0-9_.]+):[[:space:]]*([0-9]+(\.[0-9]+)?) *- *([0-9]+(\.[0-9]+)?)'
-
     while [[ ${EXPR} =~ ${RANGE_REGEX} ]]; do
         local FULL_MATCH="${BASH_REMATCH[0]}"
         local WAY="${BASH_REMATCH[1]}"
@@ -259,7 +331,21 @@ cond_to_jq() {
     -e 's#([a-zA-Z0-9_.]+)[[:space:]]*=[[:space:]]*\"([^\"]+)\"#((.\1 // \"\") | tostring) == \"\2\"#g' \
     -e 's#([a-zA-Z0-9_.]+)[[:space:]]*=[[:space:]]*([A-Za-z0-9_@./:-]+)#((.\1 // \"\") | tostring) == \"\2\"#g')"
 
+	mapfile -t KEYS < <(grep -oE 'default_config\.([A-Za-z0-9_\.]+)' <<<"${EXPR}" | sed 's/^default_config\.//' | sort -u)
+
+	for KEY in "${KEYS[@]}"; do
+		VAL="$(jq -c --arg k "${KEY}" '.[$k] // "__MISSING__"' <<<"${GLOBAL_DEFAULTS_JSON}" 2>/dev/null || echo null)"
+
+		if [[ "${VAL}" == '"__MISSING__"' ]]; then
+			log "default_config key 'default_config.${KEY}' not found in defaults" f_error
+			return 1
+		fi
+
+		EXPR="${EXPR//default_config.${KEY}/${VAL}}"
+	done
+
     printf '%s' "${EXPR}"
+	return 0
 }
 
 action_stop() {
@@ -268,6 +354,7 @@ action_stop() {
 
     if [[ "${DRY_RUN}" = true ]]; then
         log "Would stop ID='${ID}'" f_recycle
+		return 0
     else
         if RESP="$(rustatio_stop_instance "${ID}" 2>&1)"; then
             PAYLOAD=$(jq -c '.data // {}' <<<"${RESP}")
@@ -284,7 +371,7 @@ action_stop() {
 action_update() {
     local INST_JSON="${1}"
     local ASSIGN="${2}"
-    local RESP
+    local RESP NEW_RHS
 
     local LHS=$(sed -E 's/[[:space:]]*=.*$//' <<<"${ASSIGN}" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')
     local RHS=$(sed -E 's/^.*=[[:space:]]*//' <<<"${ASSIGN}" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' | sed -E 's/;$//')
@@ -307,6 +394,13 @@ action_update() {
     local ID=$(jq -r '.id // empty' <<<"${INST_JSON}")
     local PAYLOAD=$(jq -c '.config // {}' <<<"${INST_JSON}")
 
+	if ! NEW_RHS="$(resolve_default_config "${RHS}")"; then
+		log "default_config key '${RHS}' not found in defaults" f_error
+		return 1
+	fi
+
+	RHS="${NEW_RHS}"
+
     if printf '%s' "${RHS}" | jq -e . >/dev/null 2>&1; then
         if ! PAYLOAD=$(jq -c --argjson val "${RHS}" "${JQ_EXPR}" <<<"${PAYLOAD}"); then
             log "jq --argjson failed for '${ASSIGN}'" f_error
@@ -321,29 +415,30 @@ action_update() {
 
     if [[ "${DRY_RUN}" = true ]]; then
         log "Would patch config ID='${ID}' PAYLOAD='${PAYLOAD}'" f_recycle
+		return 0
     else
         if RESP="$(rustatio_patch_instance "${ID}" "${PAYLOAD}" 2>&1)"; then
             printf '%s' "${PAYLOAD}"
             return 0
         else
             log "Patch failed for instance ${ID}" f_error
-            log "${RESP}" data
+            log "${RESP}" f_data
             return 1
-    fi
+        fi
     fi
 }
 
 action_start() {
     local INST_JSON="${1}"
     local ASSIGN="${2}"
-    local RESP
+    local RESP NEW_RHS
 
     local LHS=$(sed -E 's/[[:space:]]*=.*$//' <<<"${ASSIGN}" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')
     local RHS=$(sed -E 's/^.*=[[:space:]]*//' <<<"${ASSIGN}" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g' | sed -E 's/;$//')
 
     [[ -z "${LHS}" || -z "${RHS}" ]] && { log "update: invalid assign '${ASSIGN}'" warning; return 1; }
 
-    local JQ_EXPR=".$LHS = \$val"
+    local JQ_EXPR=".${LHS} = \$val"
 
     local PAYLOAD=$(jq -c '
         {
@@ -351,6 +446,13 @@ action_start() {
             config: (.config // {})
         }
     ' <<<"${INST_JSON}")
+
+	if ! NEW_RHS="$(resolve_default_config "${RHS}")"; then
+		log "default_config key '${RHS}' not found in defaults" f_error
+		return 1
+	fi
+
+	RHS="${NEW_RHS}"
 
     if printf '%s' "${RHS}" | jq -e . >/dev/null 2>&1; then
         if ! PAYLOAD=$(jq -c --argjson val "${RHS}" "${JQ_EXPR}" <<<"${INST_JSON}"); then
@@ -378,7 +480,7 @@ action_start() {
             return 0
         else
             log "Start failed for instance ${ID}" f_error
-            log "${RESP}" data
+            log "${RESP}" f_data
             return 1
         fi
     fi
@@ -389,23 +491,19 @@ action_delete() {
     local ASSIGN="${2}"
     local FILENAME WAY FILE_OBJ MATCHES BYTES HEX RESP
 
-    if [[ "${ASSIGN}" == *"watchfile"* ]] && [[ "${ASSIGN}" == *"fileonly"* ]] ; then
-        log "You can't set watchfile and fileonly at same time" f_warning
-        return 1
-    fi
-
     if [[ "${ASSIGN}" == *"instance"* ]]; then
         local ID=$(jq -r '.id // empty' <<<"${INST_JSON}")
         if RESP="$(rustatio_delete_instance "${ID}" 2>&1)"; then
             log "Delete succeeded for ID='${ID}'" f_succes
+			return 0
         else
             log "Failed to delete for ID='${ID}'" f_error
-            log "${RESP}" data
+            log "${RESP}" f_data
+			return 1
         fi
     fi
 
-    if [[ "${ASSIGN}" == *"watchfile"* ]] || [[ "${ASSIGN}" == *"fileonly"* ]] || [[ "${ASSIGN}" == *"archive"* ]]; then
-        # search by info_hash
+    if [[ "${ASSIGN}" == *"watchfile"* ]] || [[ "${ASSIGN}" == *"archive"* ]]; then
         BYTES=$(jq -r '.torrent.info_hash | map(tostring) | join(" ")' <<<"${INST_JSON}")
         HEX=$(bytes_to_hex "${BYTES}")
 
@@ -414,7 +512,7 @@ action_delete() {
             return 1
         fi
 
-        MATCHES=$(jq -r --arg h "${HEX}" '.data[] | select(.info_hash == $h) | {filename: (.filename // ""), path: (.path // "/torrents")} | @base64' <<<"${FILES_JSON_GLOBAL}")
+        MATCHES=$(jq -r --arg h "${HEX}" '.data[] | select(.info_hash == $h) | {filename: (.filename // ""), path: (.path // "/torrents")} | @base64' <<<"${FILES_JSON}")
 
         if [[ -z "${MATCHES}" ]]; then
             log "No file found for info_hash=${HEX}" f_warning
@@ -430,14 +528,17 @@ action_delete() {
                 if [[ ! -e "${ARCHIVE_FOLDER}/${FILENAME}" ]]; then
                     if [[ "${DRY_RUN}" = true ]]; then
                         log "Would archive file '${FILENAME}' at '${WAY}'" f_recycle
+						return 0
                     else
                         mkdir -p "${ARCHIVE_FOLDER}"
 
                         if RESP=$(cp -f -- "${WAY}" "${ARCHIVE_FOLDER}/${FILENAME}" 2>&1); then
                             log "Torrent archived ${ARCHIVE_FOLDER}/${FILENAME}" f_succes
+							return 0
                         else
                             log "Failed to archive ${WAY}" f_error
-                            log "${RESP}" data
+                            log "${RESP}" f_data
+							return 1
                         fi
                     fi
                 fi
@@ -446,12 +547,15 @@ action_delete() {
             if [[ "${ASSIGN}" == *"watchfile"* ]]; then
                 if [[ "${DRY_RUN}" = true ]]; then
                     log "Would delete file '${FILENAME}' at '${WAY}'" f_recycle
+					return 0
                 else
                     if RESP="$(rustatio_delete_file "${FILENAME}" 2>&1)"; then
                         log "Delete succeeded for watchfile='${FILENAME}'" f_succes
+						return 0
                     else
                         log "Failed to delete for watchfile='${FILENAME}'" f_error
-                        log "${RESP}" data
+                        log "${RESP}" f_data
+						return 1
                     fi
                 fi
             fi
@@ -466,9 +570,8 @@ action_addtags() {
     local RESP TAGS_JSON EXISTING_TAGS_JSON NEW_TAGS_JSON PAYLOAD
 
     ID="$(jq -r '.id // empty' <<<"${INST_JSON}")"
-    IFS=',' read -r -a TAGS_ARRAY <<< "${ASSIGN}"
-
-    TAGS_JSON=$(printf '%s\n' "${TAGS_ARRAY[@]}" | jq -R . | jq -s -c .)
+   
+	TAGS_JSON=$(jq -Rn --arg assign "${ASSIGN}" '($assign | split(",") | map(select(length>0)))')
 
     EXISTING_TAGS_JSON=$(jq -c '.tags // []' <<<"${INST_JSON}")
 
@@ -484,6 +587,7 @@ action_addtags() {
 
     if [[ "${DRY_RUN}" = true ]]; then
         log "Would add tags to ID='${ID}' TAGS='${PAYLOAD}'" f_recycle
+		return 0
     else
         if RESP="$(rustatio_tags "${PAYLOAD}" 2>&1)"; then
             printf '%s' "${PAYLOAD}"
@@ -503,9 +607,8 @@ action_removetags() {
     local RESP TAGS_JSON EXISTING_TAGS_JSON DEL_TAGS_JSON PAYLOAD
 
     ID="$(jq -r '.id // empty' <<<"${INST_JSON}")"
-    IFS=',' read -r -a TAGS_ARRAY <<< "${ASSIGN}"
 
-    TAGS_JSON=$(printf '%s\n' "${TAGS_ARRAY[@]}" | jq -R . | jq -s -c .)
+    TAGS_JSON=$(jq -Rn --arg assign "${ASSIGN}" '($assign | split(",") | map(select(length>0)))')
 
     EXISTING_TAGS_JSON=$(jq -c '.tags // []' <<<"${INST_JSON}")
 
@@ -521,6 +624,7 @@ action_removetags() {
 
     if [[ "${DRY_RUN}" = true ]]; then
         log "Would remove tags from ID='${ID}' TAGS='${PAYLOAD}'" f_recycle
+		return 0
     else
         if RESP="$(rustatio_tags "${PAYLOAD}" 2>&1)"; then
             printf '%s' "${PAYLOAD}"
@@ -583,22 +687,26 @@ run_action_for_instance() {
 }
 
 process_rules() {
-    local INSTANCES_JSON="$(rustatio_get_instances)" || { log "${INSTANCES_JSON}"; }
+	local JQCOND UPDATED_OUT RET
 
-    if ! is_valid_json "${INSTANCES_JSON}"; then
+    local INSTANCES_JSON="$(rustatio_get_instances)"
+	RET=$?
+    if ! is_valid_json "${INSTANCES_JSON}" && (( RET != 0 )); then
         log "INSTANCES_JSON invalid or non-JSON" error
+		log "${INSTANCES_JSON}" f_data
         return 1
     fi
 
-    local FILES_JSON="$(rustatio_get_files)" || { log "${FILES_JSON}"; }
-    if ! is_valid_json "${FILES_JSON}"; then
+    FILES_JSON="$(rustatio_get_files)"
+	RET=$?
+    if ! is_valid_json "${FILES_JSON}" && (( RET != 0 )); then
         log "FILES_JSON invalid or non-JSON" error
+		log "${FILES_JSON}" f_data
         return 1
     fi
-
-    FILES_JSON_GLOBAL="${FILES_JSON}"
 
     #local RULES_TEXT="$(load_rules_file "${RULES_FILE}")"
+	#load_defaults_file "${DEFAULTS_FILE}"
 
     while IFS= read -r LINE || [[ -n "${LINE}" ]]; do
         [[ -z "${LINE//[[:space:]]/}" ]] && continue
@@ -611,11 +719,17 @@ process_rules() {
         fi
         IFS=$'\x1F' read -r COND ACTION ASSIGN <<<"${PARSED}"
 
-        JQCOND="$(cond_to_jq "${COND}")"
-        if [[ -z "${JQCOND}" ]]; then
-            log "Unable to convert condition: ${COND}" error
-            continue
-        fi
+		JQCOND="$(cond_to_jq "${COND}")"
+		RET=$?
+
+		if (( RET != 0 )) || [[ -z "${JQCOND//[[:space:]]/}" ]]; then
+			if (( RET != 0 )); then
+				log "Invalid rule: ${LINE}" warning
+				echo "${JQCOND}"
+			fi
+
+			continue
+		fi
 
         mapfile -t MATCHES < <(jq -c ".data[] | select(${JQCOND})" <<<"${INSTANCES_JSON}")
         if [[ "${#MATCHES[@]}" -eq 0 ]]; then
@@ -625,86 +739,89 @@ process_rules() {
         for INST in "${MATCHES[@]}"; do
             local ID=$(jq -r '.id // empty' <<<"${INST}")
             local STATE=$(jq -r '.stats.state // empty' <<<"${INST}")
-			
+
 			if ! is_action_valid "${ACTION}" "${STATE}"; then
 				continue
 			fi
-			
-			local UPDATED_OUT="$(run_action_for_instance "${ACTION}" "${INST}" "${ASSIGN}" 2>/dev/null || printf '')"
 
-            if [[ -z "${UPDATED_OUT//[[:space:]]/}" ]]; then
-                continue
-            fi
+			UPDATED_OUT="$(run_action_for_instance "${ACTION}" "${INST}" "${ASSIGN}")"
+			RET=$?
 
-			if is_valid_json "${UPDATED_OUT}" && is_valid_json "${INST}"; then
+			if [[ -n "${UPDATED_OUT//[[:space:]]/}" ]]; then
 				log "ID: ${ID} => Rule applied: ${LINE}" task
 
-				if [[ "${ACTION}" == "update" ]]; then
-					NEW_INST=$(jq --argjson cfg "${UPDATED_OUT}" '.config = $cfg' <<<"${INST}")
+				if is_valid_json "${UPDATED_OUT}" && is_valid_json "${INST}"; then
+					if [[ "${ACTION}" == "update" ]]; then
+						NEW_INST=$(jq --argjson cfg "${UPDATED_OUT}" '.config = $cfg' <<<"${INST}")
 
-					log "Patch succeeded for instance ${ID}" f_succes
+						log "Patch succeeded for instance ${ID}" f_succes
+					fi
+
+					if [[ "${ACTION}" == "stop" ]]; then
+						NEW_INST=$(
+						  jq \
+							--argjson cfg "${UPDATED_OUT}" \
+							'.stats = $cfg
+							 | .stats.state = "Stopped"' <<< "${INST}"
+						)
+
+						log "Stop succeeded for instance ${ID}" f_succes
+					fi
+
+					if [[ "${ACTION}" == "start" ]]; then
+						NEW_INST=$(
+						  jq \
+							--argjson cfg "${UPDATED_OUT}" \
+							'.stats = $cfg
+							 | .stats.state = "Running"' <<< "${INST}"
+						)
+
+						log "Start succeeded for instance ${ID}" f_succes
+					fi
+
+					if [[ "${ACTION}" == "addtags" ]] || [[ "${ACTION}" == "removetags" ]]; then
+						NEW_INST=$(jq -n --argjson inst "${INST}" --argjson p "${UPDATED_OUT}" \
+							'($inst) as $i | $i | .tags = (
+							((($i.tags // []) + ($p.add_tags // [])) | unique)
+							| map(. as $t | select((($p.remove_tags // []) | index($t)) | not))
+							)')
+
+						log "Tags applied for instance for ID='${ID}'" f_succes
+					fi
+
+					INSTANCES_JSON=$(jq --arg id "${ID}" --argjson new "${NEW_INST}" \
+						'.data |= map(if .id == $id then $new else . end) | .' <<<"${INSTANCES_JSON}")
+
+					INST=$(jq -c '.data[] | select(.id == "'"${ID}"'")' <<<"${INSTANCES_JSON}")
+				else
+					if (( RET == 0 )) && [[ "${ACTION}" == "delete" ]]; then
+						if [[ "${ASSIGN}" == *"watchfile"* ]]; then
+							INSTANCES_JSON=$(
+								jq --arg id "${ID}" \
+								   '.data |= map(select(.id != $id))' \
+								   <<< "${INSTANCES_JSON}"
+							)
+							INST=""
+						fi
+					fi
+
+					echo "${UPDATED_OUT}"
 				fi
 
-				if [[ "${ACTION}" == "stop" ]]; then
-					NEW_INST=$(
-					  jq \
-						--argjson cfg "${UPDATED_OUT}" \
-						'.stats = $cfg
-						 | .stats.state = "Stopped"' <<< "${INST}"
-					)
-
-					log "Stop succeeded for instance ${ID}" f_succes
-				fi
-
-				if [[ "${ACTION}" == "start" ]]; then
-					NEW_INST=$(
-					  jq \
-						--argjson cfg "${UPDATED_OUT}" \
-						'.stats = $cfg
-						 | .stats.state = "Running"' <<< "${INST}"
-					)
-
-					log "Start succeeded for instance ${ID}" f_succes
-				fi
-
-				if [[ "${ACTION}" == "addtags" ]] || [[ "${ACTION}" == "removetags" ]]; then
-					NEW_INST=$(jq -n --argjson inst "${INST}" --argjson p "${UPDATED_OUT}" \
-						'($inst) as $i | $i | .tags = (
-						((($i.tags // []) + ($p.add_tags // [])) | unique)
-						| map(select(($p.remove_tags // []) | index(.) | not))
-						)')
-
-					log "Tags applied for instance for ID='${ID}'" f_succes
-				fi
-
-				INSTANCES_JSON=$(jq --arg id "${ID}" --argjson new "${NEW_INST}" \
-					'.data |= map(if .id == $id then $new else . end) | .' <<<"${INSTANCES_JSON}")
-
-				INST=$(jq -c '.data[] | select(.id == "'"${ID}"'")' <<<"${INSTANCES_JSON}")
-			else
-				if [[ "${ACTION}" == "delete" ]]; then
-					log "ID: ${ID} => Rule applied: ${LINE}" task
-					INSTANCES_JSON=$(
-						jq --arg id "${ID}" \
-						   '.data |= map(select(.id != $id))' \
-						   <<< "${INSTANCES_JSON}"
-					)
-					INST=""
-				fi
-
-				echo "${UPDATED_OUT}"
-            fi
-
-            sleep 1
+				sleep 1
+			fi
         done
     done <<<"${RULES_TEXT}"
 }
 
 run_loop() {
-    log "Loading rules" start
-    RULES_TEXT="$(load_rules_file "${RULES_FILE}")"
+	RULES_TEXT=""
+	GLOBAL_DEFAULTS_JSON="{}"
     INITIAL_INTERVAL=5
     REFRESH_INTERVAL=$(( REFRESH_INTERVAL - INITIAL_INTERVAL ))
+
+    load_rules_file "${RULES_FILE}"
+	load_defaults_file "${DEFAULTS_FILE}"
 
     if [[ ${REFRESH_INTERVAL} -lt 5 ]]; then
         REFRESH_INTERVAL=0
@@ -717,8 +834,8 @@ run_loop() {
                 touch "${LOGFILE}"
                 exec >> "${LOGFILE}" 2>&1
                 log "Log recreated automatically" start
-                log "Reloading rules" start
-                RULES_TEXT="$(load_rules_file "${RULES_FILE}")"
+                load_rules_file "${RULES_FILE}"
+				load_defaults_file "${DEFAULTS_FILE}"
             fi
         fi
         process_rules
@@ -739,6 +856,7 @@ if [[ -n "${RUSTATIO_API}" ]]; then
     REFRESH_INTERVAL='${REFRESH_INTERVAL}';
     ARCHIVE_FOLDER='${ARCHIVE_FOLDER}';
     RULES_FILE='${RULES_FILE}';
+	DEFAULTS_FILE='${DEFAULTS_FILE}'
     DRY_RUN='${DRY_RUN}';
     LOGFILE='${LOGFILE}';
     $(declare -f);
@@ -864,5 +982,46 @@ fi
 		}
 	]
 }
+'
 
+: '
+{
+	"instances": {},
+	"default_config": {
+		"upload_rate": 5000.0,
+		"download_rate": 0.0,
+		"port": 6881,
+		"vpn_port_sync": false,
+		"client_type": "transmission",
+		"client_version": null,
+		"initial_uploaded": 0,
+		"initial_downloaded": 0,
+		"completion_percent": 100.0,
+		"num_want": 50,
+		"randomize_rates": true,
+		"random_range_percent": 10.0,
+		"randomize_ratio": false,
+		"random_ratio_range_percent": 10.0,
+		"stop_at_ratio": null,
+		"effective_stop_at_ratio": null,
+		"stop_at_uploaded": null,
+		"stop_at_downloaded": null,
+		"stop_at_seed_time": null,
+		"idle_when_no_leechers": false,
+		"idle_when_no_seeders": false,
+		"scrape_interval": 60,
+		"progressive_rates": false,
+		"target_upload_rate": null,
+		"target_download_rate": null,
+		"progressive_duration": 3600,
+		"post_stop_action": "idle"
+	},
+	"default_preset": null,
+	"watch_settings": {
+		"max_depth": 1,
+		"auto_start": true
+	},
+	"custom_presets": [],
+	"version": 1
+}
 '
