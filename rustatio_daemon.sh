@@ -100,7 +100,7 @@ bytes_to_hex() {
     printf '%s' "${HEX}"
 }
 
-rustatio_api_request() (
+rustatio_api_request() {
     set +e
     local WAY="${1}"
     local PAYLOAD="${2}"
@@ -114,41 +114,41 @@ rustatio_api_request() (
     while (( ATTEMPT <= MAX_RETRIES )); do
         if [ -z "${PAYLOAD}" ]; then
             RESPONSE=$(curl --fail -S -s -X ${METHOD} "${RUSTATIO_API}/${WAY}" \
-                    -H "Accept: application/json")
+                    -H "Accept: application/json" 2>&1)
             CURL_EXIT=$?
         else
             RESPONSE=$(printf '%s' "${PAYLOAD}" | \
                 curl --fail -S -s -X ${METHOD} "${RUSTATIO_API}/${WAY}" \
                     -H "Content-Type: application/json" \
                     -H "Accept: application/json" \
-                    --data-binary @-)
+                    --data-binary @- 2>&1)
             CURL_EXIT=$?
         fi
 
         if [ ${CURL_EXIT} -eq 0 ]; then
-            set -e
             if is_valid_json "${RESPONSE}"; then
                 if jq -e -c '.success == true' <<< "${RESPONSE}" >/dev/null 2>&1; then
                     if jq -e -c '(.data and .data != {} and .data != []) or (.stats and .stats != {}) or (.config and .config != {})' <<< "${RESPONSE}" >/dev/null 2>&1; then
                         printf '%s\n' "${RESPONSE}"
                     fi
+
+					set -e
                     return 0;
                 fi
             fi
 
-            log "Error" ff_error
-            printf '%s\n' "${RESPONSE}"
-            return 1
+            log "${RESPONSE}" f_error
+			return 1
         fi
-        log "Attempt ${ATTEMPT} failed (curl exit ${CURL_EXIT}). Retrying in 2 seconds..." ff_error
+        log "Attempt ${ATTEMPT} failed (curl exit ${CURL_EXIT}). Retrying in 2 seconds..." f_error
         sleep 2
         (( ATTEMPT++ ))
     done
 
-    log "Failed to ${METHOD} ${WAY} after ${MAX_RETRIES} attempts. Last curl exit: ${CURL_EXIT}" ff_error
+    log "Failed to ${METHOD} ${WAY} after ${MAX_RETRIES} attempts. Last curl exit: ${CURL_EXIT}" f_error
     set -e
     return 1
-)
+}
 
 # --- Rustatio convenience wrappers ---
 rustatio_get_instances() {
@@ -693,7 +693,7 @@ process_rules() {
 	RET=$?
     if ! is_valid_json "${INSTANCES_JSON}" && (( RET != 0 )); then
         log "INSTANCES_JSON invalid or non-JSON" error
-		log "${INSTANCES_JSON}" f_data
+		echo "${INSTANCES_JSON}"
         return 1
     fi
 
@@ -701,7 +701,7 @@ process_rules() {
 	RET=$?
     if ! is_valid_json "${FILES_JSON}" && (( RET != 0 )); then
         log "FILES_JSON invalid or non-JSON" error
-		log "${FILES_JSON}" f_data
+		echo "${FILES_JSON}"
         return 1
     fi
 
