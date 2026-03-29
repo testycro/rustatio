@@ -269,11 +269,31 @@ validate_rule_keys() {
     local EXPR="${1:-}"
     local SAMPLE_INST="$(printf '%s' "${2}" | base64 -d)"
     local INST_KEYS=()
-    local VAL JQERR DEFAULT_KEYS RAW_KEYS PARTS JQ_ARRAY
+    local VAL JQERR DEFAULT_KEYS RAW_KEYS PARTS JQ_ARRAY JQ_EXPR PREFIX P
 
-	if is_valid_json "${GLOBAL_DEFAULTS_JSON}" && [[ "${GLOBAL_DEFAULTS_JSON}" != "{}" ]]; then
-		mapfile -t DEFAULT_KEYS < <(grep -oE 'default_config\.([A-Za-z0-9_\.]+)' <<<"${EXPR}" | sed 's/^default_config\.//' | sort -u)
-		for K in "${DEFAULT_KEYS[@]}"; do
+	mapfile -t RAW_KEYS < <(grep -oE 'default_config\.([A-Za-z0-9_\.]+)' <<<"${EXPR}" | sed 's/^default_config\.//' | sort -u)
+
+	for K in "${RAW_KEYS[@]}"; do
+		INST_KEYS+=("${K}")
+	done
+
+	for K in "${INST_KEYS[@]}"; do
+	    IFS='.' read -r -a PARTS <<< "${K}"
+
+		JQ_EXPR=""
+		PREFIX=""
+		for I in "${!PARTS[@]}"; do
+			P="${PARTS[I]//\"/\\\"}"
+			if [[ ${I} -eq 0 ]]; then
+				JQ_EXPR="has(\"${P}\")"
+				PREFIX=".${P}"
+			else
+				JQ_EXPR+=" and (${PREFIX} | has(\"${P}\"))"
+				PREFIX+=".${P}"
+			fi
+		done
+
+		if ! jq -e "${JQ_EXPR}" <<<"${GLOBAL_DEFAULTS_JSON}" >/dev/null 2>&1; then
 			read -r -a PARTS <<< "$(sed 's/\./ /g' <<<"${K}")"
 			JQ_ARRAY=$(printf '"%s",' "${PARTS[@]}" | sed 's/,$//')
 			VAL="$(jq -c "getpath([${JQ_ARRAY}]) // \"__MISSING__\"" <<<"${GLOBAL_DEFAULTS_JSON}" 2>/dev/null || echo null)"
@@ -281,29 +301,33 @@ validate_rule_keys() {
 				log "default_config key 'default_config.${K}' not found in defaults" f_error
 				return 1
 			fi
-		done
-	fi
+		fi
+	done
 
-	if is_valid_json "${SAMPLE_INST}" && [[ "${SAMPLE_INST}" != "{}" ]]; then
-		mapfile -t RAW_KEYS < <(grep -oE '([A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+)' <<<"${EXPR}" | sort -u | grep -v '^default_config\.')
+	INST_KEYS=()
+	mapfile -t RAW_KEYS < <(grep -oE '([A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+)' <<<"${EXPR}" | sort -u | grep -v '^default_config\.')
 
-		for K in "${RAW_KEYS[@]}"; do
-			INST_KEYS+=("${K}")
-		done
+	for K in "${RAW_KEYS[@]}"; do
+		INST_KEYS+=("${K}")
+	done
 
-		for K in "${INST_KEYS[@]}"; do
-			if [[ "${K}" == "stats.is_idling" || "${K}" == "stats.idling_reason" ]]; then
-				if ! jq -e 'has("stats") and (.stats | has("is_idling"))' <<<"${SAMPLE_INST}" >/dev/null 2>&1 && [[ "${K}" == "stats.is_idling" ]]; then
-					log "Instance key '${K}' not found in Instance" f_error
-					return 1
-				fi
-				if ! jq -e 'has("stats") and (.stats | has("idling_reason"))' <<<"${SAMPLE_INST}" >/dev/null 2>&1 && [[ "${K}" == "stats.idling_reason" ]]; then
-					log "Instance key '${K}' not found in Instance" f_error
-					return 1
-				fi
-				continue
+	for K in "${INST_KEYS[@]}"; do
+	    IFS='.' read -r -a PARTS <<< "${K}"
+
+		JQ_EXPR=""
+		PREFIX=""
+		for I in "${!PARTS[@]}"; do
+			P="${PARTS[I]//\"/\\\"}"
+			if [[ ${I} -eq 0 ]]; then
+				JQ_EXPR="has(\"${P}\")"
+				PREFIX=".${P}"
+			else
+				JQ_EXPR+=" and (${PREFIX} | has(\"${P}\"))"
+				PREFIX+=".${P}"
 			fi
+		done
 
+		if ! jq -e "${JQ_EXPR}" <<<"${SAMPLE_INST}" >/dev/null 2>&1; then
 			read -r -a PARTS <<< "$(sed 's/\./ /g' <<<"${K}")"
 			JQ_ARRAY=$(printf '"%s",' "${PARTS[@]}" | sed 's/,$//')
 			VAL="$(jq -c "getpath([${JQ_ARRAY}]) // \"__MISSING__\"" <<<"${SAMPLE_INST}" 2>/dev/null || echo null)"
@@ -311,8 +335,8 @@ validate_rule_keys() {
 				log "Instance key '${K}' not found in Instance" f_error
 				return 1
 			fi
-		done
-	fi
+		fi
+	done
 
     return 0
 }
@@ -383,11 +407,11 @@ cond_to_jq() {
     -e 's#([a-zA-Z0-9_.]+)[[:space:]]*=[[:space:]]*\"([^\"]+)\"#((.\1 // \"\") | tostring) == \"\2\"#g' \
     -e 's#([a-zA-Z0-9_.]+)[[:space:]]*=[[:space:]]*([A-Za-z0-9_@./:-]+)#((.\1 // \"\") | tostring) == \"\2\"#g')"
 
-	mapfile -t KEYS < <(grep -oE 'default_config\.([A-Za-z0-9_\.]+)' <<<"${EXPR}" | sed 's/^default_config\.//' | sort -u)
+	mapfile -t KEYS < <(grep -oE 'default_config\.([A-Za-z0-9_\.]+)' <<<"${EXPR}" | sort -u)
 
 	for KEY in "${KEYS[@]}"; do
-		VAL="$(jq -c --arg k "${KEY}" '.[$k] // "__MISSING__"' <<<"${GLOBAL_DEFAULTS_JSON}" 2>/dev/null || echo null)"
-		EXPR="${EXPR//default_config.${KEY}/${VAL}}"
+		VAL="$(resolve_default_config "${KEY}")"
+		EXPR="${EXPR//${KEY}/${VAL}}"
 	done
 
     printf '%s' "${EXPR}"
@@ -407,7 +431,7 @@ action_stop() {
             printf '%s' "${PAYLOAD}"
             return 0
         else
-            log "Stop failed for instance ${ID}" f_error
+            log "Stop failed" f_error
             log "${RESP}"
             return 1
         fi
@@ -467,7 +491,7 @@ action_update() {
             printf '%s' "${PAYLOAD}"
             return 0
         else
-            log "Patch failed for instance ${ID}" f_error
+            log "Patch failed" f_error
             log "${RESP}" f_data
             return 1
         fi
@@ -525,7 +549,7 @@ action_start() {
             printf '%s' "${PAYLOAD}"
             return 0
         else
-            log "Start failed for instance ${ID}" f_error
+            log "Start failed" f_error
             log "${RESP}" f_data
             return 1
         fi
@@ -540,10 +564,10 @@ action_delete() {
     if [[ "${ASSIGN}" == *"instance"* ]]; then
         ID=$(jq -r '.id // empty' <<<"${INST_JSON}")
         if RESP="$(rustatio_delete_instance "${ID}" 2>&1)"; then
-            log "Delete succeeded for ID='${ID}'" f_succes
+            log "Delete succeeded" f_succes
 			return 0
         else
-            log "Failed to delete for ID='${ID}'" f_error
+            log "Failed to delete" f_error
             log "${RESP}" f_data
 			return 1
         fi
@@ -596,10 +620,10 @@ action_delete() {
 					return 0
                 else
                     if RESP="$(rustatio_delete_file "${FILENAME}" 2>&1)"; then
-                        log "Delete succeeded for watchfile='${FILENAME}'" f_succes
+                        log "Delete succeeded" f_succes
 						return 0
                     else
-                        log "Failed to delete for watchfile='${FILENAME}'" f_error
+                        log "Failed to delete" f_error
                         log "${RESP}" f_data
 						return 1
                     fi
@@ -733,7 +757,7 @@ run_action_for_instance() {
 }
 
 process_rules() {
-	local JQCOND UPDATED_OUT RET INSTANCES_JSON SAMPLE_INST
+	local JQCOND UPDATED_OUT RET INSTANCES_JSON SAMPLE_INST VAL_RET
 
     INSTANCES_JSON="$(rustatio_get_instances)"
 	RET=$?
@@ -754,6 +778,15 @@ process_rules() {
     #local RULES_TEXT="$(load_rules_file "${RULES_FILE}")"
 	#load_defaults_file "${DEFAULTS_FILE}"
 
+	SAMPLE_INST="$(jq -c '.data[0] // {}' <<<"${INSTANCES_JSON}")"
+	if ! is_valid_json "${GLOBAL_DEFAULTS_JSON}" \
+	   || [[ "${GLOBAL_DEFAULTS_JSON}" == "{}" ]] \
+	   || ! is_valid_json "${SAMPLE_INST}" \
+	   || [[ "${SAMPLE_INST}" == "{}" ]]
+	then
+		return 1
+	fi
+
     while IFS= read -r LINE || [[ -n "${LINE}" ]]; do
         [[ -z "${LINE//[[:space:]]/}" ]] && continue
         [[ "${LINE}" =~ ^[[:space:]]*# ]] && continue
@@ -765,11 +798,11 @@ process_rules() {
         fi
 
 		SAMPLE_INST="$(jq -c '.data[0] // {}' <<<"${INSTANCES_JSON}" | base64 -w0)"
-		SAMPLE_INST="$(validate_rule_keys "${LINE}" "${SAMPLE_INST}")"
+		VAL_RET="$(validate_rule_keys "${LINE}" "${SAMPLE_INST}")"
 		RET=$?
 		if (( RET != 0 )); then
 			log "Invalid rule: ${LINE}" denied
-			echo "${SAMPLE_INST}"
+			echo "${VAL_RET}"
 			continue
 		fi
 
@@ -785,8 +818,6 @@ process_rules() {
 
 			continue
 		fi
-		
-		#log "${JQCOND}"
 
         mapfile -t MATCHES < <(jq -c ".data[] | select(${JQCOND})" <<<"${INSTANCES_JSON}")
         if [[ "${#MATCHES[@]}" -eq 0 ]]; then
@@ -794,9 +825,10 @@ process_rules() {
         fi
 
         for INST in "${MATCHES[@]}"; do
-			local ID STATE
+			local ID NAME STATE
 
-            ID=$(jq -r '.id // empty' <<<"${INST}")
+			ID=$(jq -r '.id // empty' <<<"${INST}")
+            NAME=$(jq -r '.torrent.name // empty' <<<"${INST}")
             STATE=$(jq -r '.stats.state // empty' <<<"${INST}")
 
 			if ! is_action_valid "${ACTION}" "${STATE}"; then
@@ -807,13 +839,14 @@ process_rules() {
 			RET=$?
 
 			if [[ -n "${UPDATED_OUT//[[:space:]]/}" ]]; then
-				log "ID: ${ID} => Rule applied: ${LINE}" task
+				log "Rule applied: ${LINE}" task
+				log "Torrent name : ${NAME}" f_data
 
 				if is_valid_json "${UPDATED_OUT}" && is_valid_json "${INST}"; then
 					if [[ "${ACTION}" == "update" ]]; then
 						NEW_INST=$(jq --argjson cfg "${UPDATED_OUT}" '.config = $cfg' <<<"${INST}")
 
-						log "Patch succeeded for instance ${ID}" f_succes
+						log "Patch succeeded" f_succes
 					fi
 
 					if [[ "${ACTION}" == "stop" ]]; then
@@ -824,7 +857,7 @@ process_rules() {
 							 | .stats.state = "Stopped"' <<< "${INST}"
 						)
 
-						log "Stop succeeded for instance ${ID}" f_succes
+						log "Stop succeeded" f_succes
 					fi
 
 					if [[ "${ACTION}" == "start" ]]; then
@@ -835,7 +868,7 @@ process_rules() {
 							 | .stats.state = "Running"' <<< "${INST}"
 						)
 
-						log "Start succeeded for instance ${ID}" f_succes
+						log "Start succeeded" f_succes
 					fi
 
 					if [[ "${ACTION}" == "addtags" ]] || [[ "${ACTION}" == "removetags" ]]; then
@@ -845,7 +878,7 @@ process_rules() {
 							| map(. as $t | select((($p.remove_tags // []) | index($t)) | not))
 							)')
 
-						log "Tags applied for instance for ID='${ID}'" f_succes
+						log "Tags applied" f_succes
 					fi
 
 					INSTANCES_JSON=$(jq --arg id "${ID}" --argjson new "${NEW_INST}" \
