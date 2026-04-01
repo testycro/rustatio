@@ -8,9 +8,9 @@ BASE=$(basename "${0}")
 
 
 # Configuration (à adapter)
-RUSTATIO_API="http://127.0.0.1:8080/api"    # A adapter en gardan "/api"
+RUSTATIO_API="http://127.0.0.1:${PORT}/api" # A adapter en gardan "/api" seulement si le script est lancé en dehors du container de Rustatio
 
-REFRESH_INTERVAL=5                          # Temps d'attente en seconds entre chaques traitement des règles de rules_file. Minimum 5s 
+REFRESH_INTERVAL=5                          # Temps en seconds entre chaques traitement des règles de RULES_FILE. Minimum 5s => 0 pour utiliser Scrape Interval de la config par défault
 
 ARCHIVE_FOLDER="/data/archived"             # Chemin vers le dossier d'archivage des .torrent
 
@@ -224,11 +224,6 @@ load_defaults_file() {
     fi
 }
 
-normalize_default_ref() {
-    local S="${1}"
-    sed -E 's#(^|[^a-zA-Z0-9_])default_config\.#\1.default_config.#g' <<<"${S}"
-}
-
 _trim() { sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' <<<"${1}"; }
 
 parse_rule_line() {
@@ -266,77 +261,57 @@ resolve_default_config() {
 }
 
 validate_rule_keys() {
-    local EXPR="${1:-}"
-    local SAMPLE_INST="$(printf '%s' "${2}" | base64 -d)"
+    local EXPR="${1}"
+    local SAMPLE_INST="${2}"
+    local RAW_KEYS=()
     local INST_KEYS=()
-    local VAL JQERR DEFAULT_KEYS RAW_KEYS PARTS JQ_ARRAY JQ_EXPR PREFIX P
 
-	mapfile -t RAW_KEYS < <(grep -oE 'default_config\.([A-Za-z0-9_\.]+)' <<<"${EXPR}" | sed 's/^default_config\.//' | sort -u)
+    check_key_in_json() {
+        local KEY="${1}"
+        local SAMPLE_INST_JSON="$(printf '%s' "${2}" | base64 -d)"
+        local ERR_PREFIX="${3}"
+        local JQ_EXPR=""
+        local PREFIX=""
+		local P PARTS JQ_ARRAY VAL
 
-	for K in "${RAW_KEYS[@]}"; do
-		INST_KEYS+=("${K}")
-	done
+        IFS='.' read -r -a PARTS <<< "${KEY}"
 
-	for K in "${INST_KEYS[@]}"; do
-	    IFS='.' read -r -a PARTS <<< "${K}"
+        for I in "${!PARTS[@]}"; do
+            P="${PARTS[I]//\"/\\\"}"
+            if [[ ${I} -eq 0 ]]; then
+                JQ_EXPR="has(\"${P}\")"
+                PREFIX=".${P}"
+            else
+                JQ_EXPR+=" and (${PREFIX} | has(\"${P}\"))"
+                PREFIX+=".${P}"
+            fi
+        done
 
-		JQ_EXPR=""
-		PREFIX=""
-		for I in "${!PARTS[@]}"; do
-			P="${PARTS[I]//\"/\\\"}"
-			if [[ ${I} -eq 0 ]]; then
-				JQ_EXPR="has(\"${P}\")"
-				PREFIX=".${P}"
-			else
-				JQ_EXPR+=" and (${PREFIX} | has(\"${P}\"))"
-				PREFIX+=".${P}"
-			fi
-		done
+        if ! jq -e "${JQ_EXPR}" <<<"${SAMPLE_INST_JSON}" >/dev/null 2>&1; then
+            read -r -a PARTS <<< "$(sed 's/\./ /g' <<<"${KEY}")"
+            JQ_ARRAY=$(printf '"%s",' "${PARTS[@]}" | sed 's/,$//')
+            VAL="$(jq -c "getpath([${JQ_ARRAY}]) // \"__MISSING__\"" <<<"${SAMPLE_INST_JSON}" 2>/dev/null || echo null)"
+            if [[ "${VAL}" == '"__MISSING__"' ]]; then
+                log "${ERR_PREFIX}${KEY}' not found" f_error
+                return 1
+            fi
+        fi
+        return 0
+    }
 
-		if ! jq -e "${JQ_EXPR}" <<<"${GLOBAL_DEFAULTS_JSON}" >/dev/null 2>&1; then
-			read -r -a PARTS <<< "$(sed 's/\./ /g' <<<"${K}")"
-			JQ_ARRAY=$(printf '"%s",' "${PARTS[@]}" | sed 's/,$//')
-			VAL="$(jq -c "getpath([${JQ_ARRAY}]) // \"__MISSING__\"" <<<"${GLOBAL_DEFAULTS_JSON}" 2>/dev/null || echo null)"
-			if [[ "${VAL}" == '"__MISSING__"' ]]; then
-				log "default_config key 'default_config.${K}' not found in defaults" f_error
-				return 1
-			fi
-		fi
-	done
+    mapfile -t RAW_KEYS < <(grep -oE 'default_config\.([A-Za-z0-9_\.]+)' <<<"${EXPR}" | sed 's/^default_config\.//' | sort -u)
+    for K in "${RAW_KEYS[@]}"; do
+        if ! check_key_in_json "${K}" "$(printf '%s' "${GLOBAL_DEFAULTS_JSON}" | base64 -w0)" "default_config key 'default_config."; then
+            return 1
+        fi
+    done
 
-	INST_KEYS=()
-	mapfile -t RAW_KEYS < <(grep -oE '([A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+)' <<<"${EXPR}" | sort -u | grep -v '^default_config\.')
-
-	for K in "${RAW_KEYS[@]}"; do
-		INST_KEYS+=("${K}")
-	done
-
-	for K in "${INST_KEYS[@]}"; do
-	    IFS='.' read -r -a PARTS <<< "${K}"
-
-		JQ_EXPR=""
-		PREFIX=""
-		for I in "${!PARTS[@]}"; do
-			P="${PARTS[I]//\"/\\\"}"
-			if [[ ${I} -eq 0 ]]; then
-				JQ_EXPR="has(\"${P}\")"
-				PREFIX=".${P}"
-			else
-				JQ_EXPR+=" and (${PREFIX} | has(\"${P}\"))"
-				PREFIX+=".${P}"
-			fi
-		done
-
-		if ! jq -e "${JQ_EXPR}" <<<"${SAMPLE_INST}" >/dev/null 2>&1; then
-			read -r -a PARTS <<< "$(sed 's/\./ /g' <<<"${K}")"
-			JQ_ARRAY=$(printf '"%s",' "${PARTS[@]}" | sed 's/,$//')
-			VAL="$(jq -c "getpath([${JQ_ARRAY}]) // \"__MISSING__\"" <<<"${SAMPLE_INST}" 2>/dev/null || echo null)"
-			if [[ "${VAL}" == '"__MISSING__"' ]]; then
-				log "Instance key '${K}' not found in Instance" f_error
-				return 1
-			fi
-		fi
-	done
+    mapfile -t RAW_KEYS < <(grep -oE '([A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+)' <<<"${EXPR}" | sort -u | grep -v '^default_config\.')
+    for K in "${RAW_KEYS[@]}"; do
+        if ! check_key_in_json "${K}" "${SAMPLE_INST}" "Instance key '"; then
+            return 1
+        fi
+    done
 
     return 0
 }
@@ -910,14 +885,23 @@ run_loop() {
 	RULES_TEXT=""
 	GLOBAL_DEFAULTS_JSON="{}"
     INITIAL_INTERVAL=5
-    REFRESH_INTERVAL=$(( REFRESH_INTERVAL - INITIAL_INTERVAL ))
+	REFRESH_INTERVAL=$(( REFRESH_INTERVAL + 0 ))
 
     load_rules_file "${RULES_FILE}"
 	load_defaults_file "${DEFAULTS_FILE}"
 
-    if [[ ${REFRESH_INTERVAL} -lt 5 ]]; then
-        REFRESH_INTERVAL=0
-    fi
+	if is_valid_json "${GLOBAL_DEFAULTS_JSON}" && [[ "${GLOBAL_DEFAULTS_JSON}" != "{}" ]] && (( REFRESH_INTERVAL == 0 )); then
+		REFRESH_INTERVAL="$(resolve_default_config "default_config.scrape_interval")"
+		REFRESH_INTERVAL=$(( REFRESH_INTERVAL + 0 ))
+	fi
+
+	REFRESH_INTERVAL=$(( REFRESH_INTERVAL - INITIAL_INTERVAL ))
+
+	if (( REFRESH_INTERVAL <= 5 )); then
+		REFRESH_INTERVAL=0
+	fi
+
+	log "REFRESH INTERVAL : $(( REFRESH_INTERVAL + INITIAL_INTERVAL ))s" data
 
     while true; do
         sleep ${INITIAL_INTERVAL}
@@ -928,6 +912,19 @@ run_loop() {
                 log "Log recreated automatically" start
                 load_rules_file "${RULES_FILE}"
 				load_defaults_file "${DEFAULTS_FILE}"
+				if (( REFRESH_INTERVAL <= 5 )); then
+					REFRESH_INTERVAL=0
+				else
+					if is_valid_json "${GLOBAL_DEFAULTS_JSON}" && [[ "${GLOBAL_DEFAULTS_JSON}" != "{}" ]]; then
+						REFRESH_INTERVAL="$(resolve_default_config "default_config.scrape_interval")"
+						REFRESH_INTERVAL=$(( REFRESH_INTERVAL + 0 ))
+						REFRESH_INTERVAL=$(( REFRESH_INTERVAL - INITIAL_INTERVAL ))
+						if (( REFRESH_INTERVAL <= 5 )); then
+							REFRESH_INTERVAL=0
+						fi
+					fi
+				fi
+				log "REFRESH INTERVAL : $(( REFRESH_INTERVAL + INITIAL_INTERVAL ))s" data
             fi
         fi
         process_rules
