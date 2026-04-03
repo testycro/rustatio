@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-
 set -euo pipefail
 BASE=$(basename "${0}")
 
@@ -10,7 +9,7 @@ BASE=$(basename "${0}")
 # Configuration (à adapter)
 RUSTATIO_API="http://127.0.0.1:${PORT}/api" # A adapter en gardan "/api" seulement si le script est lancé en dehors du container de Rustatio
 
-REFRESH_INTERVAL=5                          # Temps en seconds entre chaques traitement des règles de RULES_FILE. Minimum 5s => 0 pour utiliser Scrape Interval de la config par défault
+REFRESH_INTERVAL=0                          # Temps en seconds entre chaques traitement des règles de RULES_FILE. Minimum 5s => 0 pour utiliser Scrape Interval de la config par défault
 
 ARCHIVE_FOLDER="/data/archived"             # Chemin vers le dossier d'archivage des .torrent
 
@@ -58,7 +57,8 @@ log() {
         default|*)  prefix="${prefix}";;
     esac
 
-    echo "${log_time} :: ${prefix}${message}"
+    #echo "${log_time} :: ${prefix}${message}"
+	printf '%s\n' "${log_time} :: ${prefix}${message}" >> "${LOGFILE}"
 }
 
 cleanup() {
@@ -316,28 +316,61 @@ validate_rule_keys() {
     return 0
 }
 
+get_cached_rand() {
+    local KEY="${1}"
+    local NOW TS VAL
+
+    NOW=$(date +%s)
+
+    TS=$(jq -r --arg k "${KEY}" '.ts[$k] // 0' <<<"${RAND_CACHE_JSON}")
+    if [[ "$TS" =~ ^[0-9]+$ ]] && (( NOW - TS < RAND_TTL )); then
+        VAL=$(jq -r --arg k "${KEY}" '.vals[$k] // empty' <<<"${RAND_CACHE_JSON}")
+        if [[ -n "${VAL}" ]]; then
+            printf '%s' "${VAL}"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+set_cached_rand() {
+    local KEY="${1}"
+    local VAL="${2}"
+    local NOW
+    NOW=$(date +%s)
+
+    # mettre à jour vals et ts dans le JSON en mémoire
+    RAND_CACHE_JSON=$(jq -c --arg k "${KEY}" --arg v "${VAL}" --argjson t "${NOW}" \
+        '.vals[$k] = $v | .ts[$k] = ($t|tonumber)' <<<"${RAND_CACHE_JSON}")
+}
+
 cond_to_jq() {
     local EXPR="${1}"
+	local VAL RAND KEY KEYS FULL_MATCH WAY A B
 
     EXPR="$(echo "${EXPR}" | sed -E 's/\bAND\b/ and /g; s/\bOR\b/ or /g')"
 
     local RANGE_REGEX='([A-Za-z0-9_.]+):[[:space:]]*([0-9]+(\.[0-9]+)?) *- *([0-9]+(\.[0-9]+)?)'
     while [[ ${EXPR} =~ ${RANGE_REGEX} ]]; do
-        local FULL_MATCH="${BASH_REMATCH[0]}"
-        local WAY="${BASH_REMATCH[1]}"
-        local a="${BASH_REMATCH[2]}"
-        local b="${BASH_REMATCH[4]}"
+        FULL_MATCH="${BASH_REMATCH[0]}"
+        WAY="${BASH_REMATCH[1]}"
+        A="${BASH_REMATCH[2]}"
+        B="${BASH_REMATCH[4]}"
 
-        local rand
-        rand="$(awk -v a="$a" -v b="$b" 'BEGIN {
-            if (a == b) { printf("%.2f", a); exit }
-            if (a > b) { t = a; a = b; b = t }
-            srand(systime() + PROCINFO["pid"])
-            r = a + rand() * (b - a)
-            printf("%.2f", r)
-        }')"
+		KEY="$(printf "%s" "${KEY}" | sha256sum | awk '{print $1}' | cut -c1-8)"
+		if ! RAND="$(get_cached_rand "${KEY}")"; then
+			RAND="$(awk -v a="${A}" -v b="${B}" 'BEGIN {
+				if (a == b) { printf("%.2f", a); exit }
+				if (a > b) { t = a; a = b; b = t }
+				srand(systime() + PROCINFO["pid"])
+				r = a + rand() * (b - a)
+				printf("%.2f", r)
+			}')"
 
-        EXPR="${EXPR/"${FULL_MATCH}"/((.${WAY} // 0) | tonumber) > ${rand}}"
+			set_cached_rand "${KEY}" "${RAND}"
+		fi
+
+        EXPR="${EXPR/"${FULL_MATCH}"/((.${WAY} // 0) | tonumber) > ${RAND}}"
     done
 
     EXPR="$(echo "${EXPR}" | sed -E \
@@ -389,7 +422,8 @@ cond_to_jq() {
 		EXPR="${EXPR//${KEY}/${VAL}}"
 	done
 
-    printf '%s' "${EXPR}"
+    #printf '%s' "${EXPR}"
+	JQCOND="${EXPR}"
 	return 0
 }
 
@@ -738,7 +772,7 @@ process_rules() {
 	RET=$?
     if ! is_valid_json "${INSTANCES_JSON}" && (( RET != 0 )); then
         log "INSTANCES_JSON invalid or non-JSON" error
-		echo "${INSTANCES_JSON}"
+		log "${INSTANCES_JSON}"
         return 1
     fi
 
@@ -746,7 +780,7 @@ process_rules() {
 	RET=$?
     if ! is_valid_json "${FILES_JSON}" && (( RET != 0 )); then
         log "FILES_JSON invalid or non-JSON" error
-		echo "${FILES_JSON}"
+		log "${FILES_JSON}"
         return 1
     fi
 
@@ -777,18 +811,18 @@ process_rules() {
 		RET=$?
 		if (( RET != 0 )); then
 			log "Invalid rule: ${LINE}" denied
-			echo "${VAL_RET}"
 			continue
 		fi
 
         IFS=$'\x1F' read -r COND ACTION ASSIGN <<<"${PARSED}"
 
-		JQCOND="$(cond_to_jq "${COND}")"
+		JQCOND=""
+		cond_to_jq "${COND}"
 		RET=$?
 		if (( RET != 0 )) || [[ -z "${JQCOND//[[:space:]]/}" ]]; then
 			if (( RET != 0 )); then
 				log "Invalid rule: ${LINE}" denied
-				echo "${JQCOND}"
+				log "${JQCOND}"
 			fi
 
 			continue
@@ -886,6 +920,8 @@ run_loop() {
 	GLOBAL_DEFAULTS_JSON="{}"
     INITIAL_INTERVAL=5
 	REFRESH_INTERVAL=$(( REFRESH_INTERVAL + 0 ))
+	RAND_CACHE_JSON='{"vals":{},"ts":{}}'
+	RAND_TTL=1800
 
     load_rules_file "${RULES_FILE}"
 	load_defaults_file "${DEFAULTS_FILE}"
@@ -928,6 +964,7 @@ run_loop() {
             fi
         fi
         process_rules
+
         sleep ${REFRESH_INTERVAL}
     done
 }
@@ -945,7 +982,7 @@ if [[ -n "${RUSTATIO_API}" ]]; then
     REFRESH_INTERVAL='${REFRESH_INTERVAL}';
     ARCHIVE_FOLDER='${ARCHIVE_FOLDER}';
     RULES_FILE='${RULES_FILE}';
-	DEFAULTS_FILE='${DEFAULTS_FILE}'
+	DEFAULTS_FILE='${DEFAULTS_FILE}';
     DRY_RUN='${DRY_RUN}';
     LOGFILE='${LOGFILE}';
     $(declare -f);
