@@ -57,8 +57,8 @@ log() {
         default|*)  prefix="${prefix}";;
     esac
 
-    #echo "${log_time} :: ${prefix}${message}"
-	printf '%s\n' "${log_time} :: ${prefix}${message}" >> "${LOGFILE}"
+    echo "${log_time} :: ${prefix}${message}"
+	#printf '%s\n' "${log_time} :: ${prefix}${message}" >> "${LOGFILE}"
 }
 
 cleanup() {
@@ -339,7 +339,6 @@ set_cached_rand() {
     local NOW
     NOW=$(date +%s)
 
-    # mettre à jour vals et ts dans le JSON en mémoire
     RAND_CACHE_JSON=$(jq -c --arg k "${KEY}" --arg v "${VAL}" --argjson t "${NOW}" \
         '.vals[$k] = $v | .ts[$k] = ($t|tonumber)' <<<"${RAND_CACHE_JSON}")
 }
@@ -772,7 +771,7 @@ process_rules() {
 	RET=$?
     if ! is_valid_json "${INSTANCES_JSON}" && (( RET != 0 )); then
         log "INSTANCES_JSON invalid or non-JSON" error
-		log "${INSTANCES_JSON}"
+		echo "${INSTANCES_JSON}"
         return 1
     fi
 
@@ -780,7 +779,7 @@ process_rules() {
 	RET=$?
     if ! is_valid_json "${FILES_JSON}" && (( RET != 0 )); then
         log "FILES_JSON invalid or non-JSON" error
-		log "${FILES_JSON}"
+		echo "${FILES_JSON}"
         return 1
     fi
 
@@ -811,6 +810,7 @@ process_rules() {
 		RET=$?
 		if (( RET != 0 )); then
 			log "Invalid rule: ${LINE}" denied
+			echo "${VAL_RET}"
 			continue
 		fi
 
@@ -964,7 +964,6 @@ run_loop() {
             fi
         fi
         process_rules
-
         sleep ${REFRESH_INTERVAL}
     done
 }
