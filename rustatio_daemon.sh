@@ -343,10 +343,41 @@ set_cached_rand() {
         '.vals[$k] = $v | .ts[$k] = ($t|tonumber)' <<<"${RAND_CACHE_JSON}")
 }
 
+set_used_rand() {
+    local KEY="${1}"
+    local VAL="${2}"
+    local NOW
+    NOW=$(date +%s)
+
+    RAND_USED_JSON=$(jq -c --arg k "${KEY}" --arg v "${VAL}" --argjson t "${NOW}" \
+        '.vals[$k] = $v | .ts[$k] = ($t|tonumber)' <<<"${RAND_USED_JSON}")
+}
+
+clear_cached_rand() {
+    local KEY KEYS
+
+    if ! is_valid_json "${RAND_USED_JSON}" || [[ "${RAND_USED_JSON}" == "{}" ]]; then
+        return 0
+    fi
+
+    mapfile -t KEYS < <(jq -r '(.vals // {}) | keys[]' <<<"${RAND_USED_JSON}" 2>/dev/null || printf '')
+
+    if [[ "${#KEYS[@]}" -eq 0 ]]; then
+        return 0
+    fi
+
+    for KEY in "${KEYS[@]}"; do
+        RAND_CACHE_JSON=$(jq -c "del(.vals[\"${KEY}\"], .ts[\"${KEY}\"])" <<<"${RAND_CACHE_JSON}")
+    done
+
+    RAND_USED_JSON='{"vals":{},"ts":{}}'
+}
+
 cond_to_jq() {
     local EXPR="${1}"
 	local VAL RAND KEY KEYS FULL_MATCH WAY A B
 
+	RAND_USED_JSON='{"vals":{},"ts":{}}'
     EXPR="$(echo "${EXPR}" | sed -E 's/\bAND\b/ and /g; s/\bOR\b/ or /g')"
 
     local RANGE_REGEX='([A-Za-z0-9_.]+):[[:space:]]*([0-9]+(\.[0-9]+)?) *- *([0-9]+(\.[0-9]+)?)'
@@ -356,7 +387,7 @@ cond_to_jq() {
         A="${BASH_REMATCH[2]}"
         B="${BASH_REMATCH[4]}"
 
-		KEY="$(printf "%s" "${KEY}" | sha256sum | awk '{print $1}' | cut -c1-8)"
+		KEY="$(printf "%s" "${WAY}:${A}:${B}:${FULL_MATCH}" | sha256sum | awk '{print $1}' | cut -c1-8)"
 		if ! RAND="$(get_cached_rand "${KEY}")"; then
 			RAND="$(awk -v a="${A}" -v b="${B}" 'BEGIN {
 				if (a == b) { printf("%.2f", a); exit }
@@ -368,6 +399,8 @@ cond_to_jq() {
 
 			set_cached_rand "${KEY}" "${RAND}"
 		fi
+
+		set_used_rand "${KEY}" "${RAND}"
 
         EXPR="${EXPR/"${FULL_MATCH}"/((.${WAY} // 0) | tonumber) > ${RAND}}"
     done
@@ -894,6 +927,8 @@ process_rules() {
 						'.data |= map(if .id == $id then $new else . end) | .' <<<"${INSTANCES_JSON}")
 
 					INST=$(jq -c '.data[] | select(.id == "'"${ID}"'")' <<<"${INSTANCES_JSON}")
+
+					clear_cached_rand
 				else
 					if (( RET == 0 )) && [[ "${ACTION}" == "delete" ]]; then
 						if [[ "${ASSIGN}" == *"watchfile"* ]]; then
@@ -904,6 +939,8 @@ process_rules() {
 							)
 							INST=""
 						fi
+
+						clear_cached_rand
 					fi
 
 					echo "${UPDATED_OUT}"
