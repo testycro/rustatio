@@ -14,4 +14,3 @@ services:
       - /your/path/to/entrypoint.sh:/entrypoint.sh:ro
       - /your/path/to/rustatio_daemon.sh:/rustatio_daemon.sh:ro
 ```
-Need personal function ? open request ;)
