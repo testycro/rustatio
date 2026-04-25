@@ -1,4 +1,4 @@
-<h1>This is a shell script that allows you to modify the behavior of Rustatio with custom rules.</h1>
+<h1>This is a shell script that allows you to modify the behavior of Rustatio (Docker) with custom rules.</h1>
 
 - Work with rustatio 2.x.x in the same container
 - Place the files according to the indicated paths.
