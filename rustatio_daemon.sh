@@ -178,7 +178,7 @@ check_logs() {
     if [[ -n "${CHECK_LOGS_PID}" ]] && kill -0 "${CHECK_LOGS_PID}" 2>/dev/null; then
         return
     fi
-    
+
     sleep 1
     (
         CHECK_LOGS_FILE="${RULES_FILE%/*}/check_logs.json"
@@ -251,7 +251,14 @@ check_logs() {
                             CHECK_LOGS_TIME=$(date +%s)
                             JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" --argjson cnt "${CHECK_LOGS_NEW_COUNT}" --argjson ltime "${CHECK_LOGS_TIME}" '.[$tag] |= (. // {count:0, action:0, last_count_time:0}) | .[$tag].count = $cnt | .[$tag].last_count_time = $ltime' <<<"${JSONLOGS}")
 
-                            if (( CHECK_LOGS_NEW_COUNT > WATCHER_MAX_STRIKE )); then
+                            sleep 1
+                            CHECK_LOGS_TMP_FILE="$(mktemp "${CHECK_LOGS_FILE}.XXXXXX")"
+                            printf '%s\n' "${JSONLOGS}" > "${CHECK_LOGS_TMP_FILE}"
+                            sync -f "${CHECK_LOGS_TMP_FILE}" 2>/dev/null || true
+                            mv -f "${CHECK_LOGS_TMP_FILE}" "${CHECK_LOGS_FILE}"
+                            sleep 1
+
+                            if (( CHECK_LOGS_NEW_COUNT >= WATCHER_MAX_STRIKE )); then
                                 mapfile -t CHECK_LOGS_MATCHES < <(jq -c --arg t "${CHECK_LOGS_TAG}" '.data[] | select(.torrent.name == $t)' <<<"${CHECK_LOGS_INSTANCES_JSON}")
 
                                 if [[ "${#CHECK_LOGS_MATCHES[@]}" -eq 0 ]]; then
@@ -291,6 +298,13 @@ check_logs() {
 
                                         CHECK_LOGS_TIME=$(date +%s)
                                         JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" --argjson atime "${CHECK_LOGS_TIME}" '.[$tag].action = $atime' <<<"${JSONLOGS}")
+
+                                        sleep 1
+                                        CHECK_LOGS_TMP_FILE="$(mktemp "${CHECK_LOGS_FILE}.XXXXXX")"
+                                        printf '%s\n' "${JSONLOGS}" > "${CHECK_LOGS_TMP_FILE}"
+                                        sync -f "${CHECK_LOGS_TMP_FILE}" 2>/dev/null || true
+                                        mv -f "${CHECK_LOGS_TMP_FILE}" "${CHECK_LOGS_FILE}"
+                                        sleep 1
                                     fi
                                 done
                             fi
@@ -311,6 +325,13 @@ check_logs() {
                 fi
 
                 JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" 'del(.[$tag])' <<<"${JSONLOGS}")
+
+                sleep 1
+                CHECK_LOGS_TMP_FILE="$(mktemp "${CHECK_LOGS_FILE}.XXXXXX")"
+                printf '%s\n' "${JSONLOGS}" > "${CHECK_LOGS_TMP_FILE}"
+                sync -f "${CHECK_LOGS_TMP_FILE}" 2>/dev/null || true
+                mv -f "${CHECK_LOGS_TMP_FILE}" "${CHECK_LOGS_FILE}"
+                sleep 1
             done <<<"${CHECK_LOGS_EXPIRED_TAGS}"
 
             CHECK_LOGS_NOW=$(date +%s)
@@ -326,6 +347,14 @@ check_logs() {
 
                 if [[ -z "${CHECK_LOGS_INST_ID}" ]]; then
                     JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" 'del(.[$tag])' <<<"${JSONLOGS}")
+
+                    sleep 1
+                    CHECK_LOGS_TMP_FILE="$(mktemp "${CHECK_LOGS_FILE}.XXXXXX")"
+                    printf '%s\n' "${JSONLOGS}" > "${CHECK_LOGS_TMP_FILE}"
+                    sync -f "${CHECK_LOGS_TMP_FILE}" 2>/dev/null || true
+                    mv -f "${CHECK_LOGS_TMP_FILE}" "${CHECK_LOGS_FILE}"
+                    sleep 1
+
                     continue
                 fi
 
@@ -356,15 +385,15 @@ check_logs() {
                 fi
 
                 JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" 'del(.[$tag])' <<<"${JSONLOGS}")
+
+                sleep 1
+                CHECK_LOGS_TMP_FILE="$(mktemp "${CHECK_LOGS_FILE}.XXXXXX")"
+                printf '%s\n' "${JSONLOGS}" > "${CHECK_LOGS_TMP_FILE}"
+                sync -f "${CHECK_LOGS_TMP_FILE}" 2>/dev/null || true
+                mv -f "${CHECK_LOGS_TMP_FILE}" "${CHECK_LOGS_FILE}"
+                sleep 1
             done <<<"${CHECK_LOGS_EXPIRED_TAGS}"
         done < <(curl -sN --max-time 3660 --retry 3 --retry-delay 1 "${RUSTATIO_API}/logs" | tr -d '\r')
-
-        sleep 1
-        tmpfile="$(mktemp "${CHECK_LOGS_FILE}.XXXXXX")"
-        printf '%s\n' "${JSONLOGS}" > "${tmpfile}"
-        sync -f "${tmpfile}" 2>/dev/null || true
-        mv -f "${tmpfile}" "${CHECK_LOGS_FILE}"
-        sleep 1
     ) &
     sleep 1
     CHECK_LOGS_PID=$!
