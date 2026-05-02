@@ -201,6 +201,8 @@ check_logs() {
         CHECK_LOGS_LE_TS=$(date +%s)
 
         while IFS= read -r CHECK_LOGS_LINE || [ -n "${CHECK_LOGS_LINE}" ]; do
+			CHECK_LOGS_DIRTY=0
+
             CHECK_LOGS_NOW=$(date +%s)
             if (( CHECK_LOGS_NOW - CHECK_LOGS_LE_TS > 900 )); then
                 break
@@ -209,6 +211,7 @@ check_logs() {
 
             CHECK_LOGS_INSTANCES_JSON="$(rustatio_get_instances)"
             CHECK_LOGS_RET=$?
+
             if ! is_valid_json "${CHECK_LOGS_INSTANCES_JSON}" && (( CHECK_LOGS_RET != 0 )); then
                 log "INSTANCES_JSON invalid or non-JSON" error 1
                 log "${CHECK_LOGS_INSTANCES_JSON}" f_data 1
@@ -216,7 +219,7 @@ check_logs() {
             fi
 
             case "${CHECK_LOGS_LINE}" in
-                data:*) 
+                data:*)
                     CHECK_LOGS_JSON="${CHECK_LOGS_LINE#data: }"
 
                     if ! is_valid_json "${CHECK_LOGS_JSON}"; then
@@ -226,7 +229,7 @@ check_logs() {
                     CHECK_LOGS_LEVEL=$(jq -r '.level // empty' <<<"${CHECK_LOGS_JSON}" 2>/dev/null || true)
                     CHECK_LOGS_MESSAGE=$(jq -r '.message // empty' <<<"${CHECK_LOGS_JSON}" 2>/dev/null || true)
 
-                    if [[ "${CHECK_LOGS_LEVEL}" == *"error"* ]]; then
+                    if [[ "${CHECK_LOGS_LEVEL}" == *"error"* ]] && [[ "${CHECK_LOGS_MESSAGE}" == *'['*']'* ]]; then
                         CHECK_LOGS_TAG="${CHECK_LOGS_MESSAGE#*\[}"
                         CHECK_LOGS_TAG="${CHECK_LOGS_TAG%\]*}"
                         CHECK_LOGS_TAG=$(_trim "${CHECK_LOGS_TAG}")
@@ -248,14 +251,9 @@ check_logs() {
 
                             CHECK_LOGS_NEW_COUNT=$((CHECK_LOGS_CUR_COUNT + 1))
 
-                            CHECK_LOGS_TIME=$(date +%s)
-                            JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" --argjson cnt "${CHECK_LOGS_NEW_COUNT}" --argjson ltime "${CHECK_LOGS_TIME}" '.[$tag] |= (. // {count:0, action:0, last_count_time:0}) | .[$tag].count = $cnt | .[$tag].last_count_time = $ltime' <<<"${JSONLOGS}")
+                            JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" --argjson cnt "${CHECK_LOGS_NEW_COUNT}" --argjson ltime "${CHECK_LOGS_NOW}" '.[$tag] |= (. // {count:0, action:0, last_count_time:0}) | .[$tag].count = $cnt | .[$tag].last_count_time = $ltime' <<<"${JSONLOGS}")
 
-                            CHECK_LOGS_TMP_FILE="$(mktemp "${CHECK_LOGS_FILE}.XXXXXX")"
-                            printf '%s\n' "${JSONLOGS}" > "${CHECK_LOGS_TMP_FILE}"
-                            sync -f "${CHECK_LOGS_TMP_FILE}" 2>/dev/null || true
-                            mv -f "${CHECK_LOGS_TMP_FILE}" "${CHECK_LOGS_FILE}"
-                            sleep 1
+							CHECK_LOGS_DIRTY=1
 
                             if (( CHECK_LOGS_NEW_COUNT >= WATCHER_MAX_STRIKE )); then
                                 mapfile -t CHECK_LOGS_MATCHES < <(jq -c --arg t "${CHECK_LOGS_TAG}" '.data[] | select(.torrent.name == $t)' <<<"${CHECK_LOGS_INSTANCES_JSON}")
@@ -295,14 +293,9 @@ check_logs() {
                                             fi
                                         fi
 
-                                        CHECK_LOGS_TIME=$(date +%s)
-                                        JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" --argjson atime "${CHECK_LOGS_TIME}" '.[$tag].action = $atime' <<<"${JSONLOGS}")
+                                        JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" --argjson atime "${CHECK_LOGS_NOW}" '.[$tag].action = $atime' <<<"${JSONLOGS}")
 
-                                        CHECK_LOGS_TMP_FILE="$(mktemp "${CHECK_LOGS_FILE}.XXXXXX")"
-                                        printf '%s\n' "${JSONLOGS}" > "${CHECK_LOGS_TMP_FILE}"
-                                        sync -f "${CHECK_LOGS_TMP_FILE}" 2>/dev/null || true
-                                        mv -f "${CHECK_LOGS_TMP_FILE}" "${CHECK_LOGS_FILE}"
-                                        sleep 1
+										CHECK_LOGS_DIRTY=1
                                     fi
                                 done
                             fi
@@ -314,83 +307,74 @@ check_logs() {
                 *) ;;
             esac
 
-            CHECK_LOGS_NOW=$(date +%s)
-            CHECK_LOGS_EXPIRED_TAGS=$(jq -r --argjson wst "${WATCHER_STRIKE_TIME}" --argjson now "${CHECK_LOGS_NOW}" 'to_entries[] | select((.value.last_count_time|type) == "number" and .value.last_count_time > 0 and ($now - .value.last_count_time) > $wst and ((.value.action|type) != "number" or .value.action == 0)) | .key' <<<"${JSONLOGS}" || true)
+            mapfile -t CHECK_LOGS_EXPIRED_TAGS < <(jq -r --argjson wst "${WATCHER_STRIKE_TIME}" --argjson now "${CHECK_LOGS_NOW}" 'to_entries[] | select((.value.last_count_time|type) == "number" and .value.last_count_time > 0 and ($now - .value.last_count_time) > $wst and ((.value.action|type) != "number" or .value.action == 0)) | .key' <<<"${JSONLOGS}")
 
-            while IFS= read -r CHECK_LOGS_TAG; do
-                if [[ -z "${CHECK_LOGS_TAG}" ]]; then
-                    continue
-                fi
+            if (( ${#CHECK_LOGS_EXPIRED_TAGS[@]} > 0 )); then
+                for CHECK_LOGS_TAG in "${CHECK_LOGS_EXPIRED_TAGS[@]}"; do
+                    JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" 'del(.[$tag])' <<<"$JSONLOGS")
 
-                JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" 'del(.[$tag])' <<<"${JSONLOGS}")
+			    	CHECK_LOGS_DIRTY=1
+                done
+			fi
 
-                CHECK_LOGS_TMP_FILE="$(mktemp "${CHECK_LOGS_FILE}.XXXXXX")"
-                printf '%s\n' "${JSONLOGS}" > "${CHECK_LOGS_TMP_FILE}"
-                sync -f "${CHECK_LOGS_TMP_FILE}" 2>/dev/null || true
-                mv -f "${CHECK_LOGS_TMP_FILE}" "${CHECK_LOGS_FILE}"
-                sleep 1
-            done <<<"${CHECK_LOGS_EXPIRED_TAGS}"
+            mapfile -t CHECK_LOGS_EXPIRED_TAGS < <(jq -r --argjson wpt "${WATCHER_PAUSE_TIME}" --argjson now "${CHECK_LOGS_NOW}" 'to_entries[] | select((.value.action|type) == "number" and .value.action > 0 and ($now - .value.action) > $wpt) | .key' <<<"${JSONLOGS}")
 
-            CHECK_LOGS_NOW=$(date +%s)
-            CHECK_LOGS_EXPIRED_TAGS=$(jq -r --argjson wpt "${WATCHER_PAUSE_TIME}" --argjson now "${CHECK_LOGS_NOW}" 'to_entries[] | select((.value.action|type) == "number" and .value.action > 0 and ($now - .value.action) > $wpt) | .key' <<<"${JSONLOGS}" || true)
+			if (( ${#CHECK_LOGS_EXPIRED_TAGS[@]} > 0 )); then
+                for CHECK_LOGS_TAG in "${CHECK_LOGS_EXPIRED_TAGS[@]}"; do
+                    CHECK_LOGS_INST=$(jq -r --arg t "${CHECK_LOGS_TAG}" '.data[] | select(.torrent.name == $t)' <<<"${CHECK_LOGS_INSTANCES_JSON}" 2>/dev/null || true)
+                    CHECK_LOGS_INST_ID=$(jq -r '.id // empty' <<<"${CHECK_LOGS_INST}" 2>/dev/null || true)
 
-            while IFS= read -r CHECK_LOGS_TAG; do
-                if [[ -z "${CHECK_LOGS_TAG}" ]];then
-                    continue
-                fi
+                    if [[ -n "${CHECK_LOGS_INST_ID}" ]]; then
+                        log "Pause ended. Try to resume" warning 1
 
-                CHECK_LOGS_INST=$(jq -r --arg t "${CHECK_LOGS_TAG}" '.data[] | select(.torrent.name == $t)' <<<"${CHECK_LOGS_INSTANCES_JSON}" 2>/dev/null || true)
-                CHECK_LOGS_INST_ID=$(jq -r '.id // empty' <<<"${CHECK_LOGS_INST}" 2>/dev/null || true)
+                        CHECK_LOGS_OUT="$(run_action_for_instance "resume" "${CHECK_LOGS_INST}" "")"
 
-                if [[ -z "${CHECK_LOGS_INST_ID}" ]]; then
+                        if [[ -n "${CHECK_LOGS_OUT//[[:space:]]/}" ]]; then
+                            log "Torrent name : ${CHECK_LOGS_TAG}" f_data 1
+
+                            if is_valid_json "${CHECK_LOGS_OUT}" && is_valid_json "${CHECK_LOGS_INST}"; then
+                                log "Resume succeeded" f_succes 1
+                            else
+                                log "${CHECK_LOGS_OUT}" "" 1
+                            fi
+                        fi
+
+                        CHECK_LOGS_OUT="$(run_action_for_instance "removetags" "${CHECK_LOGS_INST}" "Error")"
+
+                        if [[ -n "${CHECK_LOGS_OUT//[[:space:]]/}" ]]; then
+                            log "Torrent name : ${CHECK_LOGS_TAG}" f_data 1
+
+                            if is_valid_json "${CHECK_LOGS_OUT}" && is_valid_json "${CHECK_LOGS_INST}"; then
+                                log "Tags applied" f_succes 1
+                            else
+                                log "${CHECK_LOGS_OUT}" "" 1
+                            fi
+                        fi
+                    fi
+
                     JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" 'del(.[$tag])' <<<"${JSONLOGS}")
 
-                    CHECK_LOGS_TMP_FILE="$(mktemp "${CHECK_LOGS_FILE}.XXXXXX")"
-                    printf '%s\n' "${JSONLOGS}" > "${CHECK_LOGS_TMP_FILE}"
-                    sync -f "${CHECK_LOGS_TMP_FILE}" 2>/dev/null || true
-                    mv -f "${CHECK_LOGS_TMP_FILE}" "${CHECK_LOGS_FILE}"
-                    sleep 1
+			    	CHECK_LOGS_DIRTY=1
+                done
+			fi
 
-                    continue
-                fi
-
-                log "Pause ended. Try to resume" warning 1
-
-                CHECK_LOGS_OUT="$(run_action_for_instance "resume" "${CHECK_LOGS_INST}" "")"
-
-                if [[ -n "${CHECK_LOGS_OUT//[[:space:]]/}" ]]; then
-                    log "Torrent name : ${CHECK_LOGS_TAG}" f_data 1
-
-                    if is_valid_json "${CHECK_LOGS_OUT}" && is_valid_json "${CHECK_LOGS_INST}"; then
-                        log "Resume succeeded" f_succes 1
-                    else
-                        log "${CHECK_LOGS_OUT}" "" 1
-                    fi
-                fi
-
-                CHECK_LOGS_OUT="$(run_action_for_instance "removetags" "${CHECK_LOGS_INST}" "Error")"
-
-                if [[ -n "${CHECK_LOGS_OUT//[[:space:]]/}" ]]; then
-                    log "Torrent name : ${CHECK_LOGS_TAG}" f_data 1
-
-                    if is_valid_json "${CHECK_LOGS_OUT}" && is_valid_json "${CHECK_LOGS_INST}"; then
-                        log "Tags applied" f_succes 1
-                    else
-                        log "${CHECK_LOGS_OUT}" "" 1
-                    fi
-                fi
-
-                JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" 'del(.[$tag])' <<<"${JSONLOGS}")
-
+            if (( CHECK_LOGS_DIRTY )); then
                 CHECK_LOGS_TMP_FILE="$(mktemp "${CHECK_LOGS_FILE}.XXXXXX")"
+
                 printf '%s\n' "${JSONLOGS}" > "${CHECK_LOGS_TMP_FILE}"
                 sync -f "${CHECK_LOGS_TMP_FILE}" 2>/dev/null || true
+
                 mv -f "${CHECK_LOGS_TMP_FILE}" "${CHECK_LOGS_FILE}"
+
+		    	CHECK_LOGS_DIRTY=0
+
                 sleep 1
-            done <<<"${CHECK_LOGS_EXPIRED_TAGS}"
+			fi
         done < <(curl -sN --max-time 3660 --retry 3 --retry-delay 1 "${RUSTATIO_API}/logs" | tr -d '\r')
     ) &
+
     sleep 1
+
     CHECK_LOGS_PID=$!
     kill -0 "${CHECK_LOGS_PID}" 2>/dev/null || unset CHECK_LOGS_PID
 }
