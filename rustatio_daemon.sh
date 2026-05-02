@@ -7,7 +7,7 @@ BASE=$(basename "${0}")
 
 
 # Configuration (à adapter)
-RUSTATIO_API="http://127.0.0.1:${PORT}/api" # A adapter en gardan "/api" seulement si le script est lancé en dehors du container de Rustatio
+RUSTATIO_API="http://127.0.0.1:${PORT}"     # A adapter seulement si le script est lancé en dehors du container de Rustatio
 
 REFRESH_INTERVAL=0                          # Temps en seconds entre chaques traitement des règles de RULES_FILE. Minimum 5s => 0 pour utiliser Scrape Interval de la config par défault
 
@@ -84,6 +84,52 @@ format_time() {
     fi
 }
 
+extract_bracket() {
+    local S="${1}"
+    local M="${2}"
+    local EB_I=""
+    local EB_R=""
+
+    local START=$(expr index "${S}" '[')
+    if [ "${START}" -eq 0 ]; then
+        EB_I=""
+        EB_R="${S}"
+        return 0
+    fi
+
+    local LEN=${#S}
+    local LEVEL=0
+    local END=-1
+    local I C
+
+    for ((I=START-1; I<LEN; I++)); do
+        C=${S:I:1}
+        if [ "${C}" = "[" ]; then
+          ((LEVEL++))
+        elif [ "${C}" = "]" ]; then
+            ((LEVEL--))
+            if [ "${LEVEL}" -eq 0 ]; then
+                END=${I}
+                break
+            fi
+        fi
+    done
+
+    if [ "${END}" -lt 0 ]; then
+        EB_I="${S:START}"
+        EB_R=""
+        return 0
+    fi
+
+    if [[ "${M}" == "I" ]]; then
+        EB_I=$(_trim "${S:START:((END-START))}")
+        printf '%s' "${EB_I}"
+    fi
+    if [[ "${M}" == "R" ]]; then
+        EB_R=${S:END+1}
+        EB_R=$(_trim "${S:END+1}")
+    fi
+}
 
 cleanup() {
     if [[ -n "${PIDFILE}" && "${PIDFILE}" != "/dev/null" && -f "${PIDFILE}" ]]; then
@@ -137,12 +183,12 @@ rustatio_api_request() {
 
     while (( ATTEMPT <= MAX_RETRIES )); do
         if [ -z "${PAYLOAD}" ]; then
-            RESPONSE=$(curl --fail -S -s -X ${METHOD} "${RUSTATIO_API}/${WAY}" \
+            RESPONSE=$(curl --fail -S -s -X ${METHOD} "${RUSTATIO_API}/api/${WAY}" \
                     -H "Accept: application/json" 2>&1)
             CURL_EXIT=$?
         else
             RESPONSE=$(printf '%s' "${PAYLOAD}" | \
-                curl --fail -S -s -X ${METHOD} "${RUSTATIO_API}/${WAY}" \
+                curl --fail -S -s -X ${METHOD} "${RUSTATIO_API}/api/${WAY}" \
                     -H "Content-Type: application/json" \
                     -H "Accept: application/json" \
                     --data-binary @- 2>&1)
@@ -230,11 +276,8 @@ check_logs() {
                     CHECK_LOGS_MESSAGE=$(jq -r '.message // empty' <<<"${CHECK_LOGS_JSON}" 2>/dev/null || true)
 
                     if [[ "${CHECK_LOGS_LEVEL}" == *"error"* ]] && [[ "${CHECK_LOGS_MESSAGE}" == *'['*']'* ]]; then
-                        CHECK_LOGS_TAG="${CHECK_LOGS_MESSAGE#*\[}"
-                        CHECK_LOGS_TAG="${CHECK_LOGS_TAG%\]*}"
-                        CHECK_LOGS_TAG=$(_trim "${CHECK_LOGS_TAG}")
-                        CHECK_LOGS_REST="${CHECK_LOGS_MESSAGE##*]}"
-                        CHECK_LOGS_REST=$(_trim "${CHECK_LOGS_REST}")
+                        CHECK_LOGS_TAG="$(extract_bracket "${CHECK_LOGS_MESSAGE}" "I")"
+						CHECK_LOGS_REST="$(extract_bracket "${CHECK_LOGS_MESSAGE}" "R")"
 
                         if [[ -n "${CHECK_LOGS_TAG}" ]]; then
                             CHECK_LOGS_CUR_COUNT=$(jq -r --arg tag "${CHECK_LOGS_TAG}" 'if .[$tag] then .[$tag].count else 0 end' <<<"${JSONLOGS}")
@@ -245,55 +288,55 @@ check_logs() {
                             fi
 
                             if (( CHECK_LOGS_CUR_ACTION == 0 )); then
-								CHECK_LOGS_NEW_COUNT=$((CHECK_LOGS_CUR_COUNT + 1))
+                                CHECK_LOGS_NEW_COUNT=$((CHECK_LOGS_CUR_COUNT + 1))
 
-								JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" --argjson cnt "${CHECK_LOGS_NEW_COUNT}" --argjson ltime "${CHECK_LOGS_NOW}" '.[$tag] |= (. // {count:0, action:0, last_count_time:0}) | .[$tag].count = $cnt | .[$tag].last_count_time = $ltime' <<<"${JSONLOGS}")
+                                JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" --argjson cnt "${CHECK_LOGS_NEW_COUNT}" --argjson ltime "${CHECK_LOGS_NOW}" '.[$tag] |= (. // {count:0, action:0, last_count_time:0}) | .[$tag].count = $cnt | .[$tag].last_count_time = $ltime' <<<"${JSONLOGS}")
 
-								CHECK_LOGS_DIRTY=1
+                                CHECK_LOGS_DIRTY=1
 
-								if (( CHECK_LOGS_NEW_COUNT >= WATCHER_MAX_STRIKE )); then
-									mapfile -t CHECK_LOGS_MATCHES < <(jq -c --arg t "${CHECK_LOGS_TAG}" '.data[] | select(.torrent.name == $t)' <<<"${CHECK_LOGS_INSTANCES_JSON}")
+                                if (( CHECK_LOGS_NEW_COUNT >= WATCHER_MAX_STRIKE )); then
+                                    mapfile -t CHECK_LOGS_MATCHES < <(jq -c --arg t "${CHECK_LOGS_TAG}" '.data[] | select(.torrent.name == $t)' <<<"${CHECK_LOGS_INSTANCES_JSON}")
 
-									if ! [[ "${#CHECK_LOGS_MATCHES[@]}" -eq 0 ]]; then
-										for CHECK_LOGS_INST in "${CHECK_LOGS_MATCHES[@]}"; do
-											CHECK_LOGS_ID=$(jq -r '.id // empty' <<<"${CHECK_LOGS_INST}" 2>/dev/null || true)
+                                    if ! [[ "${#CHECK_LOGS_MATCHES[@]}" -eq 0 ]]; then
+                                        for CHECK_LOGS_INST in "${CHECK_LOGS_MATCHES[@]}"; do
+                                            CHECK_LOGS_ID=$(jq -r '.id // empty' <<<"${CHECK_LOGS_INST}" 2>/dev/null || true)
 
-											if [[ -n "${CHECK_LOGS_ID}" ]]; then
-												log "Repeated error detected in logs (x${WATCHER_MAX_STRIKE})" warning 1
-												log "Torrent name : ${CHECK_LOGS_TAG}" f_data 1
-												log "${CHECK_LOGS_REST}" f_data 1
-												log "Try to pause for $(format_time "$WATCHER_PAUSE_TIME")" f_task 1
+                                            if [[ -n "${CHECK_LOGS_ID}" ]]; then
+                                                log "Repeated error detected in logs (x${WATCHER_MAX_STRIKE})" warning 1
+                                                log "Torrent name : ${CHECK_LOGS_TAG}" f_data 1
+                                                log "${CHECK_LOGS_REST}" f_data 1
+                                                log "Try to pause for $(format_time "$WATCHER_PAUSE_TIME")" f_task 1
 
-												CHECK_LOGS_OUT="$(run_action_for_instance "pause" "${CHECK_LOGS_INST}" "")"
+                                                CHECK_LOGS_OUT="$(run_action_for_instance "pause" "${CHECK_LOGS_INST}" "")"
 
-												if [[ -n "${CHECK_LOGS_OUT//[[:space:]]/}" ]]; then
-													if is_valid_json "${CHECK_LOGS_OUT}" && is_valid_json "${CHECK_LOGS_INST}"; then
-														log "Pause succeeded" ff_succes 1
-													else
-														log "${CHECK_LOGS_OUT}" ff_error 1
-													fi
-												fi
+                                                if [[ -n "${CHECK_LOGS_OUT//[[:space:]]/}" ]]; then
+                                                    if is_valid_json "${CHECK_LOGS_OUT}" && is_valid_json "${CHECK_LOGS_INST}"; then
+                                                        log "Pause succeeded" ff_succes 1
+                                                    else
+                                                        log "${CHECK_LOGS_OUT}" ff_error 1
+                                                    fi
+                                                fi
 
-												CHECK_LOGS_OUT="$(run_action_for_instance "addtags" "${CHECK_LOGS_INST}" "Error")"
+                                                CHECK_LOGS_OUT="$(run_action_for_instance "addtags" "${CHECK_LOGS_INST}" "Error")"
 
-												if [[ -n "${CHECK_LOGS_OUT//[[:space:]]/}" ]]; then
-													log "Torrent name : ${CHECK_LOGS_TAG}" f_data 1
+                                                if [[ -n "${CHECK_LOGS_OUT//[[:space:]]/}" ]]; then
+                                                    log "Torrent name : ${CHECK_LOGS_TAG}" f_data 1
 
-													if is_valid_json "${CHECK_LOGS_OUT}" && is_valid_json "${CHECK_LOGS_INST}"; then
-														log "Tags applied (Error)" f_succes 1
-													else
-														log "${CHECK_LOGS_OUT}" "" 1
-													fi
-												fi
+                                                    if is_valid_json "${CHECK_LOGS_OUT}" && is_valid_json "${CHECK_LOGS_INST}"; then
+                                                        log "Tags applied (Error)" f_succes 1
+                                                    else
+                                                        log "${CHECK_LOGS_OUT}" "" 1
+                                                    fi
+                                                fi
 
-												JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" --argjson atime "${CHECK_LOGS_NOW}" '.[$tag].action = $atime' <<<"${JSONLOGS}")
+                                                JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" --argjson atime "${CHECK_LOGS_NOW}" '.[$tag].action = $atime' <<<"${JSONLOGS}")
 
-												CHECK_LOGS_DIRTY=1
-											fi
-										done
-									fi
-								fi
-							fi
+                                                CHECK_LOGS_DIRTY=1
+                                            fi
+                                        done
+                                    fi
+                                fi
+                            fi
                         fi
                     fi
                 ;;
@@ -354,7 +397,7 @@ check_logs() {
             fi
 
             if (( CHECK_LOGS_DIRTY )); then
-				sleep 0.5
+                sleep 0.5
 
                 CHECK_LOGS_TMP_FILE="$(mktemp "${CHECK_LOGS_FILE}.XXXXXX")"
 
@@ -367,7 +410,7 @@ check_logs() {
 
                 sleep 0.5
             fi
-        done < <(curl -sN --max-time 3660 --retry 3 --retry-delay 1 "${RUSTATIO_API}/logs" | tr -d '\r')
+        done < <(curl -sN --max-time 3660 --retry 3 --retry-delay 1 "${RUSTATIO_API}/api/logs" | tr -d '\r')
     ) &
 
     sleep 0.5
@@ -1094,7 +1137,7 @@ process_rules() {
     fi
 
     LOGS_WATCHER=$(( LOGS_WATCHER + 0 ))
-	if (( LOGS_WATCHER != 0 )); then
+    if (( LOGS_WATCHER != 0 )); then
         check_logs
     fi
 
@@ -1268,7 +1311,24 @@ run_loop() {
     log "REFRESH INTERVAL : $(( REFRESH_INTERVAL + INITIAL_INTERVAL ))s" data
 
     while true; do
+        CHECK_HEALTH="$(curl -s --max-time 3 "${RUSTATIO_API}/health" || true)"
+
+        if [[ "${CHECK_HEALTH}" == "OK" ]]; then
+            break
+        fi
+
+		log "Rustatio not ready. Retry in $(( REFRESH_INTERVAL + INITIAL_INTERVAL ))s" warning
+
+        sleep $(( REFRESH_INTERVAL + INITIAL_INTERVAL ))
+    done
+
+    while true; do
         sleep ${INITIAL_INTERVAL}
+        CHECK_HEALTH="$(curl -s --max-time 3 "${RUSTATIO_API}/health" || true)"
+        if [[ "${CHECK_HEALTH}" != "OK" ]]; then
+		    log "Rustatio not ready. Retry in $(( REFRESH_INTERVAL + INITIAL_INTERVAL ))s" warning
+            continue
+        fi
         if [[ ! "${LOGFILE}" == "/dev/null" ]]; then
             if [[ ! -e "${LOGFILE}" ]]; then
                 touch "${LOGFILE}"
