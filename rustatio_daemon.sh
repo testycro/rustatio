@@ -203,7 +203,7 @@ check_logs() {
         while IFS= read -r CHECK_LOGS_LINE || [ -n "${CHECK_LOGS_LINE}" ]; do
             CHECK_LOGS_NOW=$(date +%s)
             if (( CHECK_LOGS_NOW - CHECK_LOGS_LE_TS > 900 )); then
-                exit 0
+                break
             fi
             CHECK_LOGS_LE_TS=$CHECK_LOGS_NOW
 
@@ -212,7 +212,7 @@ check_logs() {
             if ! is_valid_json "${CHECK_LOGS_INSTANCES_JSON}" && (( CHECK_LOGS_RET != 0 )); then
                 log "INSTANCES_JSON invalid or non-JSON" error 1
                 log "${CHECK_LOGS_INSTANCES_JSON}" f_data 1
-                exit 0
+                break
             fi
 
             case "${CHECK_LOGS_LINE}" in
