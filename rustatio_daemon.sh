@@ -26,7 +26,7 @@ LOGS_WATCHER=1                              # Activer/désactiver (1/0) la déte
 
 WATCHER_MAX_STRIKE=2                        # Nombre d'erreurs avant de mettre en pause un torrent
 
-WATCHER_STRIKE_TIME=3600                    # Durée de validitée d'un strike
+WATCHER_STRIKE_TIME=3600                    # Durée de validitée d'un strike si max pas atteint
 
 WATCHER_PAUSE_TIME=3600                     # Durée de la pause du torrent avant reprise en secondes
 
@@ -71,6 +71,19 @@ log() {
         echo "${log_time} :: ${prefix}${message}"
     fi
 }
+
+format_time() {
+    local t=$1
+    local h=$(( t / 3600 ))
+    local m=$(( (t % 3600) / 60 ))
+
+    if (( h > 0 )); then
+        printf "%dh%02d" "$h" "$m"
+    else
+        printf "%dmin" "$m"
+    fi
+}
+
 
 cleanup() {
     if [[ -n "${PIDFILE}" && "${PIDFILE}" != "/dev/null" && -f "${PIDFILE}" ]]; then
@@ -249,10 +262,10 @@ check_logs() {
                                     CHECK_LOGS_ID=$(jq -r '.id // empty' <<<"${CHECK_LOGS_INST}" 2>/dev/null || true)
 
                                     if [[ -n "${CHECK_LOGS_ID}" ]]; then
-                                        log "Repeated error detected in logs (x2)" warning 1
+                                        log "Repeated error detected in logs (x${WATCHER_MAX_STRIKE})" warning 1
                                         log "Torrent name : ${CHECK_LOGS_TAG}" f_data 1
                                         log "${CHECK_LOGS_REST}" f_data 1
-                                        log "Try to pause for 1 hour" f_task 1
+                                        log "Try to pause for $(format_time "$WATCHER_PAUSE_TIME") hour" f_task 1
 
                                         CHECK_LOGS_OUT="$(run_action_for_instance "pause" "${CHECK_LOGS_INST}" "")"
 
