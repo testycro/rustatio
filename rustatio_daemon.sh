@@ -251,7 +251,6 @@ check_logs() {
                             CHECK_LOGS_TIME=$(date +%s)
                             JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" --argjson cnt "${CHECK_LOGS_NEW_COUNT}" --argjson ltime "${CHECK_LOGS_TIME}" '.[$tag] |= (. // {count:0, action:0, last_count_time:0}) | .[$tag].count = $cnt | .[$tag].last_count_time = $ltime' <<<"${JSONLOGS}")
 
-                            sleep 1
                             CHECK_LOGS_TMP_FILE="$(mktemp "${CHECK_LOGS_FILE}.XXXXXX")"
                             printf '%s\n' "${JSONLOGS}" > "${CHECK_LOGS_TMP_FILE}"
                             sync -f "${CHECK_LOGS_TMP_FILE}" 2>/dev/null || true
@@ -272,7 +271,7 @@ check_logs() {
                                         log "Repeated error detected in logs (x${WATCHER_MAX_STRIKE})" warning 1
                                         log "Torrent name : ${CHECK_LOGS_TAG}" f_data 1
                                         log "${CHECK_LOGS_REST}" f_data 1
-                                        log "Try to pause for $(format_time "$WATCHER_PAUSE_TIME") hour" f_task 1
+                                        log "Try to pause for $(format_time "$WATCHER_PAUSE_TIME")" f_task 1
 
                                         CHECK_LOGS_OUT="$(run_action_for_instance "pause" "${CHECK_LOGS_INST}" "")"
 
@@ -299,7 +298,6 @@ check_logs() {
                                         CHECK_LOGS_TIME=$(date +%s)
                                         JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" --argjson atime "${CHECK_LOGS_TIME}" '.[$tag].action = $atime' <<<"${JSONLOGS}")
 
-                                        sleep 1
                                         CHECK_LOGS_TMP_FILE="$(mktemp "${CHECK_LOGS_FILE}.XXXXXX")"
                                         printf '%s\n' "${JSONLOGS}" > "${CHECK_LOGS_TMP_FILE}"
                                         sync -f "${CHECK_LOGS_TMP_FILE}" 2>/dev/null || true
@@ -326,7 +324,6 @@ check_logs() {
 
                 JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" 'del(.[$tag])' <<<"${JSONLOGS}")
 
-                sleep 1
                 CHECK_LOGS_TMP_FILE="$(mktemp "${CHECK_LOGS_FILE}.XXXXXX")"
                 printf '%s\n' "${JSONLOGS}" > "${CHECK_LOGS_TMP_FILE}"
                 sync -f "${CHECK_LOGS_TMP_FILE}" 2>/dev/null || true
@@ -348,7 +345,6 @@ check_logs() {
                 if [[ -z "${CHECK_LOGS_INST_ID}" ]]; then
                     JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" 'del(.[$tag])' <<<"${JSONLOGS}")
 
-                    sleep 1
                     CHECK_LOGS_TMP_FILE="$(mktemp "${CHECK_LOGS_FILE}.XXXXXX")"
                     printf '%s\n' "${JSONLOGS}" > "${CHECK_LOGS_TMP_FILE}"
                     sync -f "${CHECK_LOGS_TMP_FILE}" 2>/dev/null || true
@@ -386,7 +382,6 @@ check_logs() {
 
                 JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" 'del(.[$tag])' <<<"${JSONLOGS}")
 
-                sleep 1
                 CHECK_LOGS_TMP_FILE="$(mktemp "${CHECK_LOGS_FILE}.XXXXXX")"
                 printf '%s\n' "${JSONLOGS}" > "${CHECK_LOGS_TMP_FILE}"
                 sync -f "${CHECK_LOGS_TMP_FILE}" 2>/dev/null || true
