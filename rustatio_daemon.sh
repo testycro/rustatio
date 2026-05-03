@@ -128,6 +128,7 @@ extract_bracket() {
     if [[ "${M}" == "R" ]]; then
         EB_R=${S:END+1}
         EB_R=$(_trim "${S:END+1}")
+		printf '%s' "${EB_R}"
     fi
 }
 
@@ -164,7 +165,7 @@ bytes_to_hex() {
             log "Invalid byte '${N}' ignored" warning
             continue
         fi
-        printf -v H "%02x" "$((10#$N))"
+        printf -v H "%02x" "$((10#${N}))"
         HEX+="${H}"
     done
     printf '%s' "${HEX}"
@@ -228,6 +229,7 @@ check_logs() {
     sleep 0.5
     (
         CHECK_LOGS_FILE="${RULES_FILE%/*}/check_logs.json"
+        CHECK_LOGS_LE_TS=$(date +%s)
 
         log "Start checking logs" task 1
         log "${CHECK_LOGS_FILE}" f_data 1
@@ -244,16 +246,32 @@ check_logs() {
             JSONLOGS="{}"
         fi
 
-        CHECK_LOGS_LE_TS=$(date +%s)
+        exec 3< <(curl -sN --max-time 3660 --retry 3 --retry-delay 1 "${RUSTATIO_API}/api/logs" | tr -d '\r')
+        CHECK_LOGS_CURL_PID=$!
 
-        while IFS= read -r CHECK_LOGS_LINE || [ -n "${CHECK_LOGS_LINE}" ]; do
+        while true; do
+            if IFS= read -r -t 2 CHECK_LOGS_LINE <&3; then
+                CHECK_LOGS_LE_TS=$(date +%s)
+            else
+                CHECK_LOGS_LINE=""
+            fi
+
+            if ! kill -0 "$$" 2>/dev/null; then
+                kill -TERM "${CHECK_LOGS_CURL_PID}" 2>/dev/null
+                exit 0
+            fi
+
+            if ! kill -0 "${CHECK_LOGS_CURL_PID}" 2>/dev/null; then
+                exit 0
+            fi
+
             CHECK_LOGS_DIRTY=0
-
             CHECK_LOGS_NOW=$(date +%s)
+
             if (( CHECK_LOGS_NOW - CHECK_LOGS_LE_TS > 900 )); then
+                kill -TERM "${CHECK_LOGS_CURL_PID}" 2>/dev/null
                 break
             fi
-            CHECK_LOGS_LE_TS=$CHECK_LOGS_NOW
 
             CHECK_LOGS_INSTANCES_JSON="$(rustatio_get_instances)"
             CHECK_LOGS_RET=$?
@@ -277,7 +295,7 @@ check_logs() {
 
                     if [[ "${CHECK_LOGS_LEVEL}" == *"error"* ]] && [[ "${CHECK_LOGS_MESSAGE}" == *'['*']'* ]]; then
                         CHECK_LOGS_TAG="$(extract_bracket "${CHECK_LOGS_MESSAGE}" "I")"
-						CHECK_LOGS_REST="$(extract_bracket "${CHECK_LOGS_MESSAGE}" "R")"
+                        CHECK_LOGS_REST="$(extract_bracket "${CHECK_LOGS_MESSAGE}" "R")"
 
                         if [[ -n "${CHECK_LOGS_TAG}" ]]; then
                             CHECK_LOGS_CUR_COUNT=$(jq -r --arg tag "${CHECK_LOGS_TAG}" 'if .[$tag] then .[$tag].count else 0 end' <<<"${JSONLOGS}")
@@ -291,6 +309,7 @@ check_logs() {
                                 CHECK_LOGS_NEW_COUNT=$((CHECK_LOGS_CUR_COUNT + 1))
 
                                 JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" --argjson cnt "${CHECK_LOGS_NEW_COUNT}" --argjson ltime "${CHECK_LOGS_NOW}" '.[$tag] |= (. // {count:0, action:0, last_count_time:0}) | .[$tag].count = $cnt | .[$tag].last_count_time = $ltime' <<<"${JSONLOGS}")
+                                JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" --arg rest "${CHECK_LOGS_REST}" '.[$tag].rest |= ((. // []) + [$rest])' <<<"${JSONLOGS}")
 
                                 CHECK_LOGS_DIRTY=1
 
@@ -305,7 +324,7 @@ check_logs() {
                                                 log "Repeated error detected in logs (x${WATCHER_MAX_STRIKE})" warning 1
                                                 log "Torrent name : ${CHECK_LOGS_TAG}" f_data 1
                                                 log "${CHECK_LOGS_REST}" f_data 1
-                                                log "Try to pause for $(format_time "$WATCHER_PAUSE_TIME")" f_task 1
+                                                log "Try to pause for $(format_time "${WATCHER_PAUSE_TIME}")" f_task 1
 
                                                 CHECK_LOGS_OUT="$(run_action_for_instance "pause" "${CHECK_LOGS_INST}" "")"
 
@@ -349,7 +368,7 @@ check_logs() {
 
             if (( ${#CHECK_LOGS_EXPIRED_TAGS[@]} > 0 )); then
                 for CHECK_LOGS_TAG in "${CHECK_LOGS_EXPIRED_TAGS[@]}"; do
-                    JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" 'del(.[$tag])' <<<"$JSONLOGS")
+                    JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" 'del(.[$tag])' <<<"${JSONLOGS}")
 
                     CHECK_LOGS_DIRTY=1
                 done
@@ -410,7 +429,9 @@ check_logs() {
 
                 sleep 0.5
             fi
-        done < <(curl -sN --max-time 3660 --retry 3 --retry-delay 1 "${RUSTATIO_API}/api/logs" | tr -d '\r')
+        done <&3
+
+        kill -TERM "${CHECK_LOGS_CURL_PID}" 2>/dev/null
     ) &
 
     sleep 0.5
@@ -599,7 +620,7 @@ get_cached_rand() {
     NOW=$(date +%s)
 
     TS=$(jq -r --arg k "${KEY}" '.ts[$k] // 0' <<<"${RAND_CACHE_JSON}")
-    if [[ "$TS" =~ ^[0-9]+$ ]] && (( NOW - TS < RAND_TTL )); then
+    if [[ "${TS}" =~ ^[0-9]+$ ]] && (( NOW - TS < RAND_TTL )); then
         VAL=$(jq -r --arg k "${KEY}" '.vals[$k] // empty' <<<"${RAND_CACHE_JSON}")
         if [[ -n "${VAL}" ]]; then
             printf '%s' "${VAL}"
@@ -1317,7 +1338,7 @@ run_loop() {
             break
         fi
 
-		log "Rustatio not ready. Retry in $(( REFRESH_INTERVAL + INITIAL_INTERVAL ))s" warning
+        log "Rustatio not ready. Retry in $(( REFRESH_INTERVAL + INITIAL_INTERVAL ))s" warning
 
         sleep $(( REFRESH_INTERVAL + INITIAL_INTERVAL ))
     done
@@ -1326,7 +1347,7 @@ run_loop() {
         sleep ${INITIAL_INTERVAL}
         CHECK_HEALTH="$(curl -s --max-time 3 "${RUSTATIO_API}/health" || true)"
         if [[ "${CHECK_HEALTH}" != "OK" ]]; then
-		    log "Rustatio not ready. Retry in $(( REFRESH_INTERVAL + INITIAL_INTERVAL ))s" warning
+            log "Rustatio not ready. Retry in $(( REFRESH_INTERVAL + INITIAL_INTERVAL ))s" warning
             continue
         fi
         if [[ ! "${LOGFILE}" == "/dev/null" ]]; then
