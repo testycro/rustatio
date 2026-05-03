@@ -128,7 +128,7 @@ extract_bracket() {
     if [[ "${M}" == "R" ]]; then
         EB_R=${S:END+1}
         EB_R=$(_trim "${S:END+1}")
-		printf '%s' "${EB_R}"
+        printf '%s' "${EB_R}"
     fi
 }
 
@@ -282,7 +282,7 @@ check_logs() {
                     log "${CHECK_LOGS_INSTANCES_JSON}" f_data 1
                     break
                 fi
-			fi
+            fi
 
             case "${CHECK_LOGS_LINE}" in
                 data:*)
@@ -312,7 +312,7 @@ check_logs() {
 
                                 JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" --argjson cnt "${CHECK_LOGS_NEW_COUNT}" --argjson ltime "${CHECK_LOGS_NOW}" '.[$tag] |= (. // {count:0, action:0, last_count_time:0}) | .[$tag].count = $cnt | .[$tag].last_count_time = $ltime' <<<"${JSONLOGS}")
                                 JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" --arg rest "${CHECK_LOGS_REST}" '.[$tag].rest |= ((. // []) + [$rest])' <<<"${JSONLOGS}")
-#								JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" --arg rest "${CHECK_LOGS_REST}" '.[$tag].rest |= ( . // [] | if index($rest) then . else . + [$rest] end)' <<<"${JSONLOGS}")
+#                                JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" --arg rest "${CHECK_LOGS_REST}" '.[$tag].rest |= ( . // [] | if index($rest) then . else . + [$rest] end)' <<<"${JSONLOGS}")
 
                                 CHECK_LOGS_DIRTY=1
 
@@ -339,13 +339,13 @@ check_logs() {
                                                     fi
                                                 fi
 
-                                                CHECK_LOGS_OUT="$(run_action_for_instance "addtags" "${CHECK_LOGS_INST}" "Err $(format_time $(( CHECK_LOGS_NOW % 86400 )))")"
+                                                CHECK_LOGS_OUT="$(run_action_for_instance "addtags" "${CHECK_LOGS_INST}" "Err $(format_time $(( CHECK_LOGS_NOW - $(date -d "today 00:00" +%s) )))")"
 
                                                 if [[ -n "${CHECK_LOGS_OUT//[[:space:]]/}" ]]; then
                                                     log "Torrent name : ${CHECK_LOGS_TAG}" f_data 1
 
                                                     if is_valid_json "${CHECK_LOGS_OUT}" && is_valid_json "${CHECK_LOGS_INST}"; then
-                                                        log "Tags applied (Err $(format_time $(( CHECK_LOGS_NOW % 86400 ))))" f_succes 1
+                                                        log "Tags applied (Err $(format_time $(( CHECK_LOGS_NOW - $(date -d "today 00:00" +%s) ))))" f_succes 1
                                                     else
                                                         log "${CHECK_LOGS_OUT}" "" 1
                                                     fi
@@ -383,7 +383,7 @@ check_logs() {
                 for CHECK_LOGS_TAG in "${CHECK_LOGS_EXPIRED_TAGS[@]}"; do
                     CHECK_LOGS_INST=$(jq -r --arg t "${CHECK_LOGS_TAG}" '.data[] | select(.torrent.name == $t)' <<<"${CHECK_LOGS_INSTANCES_JSON}" 2>/dev/null || true)
                     CHECK_LOGS_INST_ID=$(jq -r '.id // empty' <<<"${CHECK_LOGS_INST}" 2>/dev/null || true)
-					CHECK_LOGS_ACTION_TS=$(jq -r --arg tag "${CHECK_LOGS_TAG}" '.[$tag].action // 0' <<<"${JSONLOGS}")
+                    CHECK_LOGS_ACTION_TS=$(jq -r --arg tag "${CHECK_LOGS_TAG}" '.[$tag].action // 0' <<<"${JSONLOGS}")
 
                     if [[ -n "${CHECK_LOGS_INST_ID}" ]]; then
                         log "Pause ended. Try to resume" warning 1
@@ -400,13 +400,13 @@ check_logs() {
                             fi
                         fi
 
-                        CHECK_LOGS_OUT="$(run_action_for_instance "removetags" "${CHECK_LOGS_INST}" "Err $(format_time $(( CHECK_LOGS_ACTION_TS % 86400 )))")"
+                        CHECK_LOGS_OUT="$(run_action_for_instance "removetags" "${CHECK_LOGS_INST}" "Err $(format_time $(( CHECK_LOGS_ACTION_TS - $(date -d "today 00:00" +%s) )))")"
 
                         if [[ -n "${CHECK_LOGS_OUT//[[:space:]]/}" ]]; then
                             log "Torrent name : ${CHECK_LOGS_TAG}" f_data 1
 
                             if is_valid_json "${CHECK_LOGS_OUT}" && is_valid_json "${CHECK_LOGS_INST}"; then
-                                log "Tags removed (Err $(format_time $(( CHECK_LOGS_ACTION_TS % 86400 ))))" f_succes 1
+                                log "Tags removed (Err $(format_time $(( CHECK_LOGS_ACTION_TS - $(date -d "today 00:00" +%s) ))))" f_succes 1
                             else
                                 log "${CHECK_LOGS_OUT}" "" 1
                             fi
@@ -698,7 +698,7 @@ cond_to_jq() {
         A="${BASH_REMATCH[2]}"
         B="${BASH_REMATCH[4]}"
 
-		KEY="$(printf '%s' "${WAY}:${A}:${B}:${FULL_MATCH}" | md5sum | awk '{print $1}')"
+        KEY="$(printf '%s' "${WAY}:${A}:${B}:${FULL_MATCH}" | md5sum | awk '{print $1}')"
         if ! RAND="$(get_cached_rand "${KEY}")"; then
             RAND="$(awk -v a="${A}" -v b="${B}" 'BEGIN {
                 if (a == b) { printf("%.2f", a); exit }
@@ -1376,7 +1376,7 @@ run_loop() {
                 log "Log recreated automatically" start
                 load_rules_file "${RULES_FILE}"
                 load_defaults_file "${DEFAULTS_FILE}"
-				COND_CACHE=()
+                COND_CACHE=()
                 if (( REFRESH_INTERVAL <= 5 )); then
                     REFRESH_INTERVAL=0
                 else
