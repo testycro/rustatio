@@ -17,18 +17,18 @@ services:
 
 <h2>Rules</h2>
 
-# < CONDITIONS > |  <ACTION > | < ASSIGN >
-# Any data can be used for conditions exept history (upload_rate_history, download_rate_history, ratio_history, history_timestamps)
-# Operator are, : , = , < , > , != , <= , >=
-# No multi-value, no spaces in values or use " "
-# Use AND / OR to add more conditions
-# info_hash must be a tring
-# Special test can be done, some.data: 1.1 - 2.4 , test if some.data is greater than a random generated number within the range
-# announce have special operator ~ to test if string exist
-# Actions are start / stop / pause / resume / delete / update / addtags / removetags
-# Update action can update any config value only, 1 value at a time
-# You can add or remove many tags at a time
-# Delete can accept 3 params comma separated, instance,watchfile,archive
-# Delete's watchfile param will delete file AND instance (internal API feature), can't delete file without instance
-# It'not perfect but can do all the things i need
-# There is a full data sample at the end of the script
+< CONDITIONS > |  <ACTION > | < ASSIGN >
+- Any data can be used for conditions exept history (upload_rate_history, download_rate_history, ratio_history, history_timestamps)
+- Operator are, : , = , < , > , != , <= , >=
+- No multi-value, no spaces in values or use " "
+- Use AND / OR to add more conditions
+- Info_hash must be a tring
+- Special test can be done, some.data: 1.1 - 2.4 , test if some.data is greater than a random generated number within the range
+- Announce have special operator ~ to test if string exist
+- Actions are start / stop / pause / resume / delete / update / addtags / removetags
+- Update action can update any config value only, 1 value at a time
+- You can add or remove many tags at a time
+- Delete can accept 3 params comma separated, instance,watchfile,archive
+- Delete's watchfile param will delete file AND instance (internal API feature), can't delete file without instance
+- It'not perfect but can do all the things i need
+- There is a full data sample at the end of the script
