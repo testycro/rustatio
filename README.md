@@ -17,7 +17,7 @@ services:
 
 <h2>Rules</h2>
 
-< CONDITIONS > |  <ACTION > | < ASSIGN >
+- < CONDITIONS > |  <ACTION > | < ASSIGN >
 - Any data can be used for conditions exept history (upload_rate_history, download_rate_history, ratio_history, history_timestamps)
 - Operator are, : , = , < , > , != , <= , >=
 - No multi-value, no spaces in values or use " "
