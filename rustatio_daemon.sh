@@ -24,7 +24,7 @@ LOGFILE="/data/${BASE%.*}.log"              # Chemins vers le fichier log ou /de
 
 LOGS_WATCHER=1                              # Activer/désactiver (1/0) la détection d'erreur dans les logs
 
-WATCHER_MAX_STRIKE=2                        # Nombre d'erreurs avant de mettre en pause un torrent
+WATCHER_MAX_STRIKE=2                        # Nombre d'erreurs récurentes avant de mettre en pause un torrent
 
 WATCHER_STRIKE_TIME=3600                    # Durée de validitée d'un strike si max pas atteint
 
@@ -287,8 +287,7 @@ check_logs() {
             fi
 
             CHECK_LOGS_NAMES_JSON=$(jq -c '[.data[].torrent.name] // []' <<<"${CHECK_LOGS_INSTANCES_JSON}")
-
-			CHECK_LOGS_NEW_JSONLOGS=$(jq --argjson names "${CHECK_LOGS_NAMES_JSON}" 'if (type=="object") then with_entries(select(.key as $k | $names | index($k))) else {} end' <<<"${JSONLOGS}")
+            CHECK_LOGS_NEW_JSONLOGS=$(jq --argjson names "${CHECK_LOGS_NAMES_JSON}" 'if (type=="object") then with_entries(select(.key as $k | $names | index($k))) else {} end' <<<"${JSONLOGS}")
 
             if [[ "${CHECK_LOGS_NEW_JSONLOGS}" != "${JSONLOGS}" ]]; then
                 JSONLOGS="${CHECK_LOGS_NEW_JSONLOGS}"
@@ -363,13 +362,11 @@ check_logs() {
                         CHECK_LOGS_CUR_ACTION=$(jq -r --arg tag "${CHECK_LOGS_TAG}" 'if .[$tag] then .[$tag].action else 0 end' <<<"${JSONLOGS}")
 
                         if (( CHECK_LOGS_CUR_ACTION == 0 )); then
-                            CHECK_LOGS_NEW_COUNT=$((CHECK_LOGS_CUR_COUNT + 1))
-
-                            JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" --argjson cnt "${CHECK_LOGS_NEW_COUNT}" --argjson ltime "${CHECK_LOGS_NOW}" '.[$tag] |= (. // {count:0, action:0, last_count_time:0}) | .[$tag].count = $cnt | .[$tag].last_count_time = $ltime' <<<"${JSONLOGS}")
-                            JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" --arg rest "${CHECK_LOGS_REST}" '.[$tag].rest |= ((. // []) + [$rest])' <<<"${JSONLOGS}")
-#                            JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" --arg rest "${CHECK_LOGS_REST}" '.[$tag].rest |= ( . // [] | if index($rest) then . else . + [$rest] end)' <<<"${JSONLOGS}")
+                            JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" --arg rest "${CHECK_LOGS_REST}" --argjson ltime "${CHECK_LOGS_NOW}" '.[$tag].rest |= ((. // []) + [$rest]) | .[$tag] |= (. // {count:0, action:0, last_count_time:0}) | .[$tag].count = (.[$tag].rest | map(select(. == $rest)) | length) | .[$tag].last_count_time = $ltime' <<<"${JSONLOGS}")
 
                             CHECK_LOGS_DIRTY=1
+
+                            CHECK_LOGS_NEW_COUNT=$(jq -r --arg tag "${CHECK_LOGS_TAG}" '.[$tag].count // 0' <<<"${JSONLOGS}")
 
                             if (( CHECK_LOGS_NEW_COUNT >= WATCHER_MAX_STRIKE )); then
 
