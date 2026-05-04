@@ -15,7 +15,7 @@ services:
       - /your/path/to/rustatio_daemon.sh:/rustatio_daemon.sh:ro
 ```
 
-<h2>Rules</h2>
+<h1>Rules</h1>
 
 - < CONDITIONS > |  < ACTION > | < ASSIGN >
 - Any data can be used for conditions exept history (upload_rate_history, download_rate_history, ratio_history, history_timestamps)
@@ -32,3 +32,32 @@ services:
 - Delete's watchfile param will delete file AND instance (internal API feature), can't delete file without instance
 - It'not perfect but can do all the things i need
 - There is a full data sample at the end of the script
+
+Sample
+
+```txt
+torrent.announce ~ "test1" | addtags | Hidden
+torrent.announce ~ "test2" | addtags | 1337x
+torrent.announce ~ "test3" | addtags | NameLess
+
+stats.seeders <= 2 AND tags != Protected | addtags | Protected
+stats.seeders > 2 AND tags = Protected | removetags | Protected
+
+stats.leechers = 0 AND tags != Idle AND stats.is_idling = false | addtags | Idle
+stats.leechers = 0 AND tags = Idle AND stats.is_idling = true | removetags | Idle
+stats.leechers > 0 AND tags = Idle | removetags | Idle
+
+stats.ratio: 1.0 - 2.5 AND config.upload_rate > 2 AND tags != SlowRatio AND tags != Protected | addtags | SlowRatio
+
+stats.leechers > 15 AND stats.seeders > 100 AND tags = SlowRatio AND tags != Protected AND tags != Idle | addtags | Forced
+stats.leechers < 15 AND tags = Forced AND tags = SlowRatio AND tags != Protected AND tags != Idle | removetags | Forced
+
+tags = Protected AND config.upload_rate > 0 | update | config.upload_rate = 0
+tags = Idle AND config.upload_rate > 0 | update | config.upload_rate = 0
+
+tags != SlowRatio AND tags != Protected AND tags != Idle AND config.upload_rate <= 10 | update | config.upload_rate = default_config.upload_rate
+tags = Forced AND config.upload_rate != default_config.upload_rate | update | config.upload_rate = default_config.upload_rate
+tags = SlowRatio AND tags != Protected AND tags != Idle AND tags != Forced AND config.upload_rate != 10 | update | config.upload_rate = 10
+
+stats.state: Stopped | delete | watchfile,archive
+```
