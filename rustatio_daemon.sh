@@ -312,7 +312,7 @@ check_logs() {
                     CHECK_LOGS_INST=$(jq -r --arg t "${CHECK_LOGS_TAG}" '.data[] | select(.torrent.name == $t)' <<<"${CHECK_LOGS_INSTANCES_JSON}")
                     CHECK_LOGS_STATE=$(jq -r '.stats.state // empty' <<<"${CHECK_LOGS_INST}")
 
-                    if is_action_valid "pause" "${CHECK_LOGS_STATE}"; then
+                    if is_action_valid "resume" "${CHECK_LOGS_STATE}"; then
                         log "Pause ended. Try to resume and remove tag" warning 1
 
                         CHECK_LOGS_ACTION_TS=$(jq -r --arg tag "${CHECK_LOGS_TAG}" '.[$tag].action // 0' <<<"${JSONLOGS}")
@@ -339,11 +339,11 @@ check_logs() {
                                 log "${CHECK_LOGS_OUT}" "" 2
                             fi
                         fi
+
+                        JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" 'del(.[$tag])' <<<"${JSONLOGS}")
+
+                        CHECK_LOGS_DIRTY=1
                     fi
-
-                    JSONLOGS=$(jq --arg tag "${CHECK_LOGS_TAG}" 'del(.[$tag])' <<<"${JSONLOGS}")
-
-                    CHECK_LOGS_DIRTY=1
                 done
             fi
 
