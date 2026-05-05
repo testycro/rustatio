@@ -24,7 +24,7 @@ LOGFILE="/data/${BASE%.*}.log"              # Chemins vers le fichier log ou /de
 
 LOGS_WATCHER=1                              # Activer/désactiver (1/0) la détection d'erreur dans les logs
 
-WATCHER_MAX_STRIKE=2                        # Nombre d'erreurs récurentes avant de mettre en pause un torrent
+WATCHER_MAX_STRIKE=3                        # Nombre d'erreurs récurentes avant de mettre en pause un torrent
 
 WATCHER_STRIKE_TIME=3600                    # Durée de validitée d'un strike si max pas atteint
 
@@ -73,6 +73,51 @@ log() {
         fi
     else
         echo "${log_time} :: ${prefix}${message}"
+    fi
+}
+
+rotate_logs() {
+    local MAX_SIZE=$((1024 * 1024))
+
+    if [[ -f "${LOGFILE}" && $(stat -c%s "${LOGFILE}") -ge ${MAX_SIZE} ]]; then
+        local BASE="${LOGFILE%.*}"
+        local EXT="${LOGFILE##*.}"
+        local OLD_WATCHER="${LOGS_WATCHER}"
+
+        if (( LOGS_WATCHER != 0 )) && [[ -n "${CHECK_LOGS_PID}" ]] && kill -0 "${CHECK_LOGS_PID}" 2>/dev/null; then
+            LOGS_WATCHER=0
+
+            kill -TERM "${CHECK_LOGS_PID}" 2>/dev/null
+            wait "${CHECK_LOGS_PID}" 2>/dev/null
+            unset CHECK_LOGS_PID
+        fi
+
+        local MAX_INDEX=0
+        local F I
+
+        shopt -s nullglob
+        local FILES=( "${BASE}".*.${EXT} )
+        shopt -u nullglob
+
+        for F in "${FILES[@]}"; do
+            if [[ "${F}" =~ \.([0-9]+)\.${EXT}$ ]]; then
+                (( BASH_REMATCH[1] > MAX_INDEX )) && MAX_INDEX=${BASH_REMATCH[1]}
+            fi
+        done
+
+        if (( MAX_INDEX >= 0 )) && [[ -f "${BASE}.${MAX_INDEX}.${EXT}" ]]; then
+            mv "${BASE}.${MAX_INDEX}.${EXT}" "${BASE}.$((MAX_INDEX+1)).${EXT}"
+        fi
+
+        for (( I=MAX_INDEX-1; I>=0; I-- )); do
+            if [[ -f "${BASE}.${I}.${EXT}" ]]; then
+                mv "${BASE}.${I}.${EXT}" "${BASE}.$((I+1)).${EXT}"
+            fi
+        done
+
+        mv "${LOGFILE}" "${BASE}.0.${EXT}"
+
+       LOGS_WATCHER="${OLD_WATCHER}"
     fi
 }
 
@@ -273,7 +318,8 @@ check_logs() {
             CHECK_LOGS_NOW=$(date +%s)
 
             if (( CHECK_LOGS_NOW - CHECK_LOGS_LE_TS > 900 )); then
-                kill -KILL "${CHECK_LOGS_CURL_PID}" 2>/dev/null || true
+                kill -TERM "${CHECK_LOGS_CURL_PID}" 2>/dev/null || true
+                wait "${CHECK_LOGS_CURL_PID}" 2>/dev/null
                 break
             fi
 
@@ -435,12 +481,14 @@ check_logs() {
         done <&3
 
         kill -TERM "${CHECK_LOGS_CURL_PID}" 2>/dev/null
+        wait "${CHECK_LOGS_CURL_PID}" 2>/dev/null
     ) &
 
     sleep 0.5
 
     CHECK_LOGS_PID=$!
     kill -0 "${CHECK_LOGS_PID}" 2>/dev/null || unset CHECK_LOGS_PID
+    wait "${CHECK_LOGS_PID}" 2>/dev/null
 }
 
 rustatio_get_instances() {
@@ -1174,7 +1222,6 @@ process_rules() {
         return 1
     fi
 
-    LOGS_WATCHER=$(( LOGS_WATCHER + 0 ))
     if (( LOGS_WATCHER != 0 )); then
         check_logs
     fi
@@ -1352,6 +1399,7 @@ run_loop() {
     RAND_CACHE_JSON='{"vals":{},"ts":{}}'
     RAND_TTL=1800
     CHECK_LOGS_PID=""
+    LOGS_WATCHER=$(( LOGS_WATCHER + 0 ))
     declare -A COND_CACHE=()
 
     load_rules_file "${RULES_FILE}"
@@ -1383,6 +1431,7 @@ run_loop() {
     done
 
     while true; do
+        rotate_logs
         sleep ${INITIAL_INTERVAL}
         if [[ ! "${LOGFILE}" == "/dev/null" ]]; then
             if [[ ! -e "${LOGFILE}" ]]; then
