@@ -19,8 +19,8 @@ DEFAULTS_FILE="/data/state.json"            # Chemin vers le fichier state.json 
 
 DRY_RUN=false                               # Aucuns appel API, test seulement true/false
 
-LOGFILE="/data/${BASE%.*}.log"              # Chemins vers le fichier log ou /dev/null pour désactiver
-#LOGFILE="/dev/null"
+#LOGFILE="/data/${BASE%.*}.log"              # Chemins vers le fichier log ou /dev/null pour désactiver
+LOGFILE="/dev/null"
 
 LOGS_WATCHER=1                              # Activer/désactiver (1/0) la détection d'erreur dans les logs
 
@@ -671,7 +671,7 @@ get_cached_rand() {
     NOW=$(date +%s)
 
     TS=$(jq -r --arg k "${KEY}" '.ts[$k] // 0' <<<"${RAND_CACHE_JSON}")
-    if [[ "${TS}" =~ ^[0-9]+$ ]] && (( NOW - TS < RAND_TTL )); then
+    if [[ "${TS}" =~ ^[0-9]+$ ]] && (( RAND_TTL > 0 && NOW - TS < RAND_TTL )); then
         VAL=$(jq -r --arg k "${KEY}" '.vals[$k] // empty' <<<"${RAND_CACHE_JSON}")
         if [[ -n "${VAL}" ]]; then
             printf '%s' "${VAL}"
@@ -1305,7 +1305,7 @@ process_rules() {
                     if [[ "${ACTION}" == "update" ]]; then
                         NEW_INST=$(jq --argjson cfg "${UPDATED_OUT}" '.config = $cfg' <<<"${INST}")
 
-                        log "Patch succeeded" f_succes
+                        log "Patch succeeded (${ASSIGN})" f_succes
                     fi
 
                     if [[ "${ACTION}" == "stop" ]]; then
@@ -1359,7 +1359,7 @@ process_rules() {
                             | map(. as $t | select((($p.remove_tags // []) | index($t)) | not))
                             )')
 
-                        log "Tags applied" f_succes
+                        log "Tags $( [[ ${ACTION} == addtags ]] && echo added || echo removed ) (${ASSIGN})" f_succes
                     fi
 
                     INSTANCES_JSON=$(jq --arg id "${ID}" --argjson new "${NEW_INST}" \
@@ -1397,7 +1397,7 @@ run_loop() {
     INITIAL_INTERVAL=5
     REFRESH_INTERVAL=$(( REFRESH_INTERVAL + 0 ))
     RAND_CACHE_JSON='{"vals":{},"ts":{}}'
-    RAND_TTL=1800
+    RAND_TTL=0
     CHECK_LOGS_PID=""
     LOGS_WATCHER=$(( LOGS_WATCHER + 0 ))
     declare -A COND_CACHE=()
