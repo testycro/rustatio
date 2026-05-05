@@ -671,7 +671,7 @@ get_cached_rand() {
     NOW=$(date +%s)
 
     TS=$(jq -r --arg k "${KEY}" '.ts[$k] // 0' <<<"${RAND_CACHE_JSON}")
-    if [[ "${TS}" =~ ^[0-9]+$ ]] && (( RAND_TTL > 0 && NOW - TS < RAND_TTL )); then
+    if [[ "${TS}" =~ ^[0-9]+$ ]] && (( RAND_TTL == 0 || NOW - TS < RAND_TTL )); then
         VAL=$(jq -r --arg k "${KEY}" '.vals[$k] // empty' <<<"${RAND_CACHE_JSON}")
         if [[ -n "${VAL}" ]]; then
             printf '%s' "${VAL}"
