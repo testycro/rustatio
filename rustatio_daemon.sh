@@ -19,8 +19,8 @@ DEFAULTS_FILE="/data/state.json"            # Chemin vers le fichier state.json 
 
 DRY_RUN=false                               # Aucuns appel API, test seulement true/false
 
-#LOGFILE="/data/${BASE%.*}.log"              # Chemins vers le fichier log ou /dev/null pour désactiver
-LOGFILE="/dev/null"
+LOGFILE="/data/${BASE%.*}.log"              # Chemins vers le fichier log ou /dev/null pour désactiver
+#LOGFILE="/dev/null"
 
 LOGS_WATCHER=1                              # Activer/désactiver (1/0) la détection d'erreur dans les logs
 
