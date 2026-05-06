@@ -464,7 +464,7 @@ check_logs() {
                 *) ;;
             esac
 
-            if (( CHECK_LOGS_DIRTY )); then
+            if is_valid_json "${JSONLOGS}" && (( CHECK_LOGS_DIRTY )); then
                 sleep 0.5
 
                 CHECK_LOGS_TMP_FILE="$(mktemp "${CHECK_LOGS_FILE}.XXXXXX")"
