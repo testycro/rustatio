@@ -488,7 +488,6 @@ check_logs() {
 
     CHECK_LOGS_PID=$!
     kill -0 "${CHECK_LOGS_PID}" 2>/dev/null || unset CHECK_LOGS_PID
-    wait "${CHECK_LOGS_PID}" 2>/dev/null
 }
 
 rustatio_get_instances() {
