@@ -30,7 +30,7 @@ WATCHER_STRIKE_TIME=3600                    # Durée de validitée d'un strike s
 
 WATCHER_PAUSE_TIME=3600                     # Durée de la pause du torrent avant reprise en secondes
 
-TOR_KEEP_LAST=1                             # Ne pas suprimer ou arrêter le dernier torrent d'un tracker (Garder un activité dans le compte)
+TOR_KEEP_LAST=1                             # Ne pas suprimer ou arrêter le dernier torrent d'un tracker (Garder une activitée dans le compte)
 
 
 
@@ -1443,14 +1443,16 @@ run_loop() {
         sleep $(( REFRESH_INTERVAL + INITIAL_INTERVAL ))
     done
 
-    trap '
-	while true; do
+handle_chld() {
+    while true; do
         terminated_pid=$(wait -n 2>/dev/null) || break
         if [[ -n "${CHECK_LOGS_PID:-}" ]] && [[ "${terminated_pid}" -eq "${CHECK_LOGS_PID}" ]]; then
             unset CHECK_LOGS_PID
         fi
     done
-    ' CHLD
+}
+
+trap handle_chld CHLD
 
     while true; do
         rotate_logs
