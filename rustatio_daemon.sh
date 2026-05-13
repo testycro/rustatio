@@ -30,6 +30,8 @@ WATCHER_STRIKE_TIME=3600                    # Durée de validitée d'un strike s
 
 WATCHER_PAUSE_TIME=3600                     # Durée de la pause du torrent avant reprise en secondes
 
+TOR_KEEP_LAST=1                             # Ne pas suprimer ou arrêter le dernier torrent d'un tracker (Garder un activité dans le compte)
+
 
 
 
@@ -286,11 +288,11 @@ check_logs() {
         if [[ -n "${CHECK_LOGS_FILE}" && -s "${CHECK_LOGS_FILE}" ]]; then
             log "Recovering logs data" f_recycle 1
             JSONLOGS_FINAL=$(<"${CHECK_LOGS_FILE}")
-            log "Recover succeeded" ff_succes 1
         fi
 
         if is_valid_json "${JSONLOGS_FINAL}"; then
             JSONLOGS="${JSONLOGS_FINAL}"
+			log "Recover succeeded" ff_succes 1
         else
             JSONLOGS="{}"
         fi
@@ -1290,6 +1292,18 @@ process_rules() {
                 continue
             fi
 
+            if (( TOR_KEEP_LAST == 1 )); then
+                if [[ "${ACTION}" == "stop" ]] || [[ "${ACTION}" == "delete" ]]; then
+                    local ANNOUNCE="$(jq -r '.torrent.announce // ""' <<<"${INST}" | tr '[:upper:]' '[:lower:]')"
+                    local ANNOUNCE_COUNT=$(jq -r --arg a "${ANNOUNCE}" '.data[] | select((.torrent.announce // "") | ascii_downcase == $a) | .id' <<<"${INSTANCES_JSON}" | wc -l)
+                    ANNOUNCE_COUNT=$((ANNOUNCE_COUNT + 0))
+
+                    if (( ANNOUNCE_COUNT == 1 )); then
+                        continue
+                    fi
+                fi
+            fi
+
             UPDATED_OUT="$(run_action_for_instance "${ACTION}" "${INST}" "${ASSIGN}" 2>&1)"
             RET=$?
 
@@ -1429,6 +1443,15 @@ run_loop() {
         sleep $(( REFRESH_INTERVAL + INITIAL_INTERVAL ))
     done
 
+    trap '
+	while true; do
+        terminated_pid=$(wait -n 2>/dev/null) || break
+        if [[ -n "${CHECK_LOGS_PID:-}" ]] && [[ "${terminated_pid}" -eq "${CHECK_LOGS_PID}" ]]; then
+            unset CHECK_LOGS_PID
+        fi
+    done
+    ' CHLD
+
     while true; do
         rotate_logs
         sleep ${INITIAL_INTERVAL}
@@ -1480,6 +1503,7 @@ if [[ -n "${RUSTATIO_API}" ]]; then
     WATCHER_MAX_STRIKE='${WATCHER_MAX_STRIKE}';
     WATCHER_STRIKE_TIME='${WATCHER_STRIKE_TIME}';
     WATCHER_PAUSE_TIME='${WATCHER_PAUSE_TIME}';
+    TOR_KEEP_LAST='${TOR_KEEP_LAST}'
     $(declare -f);
     run_loop" >> "${LOGFILE}" 2>&1 &
 fi
