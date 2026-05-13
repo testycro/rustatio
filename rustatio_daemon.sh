@@ -183,12 +183,6 @@ extract_bracket() {
     fi
 }
 
-cleanup() {
-    if [[ -n "${PIDFILE}" && "${PIDFILE}" != "/dev/null" && -f "${PIDFILE}" ]]; then
-        rm -f "${PIDFILE}"
-    fi
-}
-
 url_encode() {
     local S="${1}"
     printf '%s' "${S}" | jq -s -R -r @uri
@@ -273,8 +267,12 @@ rustatio_api_request() {
 }
 
 check_logs() {
-    if [[ -n "${CHECK_LOGS_PID}" ]] && kill -0 "${CHECK_LOGS_PID}" 2>/dev/null; then
-        return
+    if [[ -n "${CHECK_LOGS_PID}" ]]; then
+        if ! kill -0 "${CHECK_LOGS_PID}" 2>/dev/null; then
+            unset CHECK_LOGS_PID
+        else
+            return
+        fi
     fi
 
     sleep 0.5
@@ -286,15 +284,19 @@ check_logs() {
         log "${CHECK_LOGS_FILE}" f_data 1
 
         if [[ -n "${CHECK_LOGS_FILE}" && -s "${CHECK_LOGS_FILE}" ]]; then
-            log "Recovering logs data" f_recycle 1
             JSONLOGS_FINAL=$(<"${CHECK_LOGS_FILE}")
-        fi
 
-        if is_valid_json "${JSONLOGS_FINAL}"; then
-            JSONLOGS="${JSONLOGS_FINAL}"
-			log "Recover succeeded" ff_succes 1
-        else
-            JSONLOGS="{}"
+            if is_valid_json "${JSONLOGS_FINAL}"; then
+                JSONLOGS_NORMALIZED=$(printf '%s' "$JSONLOGS_FINAL" | jq -c . 2>/dev/null)
+
+                if [[ "${JSONLOGS_NORMALIZED}" != "{}" ]]; then
+				    log "Logs data recovered" ff_succes 1
+                fi
+
+                JSONLOGS="${JSONLOGS_FINAL}"
+            else
+                JSONLOGS="{}"
+            fi
         fi
 
         exec 3< <(curl -sN --max-time 3660 --retry 3 --retry-delay 1 "${RUSTATIO_API}/api/logs" | tr -d '\r')
@@ -1443,17 +1445,6 @@ run_loop() {
         sleep $(( REFRESH_INTERVAL + INITIAL_INTERVAL ))
     done
 
-handle_chld() {
-    while true; do
-        terminated_pid=$(wait -n 2>/dev/null) || break
-        if [[ -n "${CHECK_LOGS_PID:-}" ]] && [[ "${terminated_pid}" -eq "${CHECK_LOGS_PID}" ]]; then
-            unset CHECK_LOGS_PID
-        fi
-    done
-}
-
-trap handle_chld CHLD
-
     while true; do
         rotate_logs
         sleep ${INITIAL_INTERVAL}
@@ -1490,10 +1481,6 @@ if [[ -n "${RUSTATIO_API}" ]]; then
     PIDFILE="/dev/null"
     echo $$ > "${PIDFILE}"
     nohup bash -c "
-    trap cleanup EXIT;
-    trap cleanup SIGTERM;
-    trap cleanup SIGINT;
-    trap cleanup SIGHUP;
     RUSTATIO_API='${RUSTATIO_API}';
     REFRESH_INTERVAL='${REFRESH_INTERVAL}';
     ARCHIVE_FOLDER='${ARCHIVE_FOLDER}';
