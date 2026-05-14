@@ -270,6 +270,7 @@ check_logs() {
     if [[ -n "${CHECK_LOGS_PID}" ]]; then
         if ! kill -0 "${CHECK_LOGS_PID}" 2>/dev/null || [[ ! -e "/proc/${CHECK_LOGS_PID}/fd/3" ]]; then
             unset CHECK_LOGS_PID
+			exec 3>&-
         else
             return
         fi
