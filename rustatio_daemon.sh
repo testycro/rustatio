@@ -177,7 +177,6 @@ extract_bracket() {
         printf '%s' "${EB_I}"
     fi
     if [[ "${M}" == "R" ]]; then
-        EB_R=${S:END+1}
         EB_R=$(_trim "${S:END+1}")
         printf '%s' "${EB_R}"
     fi
@@ -298,6 +297,8 @@ check_logs() {
             else
                 JSONLOGS="{}"
             fi
+        else
+            JSONLOGS="{}"
         fi
 
         exec 3< <(curl -sN --max-time 3660 --retry 3 --retry-delay 1 "${RUSTATIO_API}/api/logs" | tr -d '\r')
@@ -309,6 +310,10 @@ check_logs() {
             else
                 CHECK_LOGS_LINE=""
             fi
+
+            if [[ ! -n "${CHECK_LOGS_LINE//[[:space:]]/}" ]]; then
+			    continue
+			fi
 
             if ! kill -0 "$$" 2>/dev/null; then
                 kill -KILL "${CHECK_LOGS_CURL_PID}" 2>/dev/null || true
