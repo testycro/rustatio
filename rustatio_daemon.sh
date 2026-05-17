@@ -311,10 +311,6 @@ check_logs() {
                 CHECK_LOGS_LINE=""
             fi
 
-            if [[ ! -n "${CHECK_LOGS_LINE//[[:space:]]/}" ]]; then
-			    continue
-			fi
-
             if ! kill -0 "$$" 2>/dev/null; then
                 kill -KILL "${CHECK_LOGS_CURL_PID}" 2>/dev/null || true
                 exit 0
