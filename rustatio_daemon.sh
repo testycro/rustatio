@@ -305,14 +305,14 @@ check_logs() {
         CHECK_LOGS_CURL_PID=$!
 
         while true; do
-            if IFS= read -r -t 0.5 CHECK_LOGS_LINE <&3; then
-                if [[ -z "${CHECK_LOGS_LINE// }" ]]; then
+            if IFS= read -r -t 5 CHECK_LOGS_LINE <&3; then
+                if [[ -z "${CHECK_LOGS_LINE//[[:space:]]/}" ]]; then
                     continue
                 fi
 
                 CHECK_LOGS_LE_TS=$(date +%s)
             else
-                continue
+                CHECK_LOGS_LINE=""
             fi
 
             if ! kill -0 "$$" 2>/dev/null; then
@@ -331,6 +331,10 @@ check_logs() {
                 kill -TERM "${CHECK_LOGS_CURL_PID}" 2>/dev/null || true
                 wait "${CHECK_LOGS_CURL_PID}" 2>/dev/null
                 break
+            fi
+
+            if [[ -z "${CHECK_LOGS_LINE//[[:space:]]/}" ]]; then
+                continue
             fi
 
             CHECK_LOGS_INSTANCES_JSON="$(rustatio_get_instances 2>&1)"
