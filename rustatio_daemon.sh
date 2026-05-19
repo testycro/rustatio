@@ -306,9 +306,13 @@ check_logs() {
 
         while true; do
             if IFS= read -r -t 0.5 CHECK_LOGS_LINE <&3; then
+                if [[ -z "${CHECK_LOGS_LINE// }" ]]; then
+                    continue
+                fi
+
                 CHECK_LOGS_LE_TS=$(date +%s)
             else
-                CHECK_LOGS_LINE=""
+                continue
             fi
 
             if ! kill -0 "$$" 2>/dev/null; then
