@@ -1460,6 +1460,11 @@ run_loop() {
         sleep ${INITIAL_INTERVAL}
         if [[ ! "${LOGFILE}" == "/dev/null" ]]; then
             if [[ ! -e "${LOGFILE}" ]]; then
+                if (( LOGS_WATCHER != 0 )) && [[ -n "${CHECK_LOGS_PID}" ]] && kill -0 "${CHECK_LOGS_PID}" 2>/dev/null; then
+                    kill -TERM "${CHECK_LOGS_PID}" 2>/dev/null
+                    wait "${CHECK_LOGS_PID}" 2>/dev/null
+                    unset CHECK_LOGS_PID
+                fi
                 touch "${LOGFILE}"
                 exec >> "${LOGFILE}" 2>&1
                 log "Log recreated automatically" start
