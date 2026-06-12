@@ -22,7 +22,10 @@ DRY_RUN=false                               # Aucuns appel API, test seulement t
 LOGFILE="/data/${BASE%.*}.log"              # Chemins vers le fichier log ou /dev/null pour désactiver
 #LOGFILE="/dev/null"
 
-LOGS_WATCHER=1                              # Activer/désactiver (1/0) la détection d'erreur dans les logs
+# !!!!!!!!!! There is a bug in rustatio that can report wrong torrent name in logs !!!!!!!!!!
+# !!!!!!!!!! Use LOGS_WATCHER at your own risk !!!!!!!!!!
+
+LOGS_WATCHER=0                              # Activer/désactiver (1/0) la détection d'erreur dans les logs
 
 WATCHER_MAX_STRIKE=3                        # Nombre d'erreurs récurentes avant de mettre en pause un torrent
 
