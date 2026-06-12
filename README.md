@@ -59,5 +59,8 @@ tags != SlowRatio AND tags != Protected AND tags != Idle AND config.upload_rate 
 tags = Forced AND config.upload_rate != default_config.upload_rate | update | config.upload_rate = default_config.upload_rate
 tags = SlowRatio AND tags != Protected AND tags != Idle AND tags != Forced AND config.upload_rate != 10 | update | config.upload_rate = 10
 
-stats.state: Stopped | delete | watchfile,archive
+stats.stop_condition_met = true AND stats.is_idling = true AND stats.idling_reason = "stop_condition_met" | addtags | ended
+tags = ended AND stats.state != "Stopped" | stop |
+
+stats.state: Stopped AND tags = ended | delete | watchfile,archive
 ```
