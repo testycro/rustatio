@@ -1,6 +1,7 @@
 <h1>This is a shell script that allows you to modify the behavior of Rustatio (Docker) with custom rules.</h1>
 
 - Work with rustatio 2.x.x in the same container
+- Work better with https://github.com/takitsu21/rustatio/releases/tag/v2.6.0 (less bugs)
 - Place the files according to the indicated paths.
 - Edit "rustatio_daemon.sh" to match your config
 - Don't forget to create your rules's file in the right folder, there is a sample
