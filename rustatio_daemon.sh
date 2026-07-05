@@ -283,8 +283,8 @@ check_logs() {
         CHECK_LOGS_FILE="${RULES_FILE%/*}/check_logs.json"
         CHECK_LOGS_LE_TS=$(date +%s)
 
-        log "Start checking logs" task 1
-        log "${CHECK_LOGS_FILE}" f_data 1
+#        log "Start checking logs" task 1
+#        log "${CHECK_LOGS_FILE}" f_data 1
 
         if [[ -n "${CHECK_LOGS_FILE}" && -s "${CHECK_LOGS_FILE}" ]]; then
             JSONLOGS_FINAL=$(<"${CHECK_LOGS_FILE}")
@@ -292,9 +292,9 @@ check_logs() {
             if is_valid_json "${JSONLOGS_FINAL}"; then
                 JSONLOGS_NORMALIZED=$(printf '%s' "$JSONLOGS_FINAL" | jq -c . 2>/dev/null)
 
-                if [[ "${JSONLOGS_NORMALIZED}" != "{}" ]]; then
-				    log "Logs data recovered" ff_succes 1
-                fi
+#                if [[ "${JSONLOGS_NORMALIZED}" != "{}" ]]; then
+#				    log "Logs data recovered" ff_succes 1
+#                fi
 
                 JSONLOGS="${JSONLOGS_FINAL}"
             else
@@ -381,25 +381,30 @@ check_logs() {
                         CHECK_LOGS_ACTION_TS=$(jq -r --arg tag "${CHECK_LOGS_TAG}" '.[$tag].action // 0' <<<"${JSONLOGS}")
                         CHECK_LOGS_ACTION_TS="$(format_time "$(( CHECK_LOGS_ACTION_TS - $(date -d "$(date -d "@${CHECK_LOGS_ACTION_TS}" +%F) 00:00" +%s) ))")"
 
-                        CHECK_LOGS_OUT="$(run_action_for_instance "resume" "${CHECK_LOGS_INST}" "" 2>&1)"
+                        if [[ "${DRY_RUN}" = true ]]; then
+                            log "Would resume '${CHECK_LOGS_TAG}'" f_recycle
+                            log "Would removetags 'Err ${CHECK_LOGS_ACTION_TS}'" f_recycle
+                        else
+                            CHECK_LOGS_OUT="$(run_action_for_instance "resume" "${CHECK_LOGS_INST}" "" 2>&1)"
 
-                        if [[ -n "${CHECK_LOGS_OUT//[[:space:]]/}" ]]; then
-                            log "Torrent name : ${CHECK_LOGS_TAG}" f_data 1
+                            if [[ -n "${CHECK_LOGS_OUT//[[:space:]]/}" ]]; then
+                                log "Torrent name : ${CHECK_LOGS_TAG}" f_data 1
 
-                            if is_valid_json "${CHECK_LOGS_OUT}"; then
-                                log "Resume succeeded" f_succes 1
-                            else
-                                log "${CHECK_LOGS_OUT}" "" 2
+                                if is_valid_json "${CHECK_LOGS_OUT}"; then
+                                    log "Resume succeeded" f_succes 1
+                                else
+                                    log "${CHECK_LOGS_OUT}" "" 2
+                                fi
                             fi
-                        fi
 
-                        CHECK_LOGS_OUT="$(run_action_for_instance "removetags" "${CHECK_LOGS_INST}" "Err ${CHECK_LOGS_ACTION_TS}" 2>&1)"
+                            CHECK_LOGS_OUT="$(run_action_for_instance "removetags" "${CHECK_LOGS_INST}" "Err ${CHECK_LOGS_ACTION_TS}" 2>&1)"
 
-                        if [[ -n "${CHECK_LOGS_OUT//[[:space:]]/}" ]]; then
-                            if is_valid_json "${CHECK_LOGS_OUT}"; then
-                                log "Tags removed (Err ${CHECK_LOGS_ACTION_TS})" f_succes 1
-                            else
-                                log "${CHECK_LOGS_OUT}" "" 2
+                            if [[ -n "${CHECK_LOGS_OUT//[[:space:]]/}" ]]; then
+                                if is_valid_json "${CHECK_LOGS_OUT}"; then
+                                    log "Tags removed (Err ${CHECK_LOGS_ACTION_TS})" f_succes 1
+                                else
+                                    log "${CHECK_LOGS_OUT}" "" 2
+                                fi
                             fi
                         fi
 
@@ -446,23 +451,28 @@ check_logs() {
 
                                             CHECK_LOGS_TODAY="$(format_time "$(( CHECK_LOGS_NOW - $(date -d "$(date -d "@${CHECK_LOGS_NOW}" +%F) 00:00" +%s) ))")"
 
-                                            CHECK_LOGS_OUT="$(run_action_for_instance "pause" "${CHECK_LOGS_INST}" "" 2>&1)"
+                                            if [[ "${DRY_RUN}" = true ]]; then
+                                                log "Would pause '${CHECK_LOGS_TAG}'" f_recycle
+												log "Would addtags 'Err ${CHECK_LOGS_TODAY}'" f_recycle
+                                            else
+                                                CHECK_LOGS_OUT="$(run_action_for_instance "pause" "${CHECK_LOGS_INST}" "" 2>&1)"
 
-                                            if [[ -n "${CHECK_LOGS_OUT//[[:space:]]/}" ]]; then
-                                                if is_valid_json "${CHECK_LOGS_OUT}"; then
-                                                    log "Pause succeeded" f_succes 1
-                                                else
-                                                    log "${CHECK_LOGS_OUT}" "" 2
+                                                if [[ -n "${CHECK_LOGS_OUT//[[:space:]]/}" ]]; then
+                                                    if is_valid_json "${CHECK_LOGS_OUT}"; then
+                                                        log "Pause succeeded" f_succes 1
+                                                    else
+                                                        log "${CHECK_LOGS_OUT}" "" 2
+                                                    fi
                                                 fi
-                                            fi
 
-                                            CHECK_LOGS_OUT="$(run_action_for_instance "addtags" "${CHECK_LOGS_INST}" "Err ${CHECK_LOGS_TODAY}" 2>&1)"
+                                                CHECK_LOGS_OUT="$(run_action_for_instance "addtags" "${CHECK_LOGS_INST}" "Err ${CHECK_LOGS_TODAY}" 2>&1)"
 
-                                            if [[ -n "${CHECK_LOGS_OUT//[[:space:]]/}" ]]; then
-                                                if is_valid_json "${CHECK_LOGS_OUT}"; then
-                                                    log "Tags applied (Err ${CHECK_LOGS_TODAY})" f_succes 1
-                                                else
-                                                    log "${CHECK_LOGS_OUT}" "" 2
+                                                if [[ -n "${CHECK_LOGS_OUT//[[:space:]]/}" ]]; then
+                                                    if is_valid_json "${CHECK_LOGS_OUT}"; then
+                                                        log "Tags applied (Err ${CHECK_LOGS_TODAY})" f_succes 1
+                                                    else
+                                                        log "${CHECK_LOGS_OUT}" "" 2
+                                                    fi
                                                 fi
                                             fi
 
