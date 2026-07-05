@@ -1034,7 +1034,6 @@ action_delete() {
         ID=$(jq -r '.id // empty' <<<"${INST_JSON}")
         if RESP="$(rustatio_delete_instance "${ID}" 2>&1)"; then
             log "Delete succeeded" f_succes
-            return 0
         else
             log "Failed to delete" f_error
             log "${RESP}" f_data
@@ -1055,7 +1054,7 @@ action_delete() {
 
         if [[ -z "${MATCHES}" ]]; then
             log "No file found for info_hash=${HEX}" f_warning
-            return 0
+            return 1
         fi
 
         while IFS= read -r M; do
@@ -1067,13 +1066,11 @@ action_delete() {
                 if [[ ! -e "${ARCHIVE_FOLDER}/${FILENAME}" ]]; then
                     if [[ "${DRY_RUN}" = true ]]; then
                         log "Would archive file '${FILENAME}' at '${WAY}'" f_recycle
-                        return 0
                     else
                         mkdir -p "${ARCHIVE_FOLDER}"
 
                         if RESP=$(cp -f -- "${WAY}" "${ARCHIVE_FOLDER}/${FILENAME}" 2>&1); then
                             log "Torrent archived ${ARCHIVE_FOLDER}/${FILENAME}" f_saving
-                            return 0
                         else
                             log "Failed to archive ${WAY}" f_error
                             log "${RESP}" f_data
@@ -1086,11 +1083,9 @@ action_delete() {
             if [[ "${ASSIGN}" == *"watchfile"* ]]; then
                 if [[ "${DRY_RUN}" = true ]]; then
                     log "Would delete file '${FILENAME}' at '${WAY}'" f_recycle
-                    return 0
                 else
                     if RESP="$(rustatio_delete_file "${FILENAME}" 2>&1)"; then
                         log "Delete succeeded" f_succes
-                        return 0
                     else
                         log "Failed to delete" f_error
                         log "${RESP}" f_data
@@ -1099,6 +1094,8 @@ action_delete() {
                 fi
             fi
         done <<<"${MATCHES}"
+
+		return 0
     fi
 }
 
