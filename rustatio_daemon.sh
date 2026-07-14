@@ -231,7 +231,7 @@ rustatio_api_request() {
 
     while (( ATTEMPT <= MAX_RETRIES )); do
         if [ -z "${PAYLOAD}" ]; then
-            RESPONSE=$(curl --fail -S -s -X ${METHOD} "${RUSTATIO_API}/api/${WAY}" \
+            RESPONSE=$(curl --max-time 5 --fail -S -s -X ${METHOD} "${RUSTATIO_API}/api/${WAY}" \
                     -H "Accept: application/json" 2>&1)
             CURL_EXIT=$?
         else
