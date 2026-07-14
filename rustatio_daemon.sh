@@ -271,6 +271,7 @@ rustatio_api_request() {
 check_logs() {
     if [[ -n "${CHECK_LOGS_PID}" ]]; then
         if ! kill -0 "${CHECK_LOGS_PID}" 2>/dev/null || [[ ! -e "/proc/${CHECK_LOGS_PID}/fd/3" ]]; then
+            wait "${CHECK_LOGS_PID}" 2>/dev/null
             unset CHECK_LOGS_PID
 			exec 3>&-
         else
@@ -519,8 +520,6 @@ check_logs() {
         kill -TERM "${CHECK_LOGS_CURL_PID}" 2>/dev/null
         wait "${CHECK_LOGS_CURL_PID}" 2>/dev/null
     ) &
-
-    sleep 0.5
 
     CHECK_LOGS_PID=$!
     kill -0 "${CHECK_LOGS_PID}" 2>/dev/null || unset CHECK_LOGS_PID
