@@ -280,6 +280,15 @@ check_logs() {
 
     sleep 0.5
     (
+        cleanup() {
+            if [[ -n "${CHECK_LOGS_CURL_PID}" ]]; then
+                kill -TERM "${CHECK_LOGS_CURL_PID}" 2>/dev/null || true
+                wait "${CHECK_LOGS_CURL_PID}" 2>/dev/null
+            fi
+            exec 3>&- 2>/dev/null
+        }
+        trap cleanup EXIT INT TERM
+
         CHECK_LOGS_FILE="${RULES_FILE%/*}/check_logs.json"
         CHECK_LOGS_LE_TS=$(date +%s)
 
