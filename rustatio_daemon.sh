@@ -316,7 +316,15 @@ check_logs() {
             JSONLOGS="{}"
         fi
 
-        exec 3< <(curl -sN --max-time 3660 --retry 3 --retry-delay 1 "${RUSTATIO_API}/api/logs" | tr -d '\r')
+        exec 3< <(
+            set -m
+            curl -sN --max-time 3660 --retry 3 --retry-delay 1 "${RUSTATIO_API}/api/logs" | tr -d '\r' &
+            PIPE_PID=$!
+            
+            trap 'kill -TERM -"${PIPE_PID}" 2>/dev/null; wait "${PIPE_PID}" 2>/dev/null' EXIT INT TERM
+            
+            wait "${PIPE_PID}" 2>/dev/null
+        )
         CHECK_LOGS_CURL_PID=$!
 
         while true; do
