@@ -270,16 +270,15 @@ rustatio_api_request() {
 
 check_logs() {
     if [[ -n "${CHECK_LOGS_PID}" ]]; then
-        if ! kill -0 "${CHECK_LOGS_PID}" 2>/dev/null || [[ ! -e "/proc/${CHECK_LOGS_PID}/fd/3" ]]; then
+        if ! kill -0 "${CHECK_LOGS_PID}" 2>/dev/null; then
             wait "${CHECK_LOGS_PID}" 2>/dev/null
             unset CHECK_LOGS_PID
-			exec 3>&-
+            exec 3>&-
         else
             return
         fi
     fi
 
-    sleep 0.5
     (
         cleanup() {
             exec 3>&- 2>/dev/null
@@ -316,19 +315,22 @@ check_logs() {
             JSONLOGS="{}"
         fi
 
-        exec 3< <(
-            set -m
-            curl -sN --max-time 3660 --retry 3 --retry-delay 1 "${RUSTATIO_API}/api/logs" | tr -d '\r' &
-            PIPE_PID=$!
-            
-            trap 'kill -TERM -"${PIPE_PID}" 2>/dev/null; wait "${PIPE_PID}" 2>/dev/null' EXIT INT TERM
-            
-            wait "${PIPE_PID}" 2>/dev/null
-        )
+        exec 3< <(curl -sN -H "Accept: text/event-stream" -H "Cache-Control: no-cache" -H "Connection: keep-alive" -H "X-Accel-Buffering: no" --max-time 3660 --retry 3 --retry-delay 1 "${RUSTATIO_API}/api/logs")
+
         CHECK_LOGS_CURL_PID=$!
 
+        CHECK_LOGS_BUFFER=""
+
         while true; do
-            if IFS= read -r -t 5 CHECK_LOGS_LINE <&3; then
+            IFS= read -u 3 -r -t 5 CHUNK
+            READ_STATUS=$?
+
+            CHECK_LOGS_BUFFER+="${CHUNK}"
+
+            if (( READ_STATUS == 0 )); then
+                CHECK_LOGS_LINE="${CHECK_LOGS_BUFFER%$'\r'}"
+                CHECK_LOGS_BUFFER=""
+
                 if [[ -z "${CHECK_LOGS_LINE//[[:space:]]/}" ]]; then
                     continue
                 fi
@@ -338,19 +340,14 @@ check_logs() {
                 CHECK_LOGS_LINE=""
             fi
 
-            if ! kill -0 "$$" 2>/dev/null; then
-                kill -KILL "${CHECK_LOGS_CURL_PID}" 2>/dev/null || true
-                exit 0
-            fi
-
-            if ! kill -0 "${CHECK_LOGS_CURL_PID}" 2>/dev/null; then
+            if ! kill -0 "$$" 2>/dev/null || ! kill -0 "${CHECK_LOGS_CURL_PID}" 2>/dev/null; then
                 exit 0
             fi
 
             CHECK_LOGS_DIRTY=0
             CHECK_LOGS_NOW=$(date +%s)
 
-            if (( CHECK_LOGS_NOW - CHECK_LOGS_LE_TS > 900 )); then
+            if (( CHECK_LOGS_NOW - CHECK_LOGS_LE_TS > 1800 )); then
                 kill -TERM "${CHECK_LOGS_CURL_PID}" 2>/dev/null || true
                 wait "${CHECK_LOGS_CURL_PID}" 2>/dev/null
                 break
@@ -473,7 +470,7 @@ check_logs() {
 
                                             if [[ "${DRY_RUN}" = true ]]; then
                                                 log "Would pause '${CHECK_LOGS_TAG}'" f_recycle
-												log "Would addtags 'Err ${CHECK_LOGS_TODAY}'" f_recycle
+                                                log "Would addtags 'Err ${CHECK_LOGS_TODAY}'" f_recycle
                                             else
                                                 CHECK_LOGS_OUT="$(run_action_for_instance "pause" "${CHECK_LOGS_INST}" "" 2>&1)"
 
@@ -525,7 +522,7 @@ check_logs() {
 
                 sleep 0.5
             fi
-        done <&3
+        done
 
         kill -TERM "${CHECK_LOGS_CURL_PID}" 2>/dev/null
         wait "${CHECK_LOGS_CURL_PID}" 2>/dev/null
