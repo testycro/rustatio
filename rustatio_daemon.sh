@@ -1534,7 +1534,7 @@ if [[ -n "${RUSTATIO_API}" ]]; then
     WATCHER_PAUSE_TIME='${WATCHER_PAUSE_TIME}';
     TOR_KEEP_LAST='${TOR_KEEP_LAST}'
     $(declare -f);
-    run_loop" >> "${LOGFILE}" 2>&1 &
+    run_loop" >> "${LOGFILE}" 2>&1
 fi
 
 : '
