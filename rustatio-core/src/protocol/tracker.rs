@@ -151,6 +151,8 @@ impl<C: HttpClient> TrackerClient<C> {
         tracker_url: &str,
         request: &AnnounceRequest,
     ) -> Result<AnnounceResponse> {
+        let torrent_id = request.info_hash.iter().map(|b| format!("{:02X}", b)).take(4).collect::<String>();
+        crate::logger::set_instance_context_str(Some(&torrent_id));
         let announce_url = self.build_announce_url(tracker_url, request);
 
         // For WASM, check if proxy is configured
@@ -177,6 +179,8 @@ impl<C: HttpClient> TrackerClient<C> {
             .get(final_url, self.client_config.user_agent.clone())
             .await
             .map_err(TrackerError::HttpError)?;
+
+        crate::logger::set_instance_context_str(Some(&torrent_id));
 
         let status = response.status;
         log_trace!("Tracker response status: {}", status);
