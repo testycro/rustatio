@@ -23,7 +23,7 @@ services:
   rustatio:
     entrypoint: ["/entrypoint_py.sh"]
     volumes:
-      - /your/path/to/entrypoint.sh:/entrypoint.sh:ro
+      - /your/path/to/entrypoint_py.sh:/entrypoint_py.sh:ro
       - /your/path/to/rustatio_daemon.py:/rustatio_daemon.py:ro
 ```
 
