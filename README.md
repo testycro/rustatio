@@ -1,12 +1,13 @@
-<h1>This is a shell script that allows you to modify the behavior of Rustatio (Docker) with custom rules.</h1>
+<h1>This is a shell/python script that allows you to modify the behavior of Rustatio (Docker) with custom rules.</h1>
 
 - Work with rustatio 2.x.x in the same container
 - Work better with https://github.com/takitsu21/rustatio/releases/tag/v2.6.0 (less bugs)
 - Place the files according to the indicated paths.
-- Edit "rustatio_daemon.sh" to match your config
+- Edit "rustatio_daemon.sh" to match your config ("rustatio_daemon.py" for python version)
 - Don't forget to create your rules's file in the right folder, there is a sample
-- Add following lines to your docker-compose
+- Add following lines to your docker-compose (BASH or PYTHON)
 
+BASH
 ```yaml
 services:
   rustatio:
@@ -14,6 +15,16 @@ services:
     volumes:
       - /your/path/to/entrypoint.sh:/entrypoint.sh:ro
       - /your/path/to/rustatio_daemon.sh:/rustatio_daemon.sh:ro
+```
+
+PYTHON
+```yaml
+services:
+  rustatio:
+    entrypoint: ["/entrypoint_py.sh"]
+    volumes:
+      - /your/path/to/entrypoint.sh:/entrypoint.sh:ro
+      - /your/path/to/rustatio_daemon.py:/rustatio_daemon.py:ro
 ```
 
 <h1>Rules</h1>
