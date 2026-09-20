@@ -12,6 +12,7 @@ import shutil
 import urllib.parse
 import requests
 import copy
+from collections import defaultdict
 
 # ==========================================
 # CONFIGURATION
@@ -40,16 +41,33 @@ logger = logging.getLogger("Rustatio")
 logger.setLevel(logging.INFO)
 formatter = logging.Formatter('%(asctime)s :: %(message)s', "%d-%m-%Y %H:%M:%S")
 
-if LOGFILE and LOGFILE != "/dev/null":
-    if not os.path.exists(LOGFILE):
-        open(LOGFILE, 'a').close()
-    file_handler = RotatingFileHandler(LOGFILE, maxBytes=1024*1024, backupCount=10)
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
+									  
+								   
+								  
+																				   
+										
+								   
 
 console_handler = logging.StreamHandler()
 console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
+
+def setup_file_handler():
+    if LOGFILE and LOGFILE != "/dev/null":
+        for h in logger.handlers[:]:
+            if isinstance(h, RotatingFileHandler):
+                h.close()
+                logger.removeHandler(h)
+        log_dir = os.path.dirname(LOGFILE)
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
+        if not os.path.exists(LOGFILE):
+            open(LOGFILE, 'a').close()
+        file_handler = RotatingFileHandler(LOGFILE, maxBytes=1024*1024, backupCount=10)
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+
+setup_file_handler()
 
 def log(msg, style="default"):
     prefix_spaces = ""
@@ -127,7 +145,7 @@ class RustatioManager:
         self.current_instances = []
 
         trace("Initializing regex patterns for RustatioManager")
-        # Optimisation : Pré-compilation des schémas RegEx
+															
         self.re_range = re.compile(r'([A-Za-z0-9_.]+): *([0-9.]+) *- *([0-9.]+)')
         self.re_default_config = re.compile(r'default_config\.([A-Za-z0-9_.]+)')
         self.re_num_cmp = re.compile(r'([A-Za-z0-9_.]+) *(<=|>=|<|>) *([0-9.]+)')
@@ -135,6 +153,7 @@ class RustatioManager:
         self.re_num_neq = re.compile(r'([A-Za-z0-9_.]+) *!= *([0-9.]+)')
         self.re_bool_null_eq = re.compile(r'([A-Za-z0-9_.]+) *= *(true|false|null)', re.IGNORECASE)
         self.re_bool_null_colon = re.compile(r'([A-Za-z0-9_.]+) *: *(true|false|null)', re.IGNORECASE)
+        self.re_inst_keys = re.compile(r'([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+)')
 
         self.regex_subs = [
             (re.compile(r'torrent\.(announce|name|comment|created_by) *~ *"([^"]+)"'), r'("\2".lower() in str(__get__("torrent.\1", "")).lower())'),
@@ -171,7 +190,7 @@ class RustatioManager:
         val = self.get_val(data, path, default)
         try:
             return float(val) if val is not None else float(default)
-        except ValueError:
+        except (ValueError, TypeError):
             trace(f"get_num conversion failed for path '{path}' with value '{val}', falling back to default: {default}")
             return float(default)
 
@@ -216,6 +235,13 @@ class RustatioManager:
                     if len(parts) == 3:
                         cond, action, assign = [x.strip() for x in parts]
 
+                        default_keys = set(self.re_default_config.findall(cond))
+                        all_keys = set(self.re_inst_keys.findall(cond))
+                        instance_keys = {
+                            k for k in all_keys 
+                            if not k.startswith("default_config.") and not k.startswith("torrent.info_hash")
+                        }
+
                         py_cond = self.translate_condition(cond)
                         try:
                             compiled_cond = compile(py_cond, '<string>', 'eval')
@@ -224,7 +250,9 @@ class RustatioManager:
                                 "cond_str": cond,
                                 "compiled": compiled_cond,
                                 "action": action,
-                                "assign": assign
+                                "assign": assign,
+                                "default_keys": default_keys,
+                                "instance_keys": instance_keys
                             })
                             trace(f"Rule successfully compiled -> Python condition: {py_cond}")
                         except SyntaxError as e:
@@ -278,19 +306,19 @@ class RustatioManager:
         self.used_rand_keys.add(key)
         return self.rand_cache[key]
 
-    def validate_rule_keys(self, cond_str, sample_inst):
-        default_keys = set(re.findall(r'default_config\.([A-Za-z0-9_.]+)', cond_str))
-        for key in default_keys:
+    def validate_rule_keys(self, rule, sample_inst):
+																					 
+        for key in rule["default_keys"]:
             if self.get_val(self.default_config, key, "__MISSING__") == "__MISSING__":
                 log(f"default_config key 'default_config.{key}' not found", "f_error")
                 return False
 
-        instance_keys = set(re.findall(r'([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+)', cond_str))
-        for key in instance_keys:
-            if not key.startswith("default_config.") and not key.startswith("torrent.info_hash"):
-                if self.get_val(sample_inst, key, "__MISSING__") == "__MISSING__":
-                    log(f"Instance key '{key}' not found", "f_error")
-                    return False
+																										   
+        for key in rule["instance_keys"]:
+																								 
+            if self.get_val(sample_inst, key, "__MISSING__") == "__MISSING__":
+                log(f"Instance key '{key}' not found", "f_error")
+                return False
         return True
 
     def translate_condition(self, cond_str):
@@ -323,7 +351,7 @@ class RustatioManager:
             '__get__': lambda path, d=None: self.get_val(inst, path, d),
             '__get_num__': lambda path: self.get_num(inst, path),
             '__tags__': inst.get("tags") or [],
-            '__info_hash__': lambda: "".join(f"{b:02x}" for b in inst.get("torrent", {}).get("info_hash", [])),
+            '__info_hash__': lambda: bytes(inst.get("torrent", {}).get("info_hash", [])).hex(),
             '__default__': lambda k: self.get_val(self.default_config, k),
             '__get_rand__': self.get_cached_rand
         }
@@ -336,14 +364,14 @@ class RustatioManager:
             return False
 
     def is_action_valid(self, action, state):
-        valid = False
-        if action == "start": valid = (state == "Stopped")
-        elif action == "stop": valid = (state == "Running")
-        elif action == "pause": valid = (state == "Running")
-        elif action == "resume": valid = (state == "Paused")
-        elif action in ["update", "addtags", "removetags", "delete"]: valid = True
-        trace(f"Checking action validity for action '{action}' with state '{state}': {valid}")
-        return valid
+					 
+        if action == "start": return (state == "Stopped")
+														   
+        if action in ["stop", "pause"]: return (state == "Running")
+        if action == "resume": return (state == "Paused")
+        return action in ["update", "addtags", "removetags", "delete"]
+																							  
+					
 
     def _resolve_assignment_val(self, val_raw):
         val_raw = val_raw.strip()
@@ -376,11 +404,11 @@ class RustatioManager:
             trace("process_rules: current_instances list is empty")
             return
 
-        sample_inst = self.current_instances[0] if self.current_instances else {}
+        sample_inst = self.current_instances[0]
 
         for rule in self.rules_lines:
             trace(f"Evaluating rule line: {rule['raw']}")
-            if not self.validate_rule_keys(rule["cond_str"], sample_inst):
+            if not self.validate_rule_keys(rule, sample_inst):
                 trace(f"Rule keys validation failed for rule: {rule['raw']}")
                 continue
 
@@ -396,11 +424,11 @@ class RustatioManager:
                     announce = str(self.get_val(inst, "torrent.announce", "")).lower()
                     count = sum(1 for i in self.current_instances if not i.get("_deleted") and str(self.get_val(i, "torrent.announce", "")).lower() == announce)
                     if count <= 1:
-                        trace(f"TOR_KEEP_LAST triggered: skipping action '{rule['action']}' for instance {inst.get('id')} to keep last instance.")
+                        trace(f"TOR_KEEP_LAST triggered: skipping action '{rule['action']}' for instance {inst.get('id')}.")
                         continue
 
                 if self.evaluate_rule(inst, rule["compiled"]):
-                    trace(f"Rule matched! Applying action '{rule['action']}' on instance ID {inst.get('id')}")
+                    trace(f"Rule matched! Applying action '{rule['action']}' on instance ID {inst.get('id')}")                   
                     self.apply_action(inst, rule["action"], rule["assign"], rule["raw"])
 
     def apply_action(self, inst, action, assign, rule_line):
@@ -409,9 +437,10 @@ class RustatioManager:
 
         log(f"Rule applied: {rule_line}", "task")
         log(f"Torrent name : {name}", "f_data")
+
         if action == "addtags":
             tags_to_add = [t.strip() for t in assign.split(',') if t.strip()]
-            existing_tags = inst.get("tags", [])
+            existing_tags = inst.get("tags") or []
             new_tags = [t for t in tags_to_add if t not in existing_tags]
 
             if not new_tags: return
@@ -419,14 +448,14 @@ class RustatioManager:
             if DRY_RUN:
                 log(f"Would add tags to ID='{id_}' TAGS='{payload}'", "f_recycle")
             elif self.api.request("POST", "grid/tag", payload):
-                inst["tags"] = list(set((inst.get("tags") or []) + new_tags))
+                inst["tags"] = list(set(existing_tags + new_tags))
                 log(f"Tags added ({assign})", "f_succes")
             else:
                 log(f"Failed to add tags ({assign}) for instance {id_}", "f_error")
 
         elif action == "removetags":
             tags_to_remove = [t.strip() for t in assign.split(',') if t.strip()]
-            existing_tags = inst.get("tags", [])
+            existing_tags = inst.get("tags") or []
             del_tags = [t for t in tags_to_remove if t in existing_tags]
 
             if not del_tags: return
@@ -434,7 +463,7 @@ class RustatioManager:
             if DRY_RUN:
                 log(f"Would remove tags from ID='{id_}' TAGS='{payload}'", "f_recycle")
             elif self.api.request("POST", "grid/tag", payload):
-                inst["tags"] = [t for t in (inst.get("tags") or []) if t not in del_tags]
+                inst["tags"] = [t for t in existing_tags if t not in del_tags]
                 log(f"Tags removed ({assign})", "f_succes")
             else:
                 log(f"Failed to remove tags ({assign}) for instance {id_}", "f_error")
@@ -515,19 +544,19 @@ class RustatioManager:
                     log("Delete succeeded", "f_succes")
 
             if "watchfile" in assign or "archive" in assign:
-                info_hash = inst.get("torrent", {}).get("info_hash", [])
-                hex_hash = "".join(f"{b:02x}" for b in info_hash)
+                hex_hash = bytes(inst.get("torrent", {}).get("info_hash", [])).hex()
+																 
 
                 if hex_hash:
                     files_resp = self.api.request("GET", "watch/files")
-                    files = files_resp.get("data", []) if files_resp else []
+                    files = files_resp.get("data", []) if files_resp else []														
                     for f in files:
                         if f.get("info_hash") == hex_hash:
                             filename = f.get("filename", "")
                             filepath = f.get("path", "")
                             
                             if "archive" in assign and ARCHIVE_FOLDER:
-                                dest = os.path.join(ARCHIVE_FOLDER, filename)
+                                dest = os.path.join(ARCHIVE_FOLDER, os.path.basename(filename))
                                 if not os.path.exists(dest):
                                     if DRY_RUN:
                                         log(f"Would archive file '{filename}' at '{filepath}'", "f_recycle")
@@ -556,14 +585,20 @@ class RustatioManager:
     def logs_watcher_thread(self):
         url = f"{self.api.base_url}/api/logs"
         trace(f"Starting logs_watcher_thread targeting SSE URL: {url}")
+        headers = {
+            "Accept": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
         while True:
             try:
-                headers={
-                    "Accept": "text/event-stream",
-                    "Cache-Control": "no-cache",
-                    "Connection": "keep-alive",
-                    "X-Accel-Buffering": "no"
-                }
+						 
+												  
+												
+											   
+											 
+				 
                 with requests.get(url, stream=True, headers=headers, timeout=60) as r:
                     for line in r.iter_lines(decode_unicode=True):
                         self._check_expirations()
@@ -584,58 +619,63 @@ class RustatioManager:
             msg = event.get("message", "")
 
             if "error" in level and "[" in msg:
-                start = msg.find("[")
-                end = msg.find("]", start)
+									 
+										  
 
-                if start != -1 and end != -1:
-                    tag, rest = self._extract_bracket(msg)
-
+											 
+                tag, rest = self._extract_bracket(msg)
+                if tag:
                     with self.strike_lock:
                         now = time.time()
-                        state = self.logs_state.get(tag, {"count": 0, "action": 0, "last_count_time": 0, "rest": []})
+                        state = self.logs_state.setdefault(tag, {"counts": {}, "action": 0, "last_count_time": 0})
 
-                        state["rest"].append(rest)
-                        state["count"] = state["rest"].count(rest)
+                        counts = state.setdefault("counts", {})
+                        counts[rest] = counts.get(rest, 0) + 1
+                        current_count = counts[rest]
                         state["last_count_time"] = now
 
-                        if state["action"] == 0 and state["count"] >= WATCHER_MAX_STRIKE:
+                        if state["action"] == 0 and current_count >= WATCHER_MAX_STRIKE:
                             self._trigger_watcher_pause(tag, rest, now)
                             state["action"] = now
 
-                        self.logs_state[tag] = state
+													
                         self.save_logs_state()
         except Exception as e:
             log(f"Error: {str(e)}", "error")
 
+    def _find_instance_by_name(self, name):
+        with self.strike_lock:
+            for inst in self.current_instances:
+                if self.get_val(inst, "torrent.name") == name:
+                    return inst
+        return None
+
     def _trigger_watcher_pause(self, tag, rest, action_ts):
-        instances_resp = self.api.request("GET", "instances")
-        if not instances_resp: return
+        inst = self._find_instance_by_name(tag)
+        if not inst: return
 
-        for inst in instances_resp.get("data", []):
-            if self.get_val(inst, "torrent.name") == tag:
-                state = self.get_val(inst, "stats.state")
+        state = self.get_val(inst, "stats.state")
+        if self.is_action_valid("pause", state):
+            pause_time_str = self.format_time_bash_style(WATCHER_PAUSE_TIME)
+            log(f"Repeated error detected (x{WATCHER_MAX_STRIKE}). Try to pause for {pause_time_str} and add tag", "warning")
+            log(f"Torrent name : {tag}", "f_data")
+            log(f"{rest}", "f_data")
 
-                if self.is_action_valid("pause", state):
-                    pause_time_str = self.format_time_bash_style(WATCHER_PAUSE_TIME)
-                    log(f"Repeated error detected (x{WATCHER_MAX_STRIKE}). Try to pause for {pause_time_str} and add tag", "warning")
-                    log(f"Torrent name : {tag}", "f_data")
-                    log(f"{rest}", "f_data")
+            id_ = inst.get("id")
+            err_tag = f"Err {self.get_elapsed_since_midnight_tag(action_ts)}"
 
-                    id_ = inst.get("id")
-                    err_tag = f"Err {self.get_elapsed_since_midnight_tag(action_ts)}"
+            if DRY_RUN:
+                log(f"Would pause '{tag}'", "f_recycle")
+                log(f"Would addtags '{err_tag}'", "f_recycle")
+            else:
+                if self.api.request("POST", "grid/pause", {"ids": [id_]}):
+                    log("Pause succeeded", "f_succes")
 
-                    if DRY_RUN:
-                        log(f"Would pause '{tag}'", "f_recycle")
-                        log(f"Would addtags '{err_tag}'", "f_recycle")
-                    else:
-                        if self.api.request("POST", "grid/pause", {"ids": [id_]}):
-                            log("Pause succeeded", "f_succes")
-
-                            existing_tags = inst.get("tags", [])
-                            if err_tag not in existing_tags:
-                                self.api.request("POST", "grid/tag", {"ids": [id_], "add_tags": [err_tag], "remove_tags": []})
-                                log(f"Tags applied ({err_tag})", "f_succes")
-                break
+                    existing_tags = inst.get("tags") or []
+                    if err_tag not in existing_tags:
+                        self.api.request("POST", "grid/tag", {"ids": [id_], "add_tags": [err_tag], "remove_tags": []})
+                        log(f"Tags applied ({err_tag})", "f_succes")
+					 
 
     def _check_expirations(self):
         trace("Checking log expirations and purges")
@@ -645,12 +685,12 @@ class RustatioManager:
             expired_tags = []
 
             active_names = {self.get_val(inst, "torrent.name") for inst in self.current_instances}
-            for tag in list(self.logs_state.keys()):
+            for tag, state in list(self.logs_state.items()):
                 if tag not in active_names:
                     expired_tags.append(tag)
                     continue
 
-                state = self.logs_state[tag]
+											
                 if state.get("last_count_time", 0) > 0 and (now - state["last_count_time"]) > WATCHER_STRIKE_TIME:
                     if state.get("action", 0) == 0:
                         expired_tags.append(tag)
@@ -668,32 +708,33 @@ class RustatioManager:
                 self.save_logs_state()
 
     def _trigger_watcher_resume(self, tag, action_ts):
-        instances_resp = self.api.request("GET", "instances")
-        if not instances_resp: return
+        inst = self._find_instance_by_name(tag)
+        if not inst: return
 
-        for inst in instances_resp.get("data", []):
-            if self.get_val(inst, "torrent.name") == tag:
-                state = self.get_val(inst, "stats.state")
+												   
+														 
+														 
 
-                if self.is_action_valid("resume", state):
-                    log("Pause ended. Try to resume and remove tag", "warning")
-                    log(f"Torrent name : {tag}", "f_data")
+        state = self.get_val(inst, "stats.state")
+        if self.is_action_valid("resume", state):
+            log("Pause ended. Try to resume and remove tag", "warning")
+            log(f"Torrent name : {tag}", "f_data")
 
-                    id_ = inst.get("id")
-                    err_tag = f"Err {self.get_elapsed_since_midnight_tag(action_ts)}"
+            id_ = inst.get("id")
+            err_tag = f"Err {self.get_elapsed_since_midnight_tag(action_ts)}"
 
-                    if DRY_RUN:
-                        log(f"Would resume '{tag}'", "f_recycle")
-                        log(f"Would removetags '{err_tag}'", "f_recycle")
-                    else:
-                        if self.api.request("POST", "grid/resume", {"ids": [id_]}):
-                            log("Resume succeeded", "f_succes")
+            if DRY_RUN:
+                log(f"Would resume '{tag}'", "f_recycle")
+                log(f"Would removetags '{err_tag}'", "f_recycle")
+            else:
+                if self.api.request("POST", "grid/resume", {"ids": [id_]}):
+                    log("Resume succeeded", "f_succes")
 
-                            existing_tags = inst.get("tags", [])
-                            if err_tag in existing_tags:
-                                self.api.request("POST", "grid/tag", {"ids": [id_], "add_tags": [], "remove_tags": [err_tag]})
-                                log(f"Tags removed ({err_tag})", "f_succes")
-                break
+                    existing_tags = inst.get("tags") or []
+                    if err_tag in existing_tags:
+                        self.api.request("POST", "grid/tag", {"ids": [id_], "add_tags": [], "remove_tags": [err_tag]})
+                        log(f"Tags removed ({err_tag})", "f_succes")
+					 
 
     def run(self):
         initial_interval = 5
@@ -724,10 +765,10 @@ class RustatioManager:
             time.sleep(initial_interval)
 
             if LOGFILE and LOGFILE != "/dev/null" and not os.path.exists(LOGFILE):
-                open(LOGFILE, 'a').close()
-                file_handler = RotatingFileHandler(LOGFILE, maxBytes=1024*1024, backupCount=10)
-                file_handler.setFormatter(formatter)
-                logger.addHandler(file_handler)
+										  
+																							   
+                setup_file_handler()
+											   
                 log("Log recreated automatically", "start")
                 self.load_configs()
 
