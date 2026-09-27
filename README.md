@@ -17,11 +17,13 @@ services:
       - /your/path/to/rustatio_daemon.sh:/rustatio_daemon.sh:ro
 ```
 
-PYTHON
+PYTHON (With Admin Panel on port 8081)
 ```yaml
 services:
   rustatio:
     entrypoint: ["/entrypoint_py.sh"]
+    ports:
+      - "8081:8081"  # Admin Panel Only
     volumes:
       - /your/path/to/entrypoint_py.sh:/entrypoint_py.sh:ro
       - /your/path/to/rustatio_daemon.py:/rustatio_daemon.py:ro
