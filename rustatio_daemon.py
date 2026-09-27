@@ -1257,27 +1257,26 @@ class RustatioManager:
 
     def _check_expirations(self):
         log("Checking log expirations and purges", "trace")
-        with self.strike_lock:
-            now = time.time()
-            dirty = False
-            expired_tags = []
-            active_names = {self.get_val(inst, "torrent.name") for inst in self.current_instances}
-            for tag, state in list(self.logs_state.items()):
-                if tag not in active_names:
-                    expired_tags.append(tag)
-                    continue
+        now = time.time()
+        dirty = False
+        expired_tags = []
+        active_names = {self.get_val(inst, "torrent.name") for inst in self.current_instances}
+        for tag, state in list(self.logs_state.items()):
+            if tag not in active_names:
+                expired_tags.append(tag)
+                continue
 
-                if state.get("last_count_time", 0) > 0 and (now - state["last_count_time"]) > WATCHER_STRIKE_TIME:
-                    if state.get("action", 0) == 0: expired_tags.append(tag)
-                if state.get("action", 0) > 0 and (now - state["action"]) > WATCHER_PAUSE_TIME:
-                    self._trigger_watcher_resume(tag, state["action"])
-                    expired_tags.append(tag)
+            if state.get("last_count_time", 0) > 0 and (now - state["last_count_time"]) > WATCHER_STRIKE_TIME:
+                if state.get("action", 0) == 0: expired_tags.append(tag)
+            if state.get("action", 0) > 0 and (now - state["action"]) > WATCHER_PAUSE_TIME:
+                self._trigger_watcher_resume(tag, state["action"])
+                expired_tags.append(tag)
 
-            for tag in expired_tags:
-                if tag in self.logs_state:
-                    del self.logs_state[tag]
-                    dirty = True
-            if dirty: self.save_logs_state()
+        for tag in expired_tags:
+            if tag in self.logs_state:
+                del self.logs_state[tag]
+                dirty = True
+        if dirty: self.save_logs_state()
 
     def _trigger_watcher_resume(self, tag, action_ts):
         inst = self._find_instance_by_name(tag)
