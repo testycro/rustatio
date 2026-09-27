@@ -1215,19 +1215,18 @@ class RustatioManager:
             if "error" in level and "[" in msg:
                 tag, rest = self._extract_bracket(msg)
                 if tag:
-                    with self.strike_lock:
-                        now = time.time()
-                        state = self.logs_state.setdefault(tag, {"counts": {}, "action": 0, "last_count_time": 0})
-                        counts = state.setdefault("counts", {})
-                        counts[rest] = counts.get(rest, 0) + 1
-                        current_count = counts[rest]
-                        state["last_count_time"] = now
+                    now = time.time()
+                    state = self.logs_state.setdefault(tag, {"counts": {}, "action": 0, "last_count_time": 0})
+                    counts = state.setdefault("counts", {})
+                    counts[rest] = counts.get(rest, 0) + 1
+                    current_count = counts[rest]
+                    state["last_count_time"] = now
 
-                        if state["action"] == 0 and current_count >= WATCHER_MAX_STRIKE:
-                            self._trigger_watcher_pause(tag, rest, now)
-                            state["action"] = now
+                    if state["action"] == 0 and current_count >= WATCHER_MAX_STRIKE:
+                        self._trigger_watcher_pause(tag, rest, now)
+                        state["action"] = now
 
-                        self.save_logs_state()
+                    self.save_logs_state()
         except Exception as e:
             log(f"Error: {str(e)}", "error")
 
