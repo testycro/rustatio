@@ -1,13 +1,16 @@
-<h1>This is a shell/python script that allows you to modify the behavior of Rustatio (Docker) with custom rules.</h1>
+<h1>This is a python/shell script that allows you to modify the behavior of Rustatio (Docker) with custom rules and admin panel.</h1>
 
 - Work with rustatio 2.x.x in the same container
 - Work better with https://github.com/takitsu21/rustatio/releases/tag/v2.6.0 (less bugs)
 - Place the files according to the indicated paths.
-- Edit "rustatio_daemon.sh" to match your config ("rustatio_daemon.py" for python version)
-- Don't forget to create your rules's file in the right folder, there is a sample
-- Add following lines to your docker-compose (BASH or PYTHON)
+- Edit "rustatio_daemon.py" to match your config ("rustatio_daemon.sh" for bash version)
+- Don't forget to create your rules's file in the right folder, there is a sample <b>for bash</b>
+- Add following lines to your docker-compose (PYTHON or BASH)
+- Admin panel (python only) is on Rustatio's port +1 (ex: 8080+1 = 8081)
 
-BASH
+<img width="1680" height="1049" alt="Admin_Panel" src="https://github.com/user-attachments/assets/cc912b3b-8692-4bfa-be16-36ecd49f9dfc" />
+
+BASH (Deprecated)
 ```yaml
 services:
   rustatio:
