@@ -6,7 +6,7 @@ if [ ! -f /etc/localtime ] && [ -z "$TZ" ]; then
 fi
 
 # Met à jour les paquets et installe les dépendances
-apt-get update && apt-get install -y --no-install-recommends tini python3 python3-requests && rm -rf /var/lib/apt/lists/*
+apt-get update && apt-get install -y --no-install-recommends tini python3 python3-requests python3-flask && rm -rf /var/lib/apt/lists/*
 
 # Boucle de supervision du daemon en arrière-plan
 (
