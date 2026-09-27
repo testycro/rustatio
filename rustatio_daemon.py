@@ -847,6 +847,7 @@ class RustatioManager:
             if isinstance(current, dict) and part in current:
                 current = current.get(part)
             else:
+                log(f"get_val path '{path}' missed at part '{part}', returning default: {default}", "trace")
                 return default
         return current
 
@@ -855,6 +856,7 @@ class RustatioManager:
         try:
             return float(val) if val is not None else float(default)
         except (ValueError, TypeError):
+            log(f"get_num conversion failed for path '{path}' with value '{val}', falling back to default: {default}", "trace")
             return float(default)
 
     def _extract_bracket(self, msg):
@@ -869,12 +871,14 @@ class RustatioManager:
         return msg[start:], ""
 
     def load_configs(self):
+        log("Loading configurations...", "trace")
         try:
             if os.path.exists(DEFAULTS_FILE):
                 with open(DEFAULTS_FILE, 'r') as f:
                     data = json.load(f)
                     self.default_config = data.get("default_config", data)
                     log(f"Defaults loaded from {DEFAULTS_FILE}", "start")
+                    log(f"Loaded default_config content: {self.default_config}", "trace")
             else:
                 log(f"Defaults file {DEFAULTS_FILE} not found", "error")
         except Exception as e:
@@ -888,6 +892,7 @@ class RustatioManager:
 
                 self.rules_lines = []
                 for line in raw_lines:
+                    log(f"Processing rule line: {line}", "trace")
                     parts = line.split('|', 2)
                     if len(parts) == 3:
                         cond, action, assign = [x.strip() for x in parts]
@@ -903,6 +908,7 @@ class RustatioManager:
                                 "action": action, "assign": assign,
                                 "default_keys": default_keys, "instance_keys": instance_keys
                             })
+                            log(f"Rule successfully compiled -> Python condition: {py_cond}", "trace")
                         except SyntaxError as e:
                             log(f"Generated rule syntax error: {py_cond} ({e})", "error")
                     else:
@@ -915,14 +921,17 @@ class RustatioManager:
             log(f"Error: {str(e)}", "error")
 
     def load_logs_state(self):
+        log(f"Loading logs state from {CHECK_LOGS_FILE}", "trace")
         try:
             if os.path.exists(CHECK_LOGS_FILE):
                 with open(CHECK_LOGS_FILE, 'r') as f:
                     return json.load(f)
-        except Exception: pass
+        except Exception as e:
+            log(f"Error: {str(e)}", "error")
         return {}
 
     def save_logs_state(self):
+        log(f"Saving logs state to {CHECK_LOGS_FILE}", "trace")
         try:
             with open(CHECK_LOGS_FILE, 'w') as f:
                 json.dump(self.logs_state, f)
@@ -946,14 +955,19 @@ class RustatioManager:
             l, h = float(low), float(high)
             if l > h: l, h = h, l
             self.rand_cache[key] = random.uniform(l, h)
+            log(f"Generated new cached random for {key}: {self.rand_cache[key]}", "trace")
         self.used_rand_keys.add(key)
         return self.rand_cache[key]
 
     def validate_rule_keys(self, rule, sample_inst):
         for key in rule["default_keys"]:
-            if self.get_val(self.default_config, key, "__MISSING__") == "__MISSING__": return False
+            if self.get_val(self.default_config, key, "__MISSING__") == "__MISSING__":
+                log(f"default_config key 'default_config.{key}' not found", "f_error")
+                return False
         for key in rule["instance_keys"]:
-            if self.get_val(sample_inst, key, "__MISSING__") == "__MISSING__": return False
+            if self.get_val(sample_inst, key, "__MISSING__") == "__MISSING__":
+                log(f"Instance key '{key}' not found", "f_error")
+                return False
         return True
 
     def translate_condition(self, cond_str):
@@ -989,8 +1003,13 @@ class RustatioManager:
             '__default__': lambda k: self.get_val(self.default_config, k),
             '__get_rand__': self.get_cached_rand
         }
-        try: return eval(compiled_cond, {"__builtins__": {"str": str, "float": float}}, eval_context)
-        except Exception: return False
+        try:
+            result = eval(compiled_cond, {"__builtins__": {"str": str, "float": float}}, eval_context)
+            log(f"Evaluated rule for instance ID {inst.get('id')}: result = {result}", "trace")
+            return result
+        except Exception as e:
+            log(f"Evaluation error for instance ID {inst.get('id')}: {e}", "trace")
+            return False
 
     def is_action_valid(self, action, state):
         if action == "start": return (state == "Stopped")
@@ -1008,17 +1027,24 @@ class RustatioManager:
         except ValueError: return val_raw
 
     def process_rules(self):
+        log("Starting process_rules cycle", "trace")
         instances_resp = self.api.request("GET", "instances")
-        if not instances_resp: return
+        if not instances_resp:
+            log("process_rules aborted: no response from instances endpoint", "trace")
+            return
 
         with self.strike_lock:
             self.current_instances = instances_resp.get("data", [])
 
-        if not self.current_instances: return
+        if not self.current_instances:
+            log("process_rules: current_instances list is empty", "trace")
+            return
         sample_inst = self.current_instances[0]
 
         for rule in self.rules_lines:
-            if not self.validate_rule_keys(rule, sample_inst): continue
+            if not self.validate_rule_keys(rule, sample_inst):
+                log(f"Rule keys validation failed for rule: {rule['raw']}", "trace")
+                continue
             for inst in self.current_instances:
                 if inst.get("_deleted"): continue
                 state = self.get_val(inst, "stats.state")
@@ -1026,9 +1052,12 @@ class RustatioManager:
                 if TOR_KEEP_LAST and rule["action"] in ["stop", "delete"]:
                     announce = str(self.get_val(inst, "torrent.announce", "")).lower()
                     count = sum(1 for i in self.current_instances if not i.get("_deleted") and str(self.get_val(i, "torrent.announce", "")).lower() == announce)
-                    if count <= 1: continue
+                    if count <= 1:
+                        log(f"TOR_KEEP_LAST triggered: skipping action '{rule['action']}' for instance {inst.get('id')}.", "trace")
+                        continue
 
                 if self.evaluate_rule(inst, rule["compiled"]):
+                    log(f"Rule matched! Applying action '{rule['action']}' on instance ID {inst.get('id')}", "trace")   
                     self.apply_action(inst, rule["action"], rule["assign"], rule["raw"])
 
     def apply_action(self, inst, action, assign, rule_line):
@@ -1049,6 +1078,8 @@ class RustatioManager:
             elif self.api.request("POST", "grid/tag", payload):
                 inst["tags"] = list(set(existing_tags + new_tags))
                 log(f"Tags added ({assign})", "f_succes")
+            else:
+                log(f"Failed to add tags ({assign}) for instance {id_}", "f_error")
 
         elif action == "removetags":
             tags_to_remove = [t.strip() for t in assign.split(',') if t.strip()]
@@ -1061,13 +1092,17 @@ class RustatioManager:
             elif self.api.request("POST", "grid/tag", payload):
                 inst["tags"] = [t for t in existing_tags if t not in del_tags]
                 log(f"Tags removed ({assign})", "f_succes")
+            else:
+                log(f"Failed to remove tags ({assign}) for instance {id_}", "f_error")
 
         elif action == "update":
             parts = assign.split("=", 1)
             if len(parts) == 2 and parts[0].strip().startswith("config."):
                 key = parts[0].replace("config.", "").strip()
                 val = self._resolve_assignment_val(parts[1].strip().rstrip(";"))
-                if val == "__MISSING__": return
+                if val == "__MISSING__":
+                    log(f"default_config key '{parts[1].strip()}' not found in defaults", "f_error")
+                    return
 
                 payload = copy.deepcopy(inst.get("config", {}))
                 payload[key] = val
@@ -1076,14 +1111,19 @@ class RustatioManager:
                 elif self.api.request("PATCH", f"instances/{id_}/config", payload):
                     inst.setdefault("config", {})[key] = val
                     log(f"Patch succeeded ({assign})", "f_succes")
+                else: log("Patch failed", "f_error")
             else: log(f"update: invalid assign '{assign}'", "warning")
 
         elif action == "start":
             parts = assign.split("=", 1)
-            if len(parts) < 2: return
+            if len(parts) < 2:
+                log(f"update: invalid assign '{assign}'", "warning")
+                return
             lhs = parts[0].strip()
             val = self._resolve_assignment_val(parts[1].strip().rstrip(";"))
-            if val == "__MISSING__": return
+            if val == "__MISSING__":
+                log(f"default_config key '{parts[1].strip()}' not found in defaults", "f_error")
+                return
 
             payload = {"torrent": copy.deepcopy(inst.get("torrent", {})), "config": copy.deepcopy(inst.get("config", {}))}
             if lhs.startswith("config."): payload["config"][lhs.replace("config.", "")] = val
@@ -1129,17 +1169,25 @@ class RustatioManager:
                                         except Exception: log(f"Failed to archive {filepath}", "f_error")
 
                             if "watchfile" in assign:
-                                if DRY_RUN: log(f"Would delete file '{filename}'", "f_recycle")
+                                if DRY_RUN: log(f"Would delete file '{filename}' at '{filepath}'", "f_recycle")
                                 else:
                                     if self.api.request("DELETE", f"watch/files?path={urllib.parse.quote(filename)}"):
                                         log("Delete succeeded", "f_succes")
+                                    else:
+                                        log("Failed to delete file", "f_error")
 
         for key in self.used_rand_keys: self.rand_cache.pop(key, None)
         self.used_rand_keys.clear()
 
     def logs_watcher_thread(self):
         url = f"{self.api.base_url}/api/logs"
-        headers = {"Accept": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive"}
+        log(f"Starting logs_watcher_thread targeting SSE URL: {url}", "trace")
+        headers = {
+            "Accept": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
         while not self.stop_event.is_set():
             try:
                 with requests.get(url, stream=True, headers=headers, timeout=60) as r:
@@ -1150,11 +1198,15 @@ class RustatioManager:
                             self._handle_log_event(line[5:].strip())
             except requests.exceptions.Timeout:
                 self._check_expirations()
-            except Exception:
-                if self.stop_event.is_set(): return
+            except Exception as e:
+                if self.stop_event.is_set():
+                    log(f"logs_watcher_thread stopping", "trace")
+                    return
+                log(f"logs_watcher_thread exception encountered: {e}", "trace")
                 self.stop_event.wait(5)
 
     def _handle_log_event(self, json_str):
+        log(f"Handling log event payload: {json_str}", "trace")
         try:
             event = json.loads(json_str)
             level = event.get("level", "").lower()
@@ -1176,7 +1228,8 @@ class RustatioManager:
                             state["action"] = now
 
                         self.save_logs_state()
-        except Exception: pass
+        except Exception as e:
+            log(f"Error: {str(e)}", "error")
 
     def _find_instance_by_name(self, name):
         with self.strike_lock:
@@ -1190,6 +1243,8 @@ class RustatioManager:
         state = self.get_val(inst, "stats.state")
         if self.is_action_valid("pause", state):
             log(f"Repeated error detected (x{WATCHER_MAX_STRIKE}). Try to pause for {self.format_time_bash_style(WATCHER_PAUSE_TIME)} and add tag", "warning")
+            log(f"Torrent name : {tag}", "f_data")
+            log(f"{rest}", "f_data")
             id_ = inst.get("id")
             err_tag = f"Err {self.get_elapsed_since_midnight_tag(action_ts)}"
 
@@ -1199,8 +1254,10 @@ class RustatioManager:
                     existing_tags = inst.get("tags") or []
                     if err_tag not in existing_tags:
                         self.api.request("POST", "grid/tag", {"ids": [id_], "add_tags": [err_tag], "remove_tags": []})
+                        log(f"Tags applied ({err_tag})", "f_succes")
 
     def _check_expirations(self):
+        log("Checking log expirations and purges", "trace")
         with self.strike_lock:
             now = time.time()
             dirty = False
@@ -1229,15 +1286,18 @@ class RustatioManager:
         state = self.get_val(inst, "stats.state")
         if self.is_action_valid("resume", state):
             log("Pause ended. Try to resume and remove tag", "warning")
+            log(f"Torrent name : {tag}", "f_data")
             id_ = inst.get("id")
             err_tag = f"Err {self.get_elapsed_since_midnight_tag(action_ts)}"
 
             if DRY_RUN: log(f"Would resume '{tag}' and removetags '{err_tag}'", "f_recycle")
             else:
                 if self.api.request("POST", "grid/resume", {"ids": [id_]}):
+                    log("Resume succeeded", "f_succes")
                     existing_tags = inst.get("tags") or []
                     if err_tag in existing_tags:
                         self.api.request("POST", "grid/tag", {"ids": [id_], "add_tags": [], "remove_tags": [err_tag]})
+                        log(f"Tags removed ({err_tag})", "f_succes")
 
     def run(self):
         initial_interval = 5
