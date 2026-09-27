@@ -10,17 +10,7 @@
 
 <img width="1680" height="1049" alt="Admin_Panel" src="https://github.com/user-attachments/assets/cc912b3b-8692-4bfa-be16-36ecd49f9dfc" />
 
-BASH (Deprecated)
-```yaml
-services:
-  rustatio:
-    entrypoint: ["/entrypoint.sh"]
-    volumes:
-      - /your/path/to/entrypoint.sh:/entrypoint.sh:ro
-      - /your/path/to/rustatio_daemon.sh:/rustatio_daemon.sh:ro
-```
-
-PYTHON (With Admin Panel on port 8081)
+PYTHON version (With Admin Panel on port 8081)
 ```yaml
 services:
   rustatio:
@@ -30,6 +20,16 @@ services:
     volumes:
       - /your/path/to/entrypoint_py.sh:/entrypoint_py.sh:ro
       - /your/path/to/rustatio_daemon.py:/rustatio_daemon.py:ro
+```
+
+BASH version (Deprecated) will be removed soon
+```yaml
+services:
+  rustatio:
+    entrypoint: ["/entrypoint.sh"]
+    volumes:
+      - /your/path/to/entrypoint.sh:/entrypoint.sh:ro
+      - /your/path/to/rustatio_daemon.sh:/rustatio_daemon.sh:ro
 ```
 
 <h1>Rules</h1>
