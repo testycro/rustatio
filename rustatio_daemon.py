@@ -25,7 +25,6 @@ RULES_FILE = os.environ.get("RULES_FILE", "/data/rules.txt")
 DEFAULTS_FILE = os.environ.get("DEFAULTS_FILE", "/data/state.json")
 DRY_RUN = os.environ.get("DRY_RUN", "false").lower() == "true"
 LOGFILE = os.environ.get("LOGFILE", "/data/rustatio_daemon.log")
-TRACE = os.environ.get("TRACE", "false").lower() == "true"
 CHECK_LOGS_FILE = os.environ.get("CHECK_LOGS_FILE", os.path.join(os.path.dirname(RULES_FILE), "check_logs.json"))
 
 LOGS_WATCHER = int(os.environ.get("LOGS_WATCHER", 1))
@@ -37,8 +36,38 @@ TOR_KEEP_LAST = int(os.environ.get("TOR_KEEP_LAST", 1))
 # ==========================================
 # LOGGING SETUP
 # ==========================================
+RUST_LOG_LEVELS = {
+    "TRACE": logging.DEBUG,
+    "DEBUG": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARN": logging.WARNING,
+    "ERROR": logging.ERROR,
+}
+
+def get_global_rust_log_level(env_val):
+    if not env_val:
+        return logging.INFO
+        
+    directives = [d.strip() for d in env_val.split(",") if d.strip()]
+    for directive in directives:
+        if "=" not in directive:
+            level_str = directive.upper()
+            if level_str in RUST_LOG_LEVELS:
+                return RUST_LOG_LEVELS[level_str]
+    
+    return logging.INFO
+
+daemon_log_env = os.getenv("RUST_DAEMON_LOG")
+
+if daemon_log_env:
+    log_level = RUST_LOG_LEVELS.get(daemon_log_env.strip().upper(), logging.INFO)
+else:
+    rust_log_env = os.getenv("RUST_LOG", "info")
+    log_level = get_global_rust_log_level(rust_log_env)
+
 logger = logging.getLogger("Rustatio")
-logger.setLevel(logging.INFO)
+logger.setLevel(log_level)
+
 formatter = logging.Formatter('%(asctime)s :: %(message)s', "%d-%m-%Y %H:%M:%S")
 
 console_handler = logging.StreamHandler()
@@ -62,26 +91,45 @@ def setup_file_handler():
 
 setup_file_handler()
 
+# 2. Association des styles aux niveaux de log Python
+STYLE_LEVELS = {
+    "trace": logging.DEBUG,
+    "finish": logging.INFO,
+    "task": logging.INFO,
+    "recycle": logging.INFO,
+    "lock": logging.INFO,
+    "data": logging.INFO,
+    "saving": logging.INFO,
+    "succes": logging.INFO,
+    "start": logging.INFO,
+    "warning": logging.WARNING,
+    "error": logging.ERROR,
+    "denied": logging.ERROR,
+}
+
 def log(msg, style="default"):
     prefix_spaces = ""
+    base_style = style
+
     if style.startswith("ff_"):
         prefix_spaces = "          └─ "
-        style = style[3:]
+        base_style = style[3:]
     elif style.startswith("f_"):
         prefix_spaces = "   └─ "
-        style = style[2:]
+        base_style = style[2:]
 
     prefixes = {
         "start": "🚀 ", "error": "❌ ", "succes": "✅️ ", "warning": "⚠️ ",
         "denied": "🚫 ", "saving": "💾 ", "data": "🧪 ", "lock": "🔒 ",
         "recycle": "♻️ ", "task": "⚡ ", "finish": "🏁 ", "trace": "🔍 "
     }
-    prefix = prefixes.get(style, "")
-    logger.info(f"{prefix_spaces}{prefix}{msg}")
-
-def trace(msg):
-    if TRACE:
-        log(msg, "ff_trace")
+    prefix = prefixes.get(base_style, "")
+    
+    # Niveau par défaut : INFO
+    level = STYLE_LEVELS.get(base_style, logging.INFO)
+    
+    # Envoie le log au niveau approprié
+    logger.log(level, f"{prefix_spaces}{prefix}{msg}")
 
 # ==========================================
 # API CLIENT
@@ -91,12 +139,12 @@ class APIClient:
         self.base_url = base_url.rstrip("/")
         self.session = requests.Session()
         self.session.headers.update({"Accept": "application/json"})
-        trace(f"APIClient initialized with base_url: {self.base_url}")
+        log(f"APIClient initialized with base_url: {self.base_url}", "trace")
 
     def request(self, method, endpoint, payload=None, timeout=5):
         url = f"{self.base_url}/api/{endpoint}"
         max_retries = 3
-        trace(f"API Request -> {method} {url} with payload: {payload}")
+        log(f"API Request -> {method} {url} with payload: {payload}", "trace")
 
         for attempt in range(1, max_retries + 1):
             try:
@@ -107,7 +155,7 @@ class APIClient:
                 resp.raise_for_status()
                 data = resp.json()
 
-                trace(f"API Response <- {method} {endpoint} Status: {resp.status_code}")
+                log(f"API Response <- {method} {endpoint} Status: {resp.status_code}", "trace")
 
                 if data.get("success") is True:
                     if "data" in data or "stats" in data or "config" in data:
@@ -137,7 +185,7 @@ class RustatioManager:
         self.used_rand_keys = set()
         self.current_instances = []
 
-        trace("Initializing regex patterns for RustatioManager")
+        log("Initializing regex patterns for RustatioManager", "trace")
 
         self.re_range = re.compile(r'([A-Za-z0-9_.]+): *([0-9.]+) *- *([0-9.]+)')
         self.re_default_config = re.compile(r'default_config\.([A-Za-z0-9_.]+)')
@@ -175,7 +223,7 @@ class RustatioManager:
             if isinstance(current, dict) and part in current:
                 current = current.get(part)
             else:
-                trace(f"get_val path '{path}' missed at part '{part}', returning default: {default}")
+                log(f"get_val path '{path}' missed at part '{part}', returning default: {default}", "trace")
                 return default
         return current
 
@@ -184,7 +232,7 @@ class RustatioManager:
         try:
             return float(val) if val is not None else float(default)
         except (ValueError, TypeError):
-            trace(f"get_num conversion failed for path '{path}' with value '{val}', falling back to default: {default}")
+            log(f"get_num conversion failed for path '{path}' with value '{val}', falling back to default: {default}", "trace")
             return float(default)
 
     def _extract_bracket(self, msg):
@@ -202,14 +250,14 @@ class RustatioManager:
         return msg[start:], ""
 
     def load_configs(self):
-        trace("Loading configurations...")
+        log("Loading configurations...", "trace")
         try:
             if os.path.exists(DEFAULTS_FILE):
                 with open(DEFAULTS_FILE, 'r') as f:
                     data = json.load(f)
                     self.default_config = data.get("default_config", data)
                     log(f"Defaults loaded from {DEFAULTS_FILE}", "start")
-                    trace(f"Loaded default_config content: {self.default_config}")
+                    log(f"Loaded default_config content: {self.default_config}", "trace")
             else:
                 log(f"Defaults file {DEFAULTS_FILE} not found", "error")
         except Exception as e:
@@ -223,7 +271,7 @@ class RustatioManager:
 
                 self.rules_lines = []
                 for line in raw_lines:
-                    trace(f"Processing rule line: {line}")
+                    log(f"Processing rule line: {line}", "trace")
                     parts = line.split('|', 2)
                     if len(parts) == 3:
                         cond, action, assign = [x.strip() for x in parts]
@@ -247,7 +295,7 @@ class RustatioManager:
                                 "default_keys": default_keys,
                                 "instance_keys": instance_keys
                             })
-                            trace(f"Rule successfully compiled -> Python condition: {py_cond}")
+                            log(f"Rule successfully compiled -> Python condition: {py_cond}", "trace")
                         except SyntaxError as e:
                             log(f"Generated rule syntax error: {py_cond} ({e})", "error")
                     else:
@@ -260,7 +308,7 @@ class RustatioManager:
             log(f"Error: {str(e)}", "error")
 
     def load_logs_state(self):
-        trace(f"Loading logs state from {CHECK_LOGS_FILE}")
+        log(f"Loading logs state from {CHECK_LOGS_FILE}", "trace")
         try:
             if os.path.exists(CHECK_LOGS_FILE):
                 with open(CHECK_LOGS_FILE, 'r') as f:
@@ -270,7 +318,7 @@ class RustatioManager:
         return {}
 
     def save_logs_state(self):
-        trace(f"Saving logs state to {CHECK_LOGS_FILE}")
+        log(f"Saving logs state to {CHECK_LOGS_FILE}", "trace")
         try:
             with open(CHECK_LOGS_FILE, 'w') as f:
                 json.dump(self.logs_state, f)
@@ -295,7 +343,7 @@ class RustatioManager:
             l, h = float(low), float(high)
             if l > h: l, h = h, l
             self.rand_cache[key] = random.uniform(l, h)
-            trace(f"Generated new cached random for {key}: {self.rand_cache[key]}")
+            log(f"Generated new cached random for {key}: {self.rand_cache[key]}", "trace")
         self.used_rand_keys.add(key)
         return self.rand_cache[key]
 
@@ -347,10 +395,10 @@ class RustatioManager:
         }
         try:
             result = eval(compiled_cond, {"__builtins__": {"str": str, "float": float}}, eval_context)
-            trace(f"Evaluated rule for instance ID {inst.get('id')}: result = {result}")
+            log(f"Evaluated rule for instance ID {inst.get('id')}: result = {result}", "trace")
             return result
         except Exception as e:
-            trace(f"Evaluation error for instance ID {inst.get('id')}: {e}")
+            log(f"Evaluation error for instance ID {inst.get('id')}: {e}", "trace")
             return False
 
     def is_action_valid(self, action, state):
@@ -377,25 +425,25 @@ class RustatioManager:
             return val_raw
 
     def process_rules(self):
-        trace("Starting process_rules cycle")
+        log("Starting process_rules cycle", "trace")
         instances_resp = self.api.request("GET", "instances")
         if not instances_resp: 
-            trace("process_rules aborted: no response from instances endpoint")
+            log("process_rules aborted: no response from instances endpoint", "trace")
             return
 
         with self.strike_lock:
             self.current_instances = instances_resp.get("data", [])
 
         if not self.current_instances:
-            trace("process_rules: current_instances list is empty")
+            log("process_rules: current_instances list is empty", "trace")
             return
 
         sample_inst = self.current_instances[0]
 
         for rule in self.rules_lines:
-            trace(f"Evaluating rule line: {rule['raw']}")
+            log(f"Evaluating rule line: {rule['raw']}", "trace")
             if not self.validate_rule_keys(rule, sample_inst):
-                trace(f"Rule keys validation failed for rule: {rule['raw']}")
+                log(f"Rule keys validation failed for rule: {rule['raw']}", "trace")
                 continue
 
             for inst in self.current_instances:
@@ -410,11 +458,11 @@ class RustatioManager:
                     announce = str(self.get_val(inst, "torrent.announce", "")).lower()
                     count = sum(1 for i in self.current_instances if not i.get("_deleted") and str(self.get_val(i, "torrent.announce", "")).lower() == announce)
                     if count <= 1:
-                        trace(f"TOR_KEEP_LAST triggered: skipping action '{rule['action']}' for instance {inst.get('id')}.")
+                        log(f"TOR_KEEP_LAST triggered: skipping action '{rule['action']}' for instance {inst.get('id')}.", "trace")
                         continue
 
                 if self.evaluate_rule(inst, rule["compiled"]):
-                    trace(f"Rule matched! Applying action '{rule['action']}' on instance ID {inst.get('id')}")                   
+                    log(f"Rule matched! Applying action '{rule['action']}' on instance ID {inst.get('id')}", "trace")                   
                     self.apply_action(inst, rule["action"], rule["assign"], rule["raw"])
 
     def apply_action(self, inst, action, assign, rule_line):
@@ -569,7 +617,7 @@ class RustatioManager:
 
     def logs_watcher_thread(self):
         url = f"{self.api.base_url}/api/logs"
-        trace(f"Starting logs_watcher_thread targeting SSE URL: {url}")
+        log(f"Starting logs_watcher_thread targeting SSE URL: {url}", "trace")
         headers = {
             "Accept": "text/event-stream",
             "Cache-Control": "no-cache",
@@ -584,14 +632,14 @@ class RustatioManager:
                         if line and line.startswith("data:"):
                             self._handle_log_event(line[5:].strip())
             except requests.exceptions.Timeout:
-                trace("logs_watcher_thread timeout reached, checking expirations")
+                log("logs_watcher_thread timeout reached, checking expirations", "trace")
                 self._check_expirations()
             except Exception as e:
-                trace(f"logs_watcher_thread exception encountered: {e}")
+                log(f"logs_watcher_thread exception encountered: {e}", "trace")
                 time.sleep(5)
 
     def _handle_log_event(self, json_str):
-        trace(f"Handling log event payload: {json_str}")
+        log(f"Handling log event payload: {json_str}", "trace")
         try:
             event = json.loads(json_str)
             level = event.get("level", "").lower()
@@ -651,7 +699,7 @@ class RustatioManager:
                         log(f"Tags applied ({err_tag})", "f_succes")
 
     def _check_expirations(self):
-        trace("Checking log expirations and purges")
+        log("Checking log expirations and purges", "trace")
         with self.strike_lock:
             now = time.time()
             dirty = False
@@ -705,7 +753,7 @@ class RustatioManager:
 
     def run(self):
         initial_interval = 5
-        log(f"Starting RustatioManager daemon (TRACE mode: {'ENABLED' if TRACE else 'DISABLED'})", "start")
+        log(f"Starting RustatioManager daemon", "start")
         self.load_configs()
 
         interval = REFRESH_INTERVAL
