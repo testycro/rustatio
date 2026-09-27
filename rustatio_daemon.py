@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 import os
 import sys
 import time
@@ -12,12 +13,17 @@ import shutil
 import urllib.parse
 import requests
 import copy
+import datetime
 from collections import defaultdict
+from flask import Flask, request, jsonify, render_template_string
+
+app = Flask(__name__)
 
 # ==========================================
 # CONFIGURATION
 # ==========================================
-PORT = os.environ.get("PORT", "8080")
+PORT = int(os.environ.get("PORT", 8080))
+ADMIN_PORT = PORT + 1
 RUSTATIO_API = os.environ.get("RUSTATIO_API", f"http://127.0.0.1:{PORT}")
 REFRESH_INTERVAL = int(os.environ.get("REFRESH_INTERVAL", 0))
 ARCHIVE_FOLDER = os.environ.get("ARCHIVE_FOLDER", "/data/archived")
@@ -32,6 +38,635 @@ WATCHER_MAX_STRIKE = int(os.environ.get("WATCHER_MAX_STRIKE", 3))
 WATCHER_STRIKE_TIME = int(os.environ.get("WATCHER_STRIKE_TIME", 3600))
 WATCHER_PAUSE_TIME = int(os.environ.get("WATCHER_PAUSE_TIME", 3600))
 TOR_KEEP_LAST = int(os.environ.get("TOR_KEEP_LAST", 1))
+
+# ==========================================
+# HTML TEMPLATE (ADMIN PANEL)
+# ==========================================
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Rustatio - Panneau de Contrôle</title>
+    <style>
+        :root {
+            --bg-color: #121212;
+            --panel-bg: #1e1e1e;
+            --section-bg: #262626;
+            --text-main: #e0e0e0;
+            --rust-orange: #ce412b;
+            --rust-orange-hover: #e84d35;
+            --border-color: #3d3d3d;
+            --success: #4caf50;
+            --danger: #f44336;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .container {
+            width: 100%;
+            max-width: 1450px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .header {
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 20px;
+            background: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            box-sizing: border-box;
+        }
+        h1, h2 { margin: 0; color: var(--rust-orange); }
+        .panel {
+            background: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+        }
+        .controls { display: flex; gap: 10px; align-items: center; }
+        button {
+            background-color: var(--rust-orange);
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background 0.2s, transform 0.1s;
+        }
+        button:hover { background-color: var(--rust-orange-hover); }
+        button.stop { background-color: var(--danger); }
+        button.start { background-color: var(--success); }
+        button.small { padding: 4px 8px; font-size: 0.8em; }
+        
+        .rule-row {
+            display: flex;
+            gap: 12px;
+            align-items: stretch;
+            background: #181818;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            border: 1px solid var(--border-color);
+            position: relative;
+        }
+
+        .rule-block {
+            background: var(--section-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .rule-block-title {
+            font-size: 0.75em;
+            font-weight: bold;
+            letter-spacing: 1px;
+            color: #888;
+            text-transform: uppercase;
+            border-bottom: 1px solid #333;
+            padding-bottom: 4px;
+            margin-bottom: 2px;
+        }
+
+        .block-conditions { flex: 3; }
+        .block-action { flex: 1; min-width: 160px; }
+        .block-assign { flex: 2; min-width: 220px; }
+
+        .rule-arrow {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--rust-orange);
+            font-size: 1.4em;
+            font-weight: bold;
+            user-select: none;
+        }
+
+        .conditions-wrapper {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .condition-block {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+            background: #1e1e1e;
+            padding: 6px;
+            border-radius: 4px;
+            border: 1px solid #333;
+        }
+
+        select, input[type="text"], input[type="number"] {
+            background: #0d0d0d;
+            color: #fff;
+            border: 1px solid var(--border-color);
+            padding: 7px;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+        select:focus, input:focus { outline: 1px solid var(--rust-orange); }
+
+        .cond-logop { font-weight: bold; color: var(--rust-orange); border-color: var(--rust-orange); }
+        input[type="text"], input[type="number"] { flex-grow: 1; min-width: 100px; }
+
+        .action-type {
+            font-weight: bold;
+            text-transform: uppercase;
+            padding: 8px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .action-type[data-action="start"] { background-color: #1b5e20; color: #a5d6a7; border-color: #2e7d32; }
+        .action-type[data-action="stop"] { background-color: #b71c1c; color: #ffcdd2; border-color: #c62828; }
+        .action-type[data-action="pause"] { background-color: #e65100; color: #ffe0b2; border-color: #f57c00; }
+        .action-type[data-action="resume"] { background-color: #0d47a1; color: #bbdefb; border-color: #1565c0; }
+        .action-type[data-action="delete"] { background-color: #4a148c; color: #e1bee7; border-color: #6a1b9a; }
+        .action-type[data-action="update"] { background-color: #004d40; color: #b2dfdb; border-color: #00695c; }
+        .action-type[data-action="addtags"] { background-color: #006064; color: #b2ebf2; border-color: #00838f; }
+        .action-type[data-action="removetags"] { background-color: #4e342e; color: #d7ccc8; border-color: #6d4c41; }
+
+        .btn-delete-rule {
+            align-self: center;
+            background: #333;
+            color: #ff6b6b;
+            border: 1px solid #555;
+            border-radius: 50%;
+            width: 28px;
+            height: 28px;
+            padding: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+        }
+        .btn-delete-rule:hover { background: var(--danger); color: white; }
+
+        .raw-editor-container { margin-top: 15px; display: none; }
+        textarea {
+            width: 100%; height: 150px; background: #000; color: #fff;
+            border: 1px solid var(--border-color); padding: 10px;
+            font-family: monospace; resize: vertical; box-sizing: border-box;
+        }
+
+        #logs {
+            width: 100%; height: 400px; background: #000; color: #a5d6a7;
+            border: 1px solid var(--border-color); padding: 10px;
+            font-family: monospace; overflow-y: scroll; box-sizing: border-box;
+            white-space: pre-wrap;
+        }
+        .status-badge {
+            padding: 5px 10px; border-radius: 12px; font-size: 0.9em; font-weight: bold;
+        }
+        .status-running { background: rgba(76, 175, 80, 0.2); color: var(--success); }
+        .status-stopped { background: rgba(244, 67, 54, 0.2); color: var(--danger); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>⚙️ Rustatio Control</h1>
+            <div class="controls">
+                <span id="daemon-status" class="status-badge status-stopped">Vérification...</span>
+                <button class="start" onclick="daemonAction('start')">▶ Démarrer</button>
+                <button class="stop" onclick="daemonAction('stop')">⏹ Arrêter</button>
+                <button onclick="daemonAction('restart')">🔄 Redémarrer</button>
+                <button style="background-color: #555;" onclick="restartAdmin()">♻️ Redémarrer Admin</button>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h2>📝 Éditeur de Règles (rules.txt)</h2>
+            <p style="font-size: 0.85em; color: #888;">Gestion visuelle structurée : Condition(s) ➔ Action ➔ Assignation/Paramètres.</p>
+            <div id="visual-rules-container"></div>
+            <div style="display: flex; gap: 10px; margin-top: 10px;">
+                <button onclick="addRuleRow()">➕ Ajouter une règle</button>
+                <button onclick="toggleRawEditor()" class="small" style="background: #555;">🔄 Vue Texte Brut</button>
+                <button onclick="saveRules()" style="margin-left: auto;">💾 Sauvegarder les règles</button>
+            </div>
+            <div class="raw-editor-container" id="raw-editor-container">
+                <p style="font-size: 0.85em; color: #e84d35;">Éditeur manuel (Format : condition | action | assignation)</p>
+                <textarea id="rules-editor" onchange="parseTextToVisual()"></textarea>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <h2>🔍 Logs (rustatio_daemon.log)</h2>
+                <div style="display: flex; gap: 8px;">
+                    <button onclick="clearLogs()" class="small stop">Vider</button>
+                    <button onclick="archiveLogs()" class="small" style="background-color: #2e7d32;">📁 Archiver</button>
+                    <button onclick="fetchLogs()" class="small">Rafraîchir</button>
+                </div>
+            </div>
+            <div id="logs"></div>
+        </div>
+    </div>
+
+    <datalist id="default-config-list">
+        <option value="default_config.upload_rate"></option>
+        <option value="default_config.download_rate"></option>
+        <option value="default_config.port"></option>
+        <option value="default_config.vpn_port_sync"></option>
+        <option value="default_config.client_type"></option>
+        <option value="default_config.client_version"></option>
+        <option value="default_config.initial_uploaded"></option>
+        <option value="default_config.initial_downloaded"></option>
+        <option value="default_config.completion_percent"></option>
+        <option value="default_config.num_want"></option>
+        <option value="default_config.randomize_rates"></option>
+        <option value="default_config.random_range_percent"></option>
+        <option value="default_config.randomize_ratio"></option>
+        <option value="default_config.random_ratio_range_percent"></option>
+        <option value="default_config.stop_at_ratio"></option>
+        <option value="default_config.effective_stop_at_ratio"></option>
+        <option value="default_config.stop_at_uploaded"></option>
+        <option value="default_config.stop_at_downloaded"></option>
+        <option value="default_config.stop_at_seed_time"></option>
+        <option value="default_config.idle_when_no_leechers"></option>
+        <option value="default_config.idle_when_no_seeders"></option>
+        <option value="default_config.scrape_interval"></option>
+        <option value="default_config.progressive_rates"></option>
+        <option value="default_config.target_upload_rate"></option>
+        <option value="default_config.target_download_rate"></option>
+        <option value="default_config.progressive_duration"></option>
+        <option value="default_config.post_stop_action"></option>
+    </datalist>
+
+    <script>
+        const FIELDS = [
+            "id", "torrent.info_hash", "torrent.announce", "torrent.name", "torrent.total_size",
+            "torrent.piece_length", "torrent.num_pieces", "torrent.comment", "torrent.created_by",
+            "torrent.is_single_file", "torrent.file_count", 
+            "config.upload_rate", "config.download_rate", "config.port", "config.vpn_port_sync",
+            "config.client_type", "config.client_version", "config.initial_uploaded", "config.initial_downloaded",
+            "config.completion_percent", "config.num_want", "config.randomize_rates", "config.random_range_percent",
+            "config.randomize_ratio", "config.random_ratio_range_percent", "config.stop_at_ratio",
+            "config.effective_stop_at_ratio", "config.stop_at_uploaded", "config.stop_at_downloaded",
+            "config.stop_at_seed_time", "config.idle_when_no_leechers", "config.idle_when_no_seeders",
+            "config.scrape_interval", "config.progressive_rates", "config.target_upload_rate",
+            "config.target_download_rate", "config.progressive_duration", "config.post_stop_action",
+            "stats.uploaded", "stats.downloaded", "stats.ratio", "stats.left", "stats.torrent_completion",
+            "stats.seeders", "stats.leechers", "stats.state", "stats.is_idling", "stats.idling_reason",
+            "stats.session_uploaded", "stats.session_downloaded", "stats.session_ratio",
+            "stats.current_upload_rate", "stats.current_download_rate", "stats.average_upload_rate",
+            "stats.average_download_rate", "stats.upload_progress", "stats.download_progress",
+            "stats.ratio_progress", "stats.seed_time_progress", "stats.effective_stop_at_ratio",
+            "stats.eta_ratio", "stats.eta_uploaded", "stats.eta_download_completion",
+            "stats.stop_condition_met", "stats.post_stop_action", "stats.stats.announce_count",
+            "tags", "default_config.upload_rate", "default_config.download_rate"
+        ];
+        
+        const CONFIG_TYPES = {
+            "config.upload_rate": "number", "config.download_rate": "number", "config.port": "number",
+            "config.vpn_port_sync": "boolean", "config.client_type": "string", "config.client_version": "string",
+            "config.initial_uploaded": "number", "config.initial_downloaded": "number",
+            "config.completion_percent": "number", "config.num_want": "number", "config.randomize_rates": "boolean",
+            "config.random_range_percent": "number", "config.randomize_ratio": "boolean",
+            "config.random_ratio_range_percent": "number", "config.stop_at_ratio": "number",
+            "config.effective_stop_at_ratio": "number", "config.stop_at_uploaded": "number",
+            "config.stop_at_downloaded": "number", "config.stop_at_seed_time": "number",
+            "config.idle_when_no_leechers": "boolean", "config.idle_when_no_seeders": "boolean",
+            "config.scrape_interval": "number", "config.progressive_rates": "boolean",
+            "config.target_upload_rate": "number", "config.target_download_rate": "number",
+            "config.progressive_duration": "number", "config.post_stop_action": "string"
+        };
+        
+        const OPERATORS = [":", "=", "<", ">", "!=", "<=", ">=", "~"];
+        const ACTIONS = ["start", "stop", "pause", "resume", "delete", "update", "addtags", "removetags"];
+        const LOGICAL_OPS = ["AND", "OR"];
+
+        function createOptions(arr, selected = '') {
+            return arr.map(item => `<option value="${item}" ${item === selected ? 'selected' : ''}>${item}</option>`).join('');
+        }
+        
+        function createConfigOptions(selected = '') {
+            return Object.keys(CONFIG_TYPES).map(k => `<option value="${k}" ${k === selected ? 'selected' : ''}>${k}</option>`).join('');
+        }
+
+        function getActionValueInput(configKey, val) {
+            return `<input type="text" class="action-assign-val" list="default-config-list" placeholder="Valeur ou default_config..." value="${val.replace(/"/g, '&quot;')}">`;
+        }
+
+        function applyActionStyle(selectElem) {
+            const action = selectElem.value;
+            selectElem.setAttribute('data-action', action);
+        }
+
+        function updateActionUI(selectElem) {
+            applyActionStyle(selectElem);
+            const action = selectElem.value;
+            const row = selectElem.closest('.rule-row');
+            const container = row.querySelector('.action-assign-container');
+            const assignBlock = row.querySelector('.block-assign');
+            const assignArrow = row.querySelector('.arrow-assign');
+
+            if (['start', 'stop', 'pause', 'resume'].includes(action)) {
+                container.innerHTML = '<span style="color: #666; font-size: 0.85em; italic;">Aucun paramètre</span>';
+                assignBlock.style.opacity = '0.5';
+                if (assignArrow) assignArrow.style.opacity = '0.3';
+            } else {
+                assignBlock.style.opacity = '1';
+                if (assignArrow) assignArrow.style.opacity = '1';
+
+                if (action === 'update') {
+                    const confKey = 'config.upload_rate';
+                    container.innerHTML = `
+                        <select class="action-assign-conf" style="flex-grow:1;">${createConfigOptions(confKey)}</select>
+                        <span style="color:#888; font-weight:bold; align-self:center;">=</span>
+                        ${getActionValueInput(confKey, '')}
+                    `;
+                } else {
+                    container.innerHTML = `<input type="text" class="action-assign-text" placeholder="Paramètres (ex: étiquette1, étiquette2)" value="">`;
+                }
+            }
+        }
+
+        function renderActionAssignContainer(action, assignVal) {
+            if (['start', 'stop', 'pause', 'resume'].includes(action)) {
+                return '<span style="color: #666; font-size: 0.85em; italic;">Aucun paramètre</span>';
+            } else if (action === 'update') {
+                let confKey = 'config.upload_rate';
+                let val = '';
+                if (assignVal) {
+                    const parts = assignVal.split('=');
+                    if (parts.length >= 2) {
+                        confKey = parts[0].trim();
+                        val = parts.slice(1).join('=').trim();
+                    }
+                }
+                if (!CONFIG_TYPES[confKey]) confKey = 'config.upload_rate';
+                
+                return `
+                    <select class="action-assign-conf" style="flex-grow:1;">${createConfigOptions(confKey)}</select>
+                    <span style="color:#888; font-weight:bold; align-self:center;">=</span>
+                    ${getActionValueInput(confKey, val)}
+                `;
+            } else {
+                return `<input type="text" class="action-assign-text" placeholder="Paramètres (ex: étiquette1, étiquette2)" value="${(assignVal||'').replace(/"/g, '&quot;')}">`;
+            }
+        }
+
+        function addCondition(container, logOp='', fieldVal='', opVal=':', condVal='') {
+            const block = document.createElement('div');
+            block.className = 'condition-block';
+            let logOpHtml = '';
+            if (container.children.length > 0) {
+                logOpHtml = `<select class="cond-logop">${createOptions(LOGICAL_OPS, logOp || 'AND')}</select>`;
+            }
+            const placeholder = opVal === ':' ? "Ex: 1.8 - 2.4" : "Valeur";
+
+            block.innerHTML = `
+                ${logOpHtml}
+                <select class="cond-field">${createOptions(FIELDS, fieldVal)}</select>
+                <select class="cond-op">${createOptions(OPERATORS, opVal)}</select>
+                <input type="text" class="cond-val" placeholder="${placeholder}" value="${condVal.replace(/"/g, '&quot;')}">
+                ${container.children.length > 0 ? `<button class="stop small" onclick="this.parentElement.remove()" title="Supprimer">✕</button>` : ''}
+            `;
+            container.appendChild(block);
+        }
+
+        function addRuleRow(conditions = [], actionVal='start', assignVal='') {
+            const container = document.getElementById('visual-rules-container');
+            const row = document.createElement('div');
+            row.className = 'rule-row';
+            const isSimpleAction = ['start', 'stop', 'pause', 'resume'].includes(actionVal);
+
+            row.innerHTML = `
+                <div class="rule-block block-conditions">
+                    <div class="rule-block-title">1. Condition(s)</div>
+                    <div class="conditions-wrapper"></div>
+                    <button class="small" onclick="addCondition(this.previousElementSibling)" style="align-self: flex-start; margin-top: 4px;">➕ Condition</button>
+                </div>
+                <div class="rule-arrow">➔</div>
+                <div class="rule-block block-action">
+                    <div class="rule-block-title">2. Action</div>
+                    <select class="action-type" data-action="${actionVal}" onchange="updateActionUI(this)">${createOptions(ACTIONS, actionVal)}</select>
+                </div>
+                <div class="rule-arrow arrow-assign" style="${isSimpleAction ? 'opacity: 0.3;' : ''}">➔</div>
+                <div class="rule-block block-assign" style="${isSimpleAction ? 'opacity: 0.5;' : ''}">
+                    <div class="rule-block-title">3. Paramètres / Assignation</div>
+                    <div class="action-assign-container" style="display: flex; gap: 6px; align-items: center; flex-grow: 1;">
+                        ${renderActionAssignContainer(actionVal, assignVal)}
+                    </div>
+                </div>
+                <button class="btn-delete-rule" onclick="this.closest('.rule-row').remove()" title="Supprimer la règle">✕</button>
+            `;
+            
+            const condWrapper = row.querySelector('.conditions-wrapper');
+            if (conditions.length === 0) {
+                addCondition(condWrapper);
+            } else {
+                conditions.forEach(c => addCondition(condWrapper, c.logOp, c.field, c.op, c.val));
+            }
+            container.appendChild(row);
+        }
+
+        function parseVisualToText() {
+            const rows = document.querySelectorAll('.rule-row');
+            let text = [];
+            rows.forEach(row => {
+                const condBlocks = row.querySelectorAll('.condition-block');
+                let condString = '';
+                condBlocks.forEach((block, index) => {
+                    const field = block.querySelector('.cond-field').value;
+                    const op = block.querySelector('.cond-op').value;
+                    const val = block.querySelector('.cond-val').value;
+                    if (index > 0) condString += ` ${block.querySelector('.cond-logop').value} `;
+                    condString += op === ':' ? `${field}: ${val}` : `${field} ${op} ${val}`;
+                });
+                
+                const action = row.querySelector('.action-type').value;
+                let assign = '';
+                const assignContainer = row.querySelector('.action-assign-container');
+                if (action === 'update') {
+                    const conf = assignContainer.querySelector('.action-assign-conf')?.value;
+                    const val = assignContainer.querySelector('.action-assign-val')?.value;
+                    if (conf && val !== undefined) assign = `${conf} = ${val}`;
+                } else if (!['start', 'stop', 'pause', 'resume'].includes(action)) {
+                    const txt = assignContainer.querySelector('.action-assign-text');
+                    if (txt) assign = txt.value;
+                }
+                
+                if (condString && action) {
+                    let line = `${condString} | ${action} |`;
+                    if (assign) line += ` ${assign}`;
+                    text.push(line);
+                }
+            });
+            document.getElementById('rules-editor').value = text.join('\\n');
+        }
+
+        function parseTextToVisual() {
+            const container = document.getElementById('visual-rules-container');
+            container.innerHTML = '';
+            const text = document.getElementById('rules-editor').value;
+            const lines = text.split('\\n');
+            const condRegex = /^([a-zA-Z0-9_.]+)\\s*(<=|>=|!=|:|=|<|>|~)\\s*(.*)$/;
+            
+            lines.forEach(line => {
+                const trimmed = line.trim();
+                if (!trimmed || trimmed.startsWith('#')) return; 
+                
+                const parts = trimmed.split('|').map(p => p.trim());
+                if (parts.length >= 2) {
+                    const condString = parts[0];
+                    const action = parts[1] || 'start';
+                    const assign = parts.length >= 3 ? parts[2] : '';
+                    const tokens = condString.split(/\\s+(AND|OR|and|or)\\s+/);
+                    const conditions = [];
+                    let currentLogOp = '';
+                    
+                    tokens.forEach(token => {
+                        const t = token.trim();
+                        if (/^(AND|OR)$/i.test(t)) {
+                            currentLogOp = t.toUpperCase();
+                        } else if (t) {
+                            const match = t.match(condRegex);
+                            if (match) {
+                                conditions.push({ logOp: currentLogOp, field: match[1], op: match[2], val: match[3] });
+                            } else {
+                                conditions.push({ logOp: currentLogOp, field: t, op: ':', val: '' });
+                            }
+                            currentLogOp = '';
+                        }
+                    });
+                    addRuleRow(conditions, action, assign);
+                }
+            });
+            if (container.children.length === 0) addRuleRow();
+        }
+
+        function toggleRawEditor() {
+            const raw = document.getElementById('raw-editor-container');
+            if (raw.style.display === 'block') {
+                raw.style.display = 'none';
+                parseTextToVisual();
+            } else {
+                parseVisualToText();
+                raw.style.display = 'block';
+            }
+        }
+
+        async function fetchStatus() {
+            const badge = document.getElementById('daemon-status');
+            try {
+                const res = await fetch('/api/status');
+                if (!res.ok) throw new Error('Erreur HTTP ' + res.status);
+                const data = await res.json();
+                if (data.running) {
+                    badge.className = 'status-badge status-running';
+                    badge.innerText = "En cours d'exécution (PID: " + data.pid + ")";
+                } else {
+                    badge.className = 'status-badge status-stopped';
+                    badge.innerText = 'Arrêté';
+                }
+            } catch (err) {
+                badge.className = 'status-badge status-stopped';
+                badge.innerText = 'Erreur de connexion';
+            }
+        }
+
+        async function daemonAction(action) {
+            try { await fetch(`/api/daemon/${action}`, { method: 'POST' }); } 
+            catch (e) { console.error(e); }
+            setTimeout(fetchStatus, 1000);
+            setTimeout(fetchLogs, 1000);
+        }
+
+        async function loadRules() {
+            try {
+                const res = await fetch('/api/rules');
+                const data = await res.json();
+                document.getElementById('rules-editor').value = data.content || '';
+                parseTextToVisual();
+            } catch (e) { console.error(e); }
+        }
+
+        async function saveRules() {
+            if (document.getElementById('raw-editor-container').style.display !== 'block') {
+                parseVisualToText();
+            }
+            const content = document.getElementById('rules-editor').value;
+            const res = await fetch('/api/rules', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content })
+            });
+            if (res.ok) alert('Règles sauvegardées avec succès !');
+        }
+
+        async function fetchLogs() {
+            try {
+                const res = await fetch('/api/logs');
+                const data = await res.json();
+                const logDiv = document.getElementById('logs');
+                logDiv.textContent = data.content;
+                logDiv.scrollTop = logDiv.scrollHeight;
+            } catch (e) { console.error(e); }
+        }
+
+        async function clearLogs() {
+            if (!confirm("Voulez-vous vraiment vider le fichier de logs ?")) return;
+            try {
+                const res = await fetch('/api/logs/clear', { method: 'POST' });
+                if (res.ok) fetchLogs();
+                else alert("Erreur lors de la suppression des logs.");
+            } catch (e) { console.error(e); }
+        }
+
+        async function archiveLogs() {
+            try {
+                const res = await fetch('/api/logs/archive', { method: 'POST' });
+                const data = await res.json();
+                if (res.ok && data.success) {
+                    alert("Logs archivés avec succès : " + data.filename);
+                    fetchLogs();
+                } else {
+                    alert("Erreur lors de l'archivage : " + (data.error || "Inconnue"));
+                }
+            } catch (e) { console.error(e); }
+        }
+
+        async function restartAdmin() {
+            if (!confirm("Voulez-vous vraiment redémarrer le panneau d'administration ?")) return;
+            try {
+                await fetch('/api/admin/restart', { method: 'POST' });
+                alert("Le panneau admin redémarre... La page va se recharger dans 3 secondes.");
+                setTimeout(() => window.location.reload(), 3000);
+            } catch (e) {
+                console.error(e);
+                alert("Erreur lors de la demande de redémarrage.");
+            }
+        }
+
+        loadRules();
+        fetchStatus();
+        fetchLogs();
+        setInterval(fetchStatus, 5000);
+        setInterval(fetchLogs, 5000);
+    </script>
+</body>
+</html>
+"""
 
 # ==========================================
 # LOGGING SETUP
@@ -69,7 +704,6 @@ logger = logging.getLogger("Rustatio")
 logger.setLevel(log_level)
 
 formatter = logging.Formatter('%(asctime)s :: %(message)s', "%d-%m-%Y %H:%M:%S")
-
 console_handler = logging.StreamHandler()
 console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
@@ -91,20 +725,11 @@ def setup_file_handler():
 
 setup_file_handler()
 
-# 2. Association des styles aux niveaux de log Python
 STYLE_LEVELS = {
-    "trace": logging.DEBUG,
-    "finish": logging.INFO,
-    "task": logging.INFO,
-    "recycle": logging.INFO,
-    "lock": logging.INFO,
-    "data": logging.INFO,
-    "saving": logging.INFO,
-    "succes": logging.INFO,
-    "start": logging.INFO,
-    "warning": logging.WARNING,
-    "error": logging.ERROR,
-    "denied": logging.ERROR,
+    "trace": logging.DEBUG, "finish": logging.INFO, "task": logging.INFO,
+    "recycle": logging.INFO, "lock": logging.INFO, "data": logging.INFO,
+    "saving": logging.INFO, "succes": logging.INFO, "start": logging.INFO,
+    "warning": logging.WARNING, "error": logging.ERROR, "denied": logging.ERROR,
 }
 
 def log(msg, style="default"):
@@ -124,12 +749,9 @@ def log(msg, style="default"):
         "recycle": "♻️ ", "task": "⚡ ", "finish": "🏁 ", "trace": "🔍 "
     }
     prefix = prefixes.get(base_style, "")
-    
-    # Niveau par défaut : INFO
     level = STYLE_LEVELS.get(base_style, logging.INFO)
-    
-    # Envoie le log au niveau approprié
     logger.log(level, f"{prefix_spaces}{prefix}{msg}")
+
 
 # ==========================================
 # API CLIENT
@@ -154,7 +776,6 @@ class APIClient:
                     resp = self.session.request(method, url, timeout=timeout)
                 resp.raise_for_status()
                 data = resp.json()
-
                 log(f"API Response <- {method} {endpoint} Status: {resp.status_code}", "trace")
 
                 if data.get("success") is True:
@@ -184,9 +805,12 @@ class RustatioManager:
         self.rand_cache = {}
         self.used_rand_keys = set()
         self.current_instances = []
+        
+        # Thread Controls
+        self.stop_event = threading.Event()
+        self.logs_thread = None
 
         log("Initializing regex patterns for RustatioManager", "trace")
-
         self.re_range = re.compile(r'([A-Za-z0-9_.]+): *([0-9.]+) *- *([0-9.]+)')
         self.re_default_config = re.compile(r'default_config\.([A-Za-z0-9_.]+)')
         self.re_num_cmp = re.compile(r'([A-Za-z0-9_.]+) *(<=|>=|<|>) *([0-9.]+)')
@@ -223,7 +847,6 @@ class RustatioManager:
             if isinstance(current, dict) and part in current:
                 current = current.get(part)
             else:
-                log(f"get_val path '{path}' missed at part '{part}', returning default: {default}", "trace")
                 return default
         return current
 
@@ -232,32 +855,26 @@ class RustatioManager:
         try:
             return float(val) if val is not None else float(default)
         except (ValueError, TypeError):
-            log(f"get_num conversion failed for path '{path}' with value '{val}', falling back to default: {default}", "trace")
             return float(default)
 
     def _extract_bracket(self, msg):
         start = msg.find("[")
-        if start == -1:
-            return None, msg
+        if start == -1: return None, msg
         level = 0
         for i in range(start, len(msg)):
-            if msg[i] == "[":
-                level += 1
+            if msg[i] == "[": level += 1
             elif msg[i] == "]":
                 level -= 1
-                if level == 0:
-                    return msg[start+1:i].strip(), msg[i+1:].strip()
+                if level == 0: return msg[start+1:i].strip(), msg[i+1:].strip()
         return msg[start:], ""
 
     def load_configs(self):
-        log("Loading configurations...", "trace")
         try:
             if os.path.exists(DEFAULTS_FILE):
                 with open(DEFAULTS_FILE, 'r') as f:
                     data = json.load(f)
                     self.default_config = data.get("default_config", data)
                     log(f"Defaults loaded from {DEFAULTS_FILE}", "start")
-                    log(f"Loaded default_config content: {self.default_config}", "trace")
             else:
                 log(f"Defaults file {DEFAULTS_FILE} not found", "error")
         except Exception as e:
@@ -271,31 +888,21 @@ class RustatioManager:
 
                 self.rules_lines = []
                 for line in raw_lines:
-                    log(f"Processing rule line: {line}", "trace")
                     parts = line.split('|', 2)
                     if len(parts) == 3:
                         cond, action, assign = [x.strip() for x in parts]
-
                         default_keys = set(self.re_default_config.findall(cond))
                         all_keys = set(self.re_inst_keys.findall(cond))
-                        instance_keys = {
-                            k for k in all_keys 
-                            if not k.startswith("default_config.") and not k.startswith("torrent.info_hash")
-                        }
+                        instance_keys = { k for k in all_keys if not k.startswith("default_config.") and not k.startswith("torrent.info_hash") }
 
                         py_cond = self.translate_condition(cond)
                         try:
                             compiled_cond = compile(py_cond, '<string>', 'eval')
                             self.rules_lines.append({
-                                "raw": line,
-                                "cond_str": cond,
-                                "compiled": compiled_cond,
-                                "action": action,
-                                "assign": assign,
-                                "default_keys": default_keys,
-                                "instance_keys": instance_keys
+                                "raw": line, "cond_str": cond, "compiled": compiled_cond,
+                                "action": action, "assign": assign,
+                                "default_keys": default_keys, "instance_keys": instance_keys
                             })
-                            log(f"Rule successfully compiled -> Python condition: {py_cond}", "trace")
                         except SyntaxError as e:
                             log(f"Generated rule syntax error: {py_cond} ({e})", "error")
                     else:
@@ -308,17 +915,14 @@ class RustatioManager:
             log(f"Error: {str(e)}", "error")
 
     def load_logs_state(self):
-        log(f"Loading logs state from {CHECK_LOGS_FILE}", "trace")
         try:
             if os.path.exists(CHECK_LOGS_FILE):
                 with open(CHECK_LOGS_FILE, 'r') as f:
                     return json.load(f)
-        except Exception as e:
-            log(f"Error: {str(e)}", "error")
+        except Exception: pass
         return {}
 
     def save_logs_state(self):
-        log(f"Saving logs state to {CHECK_LOGS_FILE}", "trace")
         try:
             with open(CHECK_LOGS_FILE, 'w') as f:
                 json.dump(self.logs_state, f)
@@ -328,8 +932,7 @@ class RustatioManager:
     def format_time_bash_style(self, t):
         h = t // 3600
         m = (t % 3600) // 60
-        if h > 0:
-            return f"{h}h{m:02d}" if m > 0 else f"{h}h"
+        if h > 0: return f"{h}h{m:02d}" if m > 0 else f"{h}h"
         return f"{m}min"
 
     def get_elapsed_since_midnight_tag(self, ts):
@@ -343,45 +946,38 @@ class RustatioManager:
             l, h = float(low), float(high)
             if l > h: l, h = h, l
             self.rand_cache[key] = random.uniform(l, h)
-            log(f"Generated new cached random for {key}: {self.rand_cache[key]}", "trace")
         self.used_rand_keys.add(key)
         return self.rand_cache[key]
 
     def validate_rule_keys(self, rule, sample_inst):
         for key in rule["default_keys"]:
-            if self.get_val(self.default_config, key, "__MISSING__") == "__MISSING__":
-                log(f"default_config key 'default_config.{key}' not found", "f_error")
-                return False
-
+            if self.get_val(self.default_config, key, "__MISSING__") == "__MISSING__": return False
         for key in rule["instance_keys"]:
-            if self.get_val(sample_inst, key, "__MISSING__") == "__MISSING__":
-                log(f"Instance key '{key}' not found", "f_error")
-                return False
+            if self.get_val(sample_inst, key, "__MISSING__") == "__MISSING__": return False
         return True
 
     def translate_condition(self, cond_str):
         c = cond_str.replace("AND", "and").replace("OR", "or")
-
         c = self.re_default_config.sub(r'__default__("\1")', c)
 
         def repl_bool(m):
             val_map = {"true": "True", "false": "False", "null": "None"}
             return f"(__get__('{m.group(1)}') == {val_map[m.group(2).lower()]})"
+        
         c = self.re_bool_null_eq.sub(repl_bool, c)
         c = self.re_bool_null_colon.sub(repl_bool, c)
-
-        for pattern, repl in self.regex_subs:
-            c = pattern.sub(repl, c)
 
         def repl_range(m):
             path, low_str, high_str = m.group(1), m.group(2), m.group(3)
             return f"(__get_num__('{path}') > __get_rand__('{path}', {low_str}, {high_str}, '{m.group(0)}'))"
         c = self.re_range.sub(repl_range, c)
 
+        for pattern, repl in self.regex_subs:
+            c = pattern.sub(repl, c)
+
         c = self.re_num_cmp.sub(r'(__get_num__("\1") \2 \3)', c)
         c = self.re_num_eq.sub(lambda m: f"(__get_num__('{m.group(1)}') {'==' if m.group(2) == '=' else '!='} {m.group(3)})", c)
         c = self.re_num_neq.sub(r'(__get_num__("\1") != \2)', c)
-
         return c
 
     def evaluate_rule(self, inst, compiled_cond):
@@ -393,13 +989,8 @@ class RustatioManager:
             '__default__': lambda k: self.get_val(self.default_config, k),
             '__get_rand__': self.get_cached_rand
         }
-        try:
-            result = eval(compiled_cond, {"__builtins__": {"str": str, "float": float}}, eval_context)
-            log(f"Evaluated rule for instance ID {inst.get('id')}: result = {result}", "trace")
-            return result
-        except Exception as e:
-            log(f"Evaluation error for instance ID {inst.get('id')}: {e}", "trace")
-            return False
+        try: return eval(compiled_cond, {"__builtins__": {"str": str, "float": float}}, eval_context)
+        except Exception: return False
 
     def is_action_valid(self, action, state):
         if action == "start": return (state == "Stopped")
@@ -409,60 +1000,35 @@ class RustatioManager:
 
     def _resolve_assignment_val(self, val_raw):
         val_raw = val_raw.strip()
-        if val_raw.startswith("default_config."):
-            return self.get_val(self.default_config, val_raw.replace("default_config.", ""))
-        
+        if val_raw.startswith("default_config."): return self.get_val(self.default_config, val_raw.replace("default_config.", ""))
         lower_val = val_raw.lower()
-        if lower_val in ["true", "false", "null"]:
-            return True if lower_val == "true" else False if lower_val == "false" else None
-
-        if (val_raw.startswith('"') and val_raw.endswith('"')) or (val_raw.startswith("'") and val_raw.endswith("'")):
-            return val_raw[1:-1]
-
-        try:
-            return float(val_raw) if "." in val_raw else int(val_raw)
-        except ValueError:
-            return val_raw
+        if lower_val in ["true", "false", "null"]: return True if lower_val == "true" else False if lower_val == "false" else None
+        if (val_raw.startswith('"') and val_raw.endswith('"')) or (val_raw.startswith("'") and val_raw.endswith("'")): return val_raw[1:-1]
+        try: return float(val_raw) if "." in val_raw else int(val_raw)
+        except ValueError: return val_raw
 
     def process_rules(self):
-        log("Starting process_rules cycle", "trace")
         instances_resp = self.api.request("GET", "instances")
-        if not instances_resp: 
-            log("process_rules aborted: no response from instances endpoint", "trace")
-            return
+        if not instances_resp: return
 
         with self.strike_lock:
             self.current_instances = instances_resp.get("data", [])
 
-        if not self.current_instances:
-            log("process_rules: current_instances list is empty", "trace")
-            return
-
+        if not self.current_instances: return
         sample_inst = self.current_instances[0]
 
         for rule in self.rules_lines:
-            log(f"Evaluating rule line: {rule['raw']}", "trace")
-            if not self.validate_rule_keys(rule, sample_inst):
-                log(f"Rule keys validation failed for rule: {rule['raw']}", "trace")
-                continue
-
+            if not self.validate_rule_keys(rule, sample_inst): continue
             for inst in self.current_instances:
-                if inst.get("_deleted"):
-                    continue
-
+                if inst.get("_deleted"): continue
                 state = self.get_val(inst, "stats.state")
-                if not self.is_action_valid(rule["action"], state):
-                    continue
-
+                if not self.is_action_valid(rule["action"], state): continue
                 if TOR_KEEP_LAST and rule["action"] in ["stop", "delete"]:
                     announce = str(self.get_val(inst, "torrent.announce", "")).lower()
                     count = sum(1 for i in self.current_instances if not i.get("_deleted") and str(self.get_val(i, "torrent.announce", "")).lower() == announce)
-                    if count <= 1:
-                        log(f"TOR_KEEP_LAST triggered: skipping action '{rule['action']}' for instance {inst.get('id')}.", "trace")
-                        continue
+                    if count <= 1: continue
 
                 if self.evaluate_rule(inst, rule["compiled"]):
-                    log(f"Rule matched! Applying action '{rule['action']}' on instance ID {inst.get('id')}", "trace")                   
                     self.apply_action(inst, rule["action"], rule["assign"], rule["raw"])
 
     def apply_action(self, inst, action, assign, rule_line):
@@ -479,13 +1045,10 @@ class RustatioManager:
 
             if not new_tags: return
             payload = {"ids": [id_], "add_tags": new_tags, "remove_tags": []}
-            if DRY_RUN:
-                log(f"Would add tags to ID='{id_}' TAGS='{payload}'", "f_recycle")
+            if DRY_RUN: log(f"Would add tags to ID='{id_}' TAGS='{payload}'", "f_recycle")
             elif self.api.request("POST", "grid/tag", payload):
                 inst["tags"] = list(set(existing_tags + new_tags))
                 log(f"Tags added ({assign})", "f_succes")
-            else:
-                log(f"Failed to add tags ({assign}) for instance {id_}", "f_error")
 
         elif action == "removetags":
             tags_to_remove = [t.strip() for t in assign.split(',') if t.strip()]
@@ -494,152 +1057,104 @@ class RustatioManager:
 
             if not del_tags: return
             payload = {"ids": [id_], "add_tags": [], "remove_tags": del_tags}
-            if DRY_RUN:
-                log(f"Would remove tags from ID='{id_}' TAGS='{payload}'", "f_recycle")
+            if DRY_RUN: log(f"Would remove tags from ID='{id_}' TAGS='{payload}'", "f_recycle")
             elif self.api.request("POST", "grid/tag", payload):
                 inst["tags"] = [t for t in existing_tags if t not in del_tags]
                 log(f"Tags removed ({assign})", "f_succes")
-            else:
-                log(f"Failed to remove tags ({assign}) for instance {id_}", "f_error")
 
         elif action == "update":
             parts = assign.split("=", 1)
             if len(parts) == 2 and parts[0].strip().startswith("config."):
                 key = parts[0].replace("config.", "").strip()
                 val = self._resolve_assignment_val(parts[1].strip().rstrip(";"))
-
-                if val == "__MISSING__":
-                    log(f"default_config key '{parts[1].strip()}' not found in defaults", "f_error")
-                    return
+                if val == "__MISSING__": return
 
                 payload = copy.deepcopy(inst.get("config", {}))
                 payload[key] = val
 
-                if DRY_RUN:
-                    log(f"Would patch config ID='{id_}' PAYLOAD='{payload}'", "f_recycle")
+                if DRY_RUN: log(f"Would patch config ID='{id_}' PAYLOAD='{payload}'", "f_recycle")
                 elif self.api.request("PATCH", f"instances/{id_}/config", payload):
                     inst.setdefault("config", {})[key] = val
                     log(f"Patch succeeded ({assign})", "f_succes")
-                else:
-                    log("Patch failed", "f_error")
-            else:
-                log(f"update: invalid assign '{assign}'", "warning")
+            else: log(f"update: invalid assign '{assign}'", "warning")
 
         elif action == "start":
             parts = assign.split("=", 1)
-            if len(parts) < 2:
-                log(f"update: invalid assign '{assign}'", "warning")
-                return
-
+            if len(parts) < 2: return
             lhs = parts[0].strip()
             val = self._resolve_assignment_val(parts[1].strip().rstrip(";"))
-
-            if val == "__MISSING__":
-                log(f"default_config key '{parts[1].strip()}' not found in defaults", "f_error")
-                return
+            if val == "__MISSING__": return
 
             payload = {"torrent": copy.deepcopy(inst.get("torrent", {})), "config": copy.deepcopy(inst.get("config", {}))}
-            if lhs.startswith("config."):
-                payload["config"][lhs.replace("config.", "")] = val
+            if lhs.startswith("config."): payload["config"][lhs.replace("config.", "")] = val
 
-            if DRY_RUN:
-                log(f"Would start ID='{id_}'", "f_recycle")
+            if DRY_RUN: log(f"Would start ID='{id_}'", "f_recycle")
             elif self.api.request("POST", f"faker/{id_}/start", payload):
                 inst.setdefault("stats", {})["state"] = "Running"
                 log("Start succeeded", "f_succes")
 
-        elif action == "stop":
-            if DRY_RUN:
-                log(f"Would stop ID='{id_}'", "f_recycle")
-            elif self.api.request("POST", f"faker/{id_}/stop"):
-                inst.setdefault("stats", {})["state"] = "Stopped"
-                log("Stop succeeded", "f_succes")
-
-        elif action == "pause":
-            if DRY_RUN:
-                log(f"Would pause ID='{id_}'", "f_recycle")
-            elif self.api.request("POST", "grid/pause", {"ids": [id_]}):
-                inst.setdefault("stats", {})["state"] = "Paused"
-                log("Pause succeeded", "f_succes")
-
-        elif action == "resume":
-            if DRY_RUN:
-                log(f"Would resume ID='{id_}'", "f_recycle")
-            elif self.api.request("POST", "grid/resume", {"ids": [id_]}):
-                inst.setdefault("stats", {})["state"] = "Running"
-                log("Resume succeeded", "f_succes")
+        elif action in ["stop", "pause", "resume"]:
+            endpoints = {"stop": f"faker/{id_}/stop", "pause": "grid/pause", "resume": "grid/resume"}
+            payload = {"ids": [id_]} if action in ["pause", "resume"] else None
+            if DRY_RUN: log(f"Would {action} ID='{id_}'", "f_recycle")
+            elif self.api.request("POST", endpoints[action], payload):
+                inst.setdefault("stats", {})["state"] = "Stopped" if action == "stop" else ("Paused" if action == "pause" else "Running")
+                log(f"{action.capitalize()} succeeded", "f_succes")
 
         elif action == "delete":
             if "instance" in assign:
-                if DRY_RUN:
-                    log(f"Would delete ID='{id_}'", "f_recycle")
+                if DRY_RUN: log(f"Would delete ID='{id_}'", "f_recycle")
                 elif self.api.request("DELETE", f"instances/{id_}?force=true"):
                     inst["_deleted"] = True
                     log("Delete succeeded", "f_succes")
 
             if "watchfile" in assign or "archive" in assign:
                 hex_hash = bytes(inst.get("torrent", {}).get("info_hash", [])).hex()
-
                 if hex_hash:
                     files_resp = self.api.request("GET", "watch/files")
                     files = files_resp.get("data", []) if files_resp else []														
                     for f in files:
                         if f.get("info_hash") == hex_hash:
-                            filename = f.get("filename", "")
-                            filepath = f.get("path", "")
+                            filename, filepath = f.get("filename", ""), f.get("path", "")
                             
                             if "archive" in assign and ARCHIVE_FOLDER:
                                 dest = os.path.join(ARCHIVE_FOLDER, os.path.basename(filename))
                                 if not os.path.exists(dest):
-                                    if DRY_RUN:
-                                        log(f"Would archive file '{filename}' at '{filepath}'", "f_recycle")
+                                    if DRY_RUN: log(f"Would archive file '{filename}' at '{filepath}'", "f_recycle")
                                     else:
                                         os.makedirs(ARCHIVE_FOLDER, exist_ok=True)
                                         try:
                                             shutil.copy2(filepath, dest)
                                             log(f"Torrent archived {dest}", "f_saving")
-                                        except Exception:
-                                            log(f"Failed to archive {filepath}", "f_error")
+                                        except Exception: log(f"Failed to archive {filepath}", "f_error")
 
                             if "watchfile" in assign:
-                                if DRY_RUN:
-                                    log(f"Would delete file '{filename}' at '{filepath}'", "f_recycle")
+                                if DRY_RUN: log(f"Would delete file '{filename}'", "f_recycle")
                                 else:
-                                    encoded_path = urllib.parse.quote(filename)
-                                    if self.api.request("DELETE", f"watch/files?path={encoded_path}"):
+                                    if self.api.request("DELETE", f"watch/files?path={urllib.parse.quote(filename)}"):
                                         log("Delete succeeded", "f_succes")
-                                    else:
-                                        log("Failed to delete file", "f_error")
 
-        for key in self.used_rand_keys:
-            self.rand_cache.pop(key, None)
+        for key in self.used_rand_keys: self.rand_cache.pop(key, None)
         self.used_rand_keys.clear()
 
     def logs_watcher_thread(self):
         url = f"{self.api.base_url}/api/logs"
-        log(f"Starting logs_watcher_thread targeting SSE URL: {url}", "trace")
-        headers = {
-            "Accept": "text/event-stream",
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"
-        }
-        while True:
+        headers = {"Accept": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive"}
+        while not self.stop_event.is_set():
             try:
                 with requests.get(url, stream=True, headers=headers, timeout=60) as r:
                     for line in r.iter_lines(decode_unicode=True):
+                        if self.stop_event.is_set(): return
                         self._check_expirations()
                         if line and line.startswith("data:"):
                             self._handle_log_event(line[5:].strip())
             except requests.exceptions.Timeout:
-                log("logs_watcher_thread timeout reached, checking expirations", "trace")
                 self._check_expirations()
-            except Exception as e:
-                log(f"logs_watcher_thread exception encountered: {e}", "trace")
-                time.sleep(5)
+            except Exception:
+                if self.stop_event.is_set(): return
+                self.stop_event.wait(5)
 
     def _handle_log_event(self, json_str):
-        log(f"Handling log event payload: {json_str}", "trace")
         try:
             event = json.loads(json_str)
             level = event.get("level", "").lower()
@@ -651,7 +1166,6 @@ class RustatioManager:
                     with self.strike_lock:
                         now = time.time()
                         state = self.logs_state.setdefault(tag, {"counts": {}, "action": 0, "last_count_time": 0})
-
                         counts = state.setdefault("counts", {})
                         counts[rest] = counts.get(rest, 0) + 1
                         current_count = counts[rest]
@@ -662,49 +1176,35 @@ class RustatioManager:
                             state["action"] = now
 
                         self.save_logs_state()
-        except Exception as e:
-            log(f"Error: {str(e)}", "error")
+        except Exception: pass
 
     def _find_instance_by_name(self, name):
         with self.strike_lock:
             for inst in self.current_instances:
-                if self.get_val(inst, "torrent.name") == name:
-                    return inst
+                if self.get_val(inst, "torrent.name") == name: return inst
         return None
 
     def _trigger_watcher_pause(self, tag, rest, action_ts):
         inst = self._find_instance_by_name(tag)
         if not inst: return
-
         state = self.get_val(inst, "stats.state")
         if self.is_action_valid("pause", state):
-            pause_time_str = self.format_time_bash_style(WATCHER_PAUSE_TIME)
-            log(f"Repeated error detected (x{WATCHER_MAX_STRIKE}). Try to pause for {pause_time_str} and add tag", "warning")
-            log(f"Torrent name : {tag}", "f_data")
-            log(f"{rest}", "f_data")
-
+            log(f"Repeated error detected (x{WATCHER_MAX_STRIKE}). Try to pause for {self.format_time_bash_style(WATCHER_PAUSE_TIME)} and add tag", "warning")
             id_ = inst.get("id")
             err_tag = f"Err {self.get_elapsed_since_midnight_tag(action_ts)}"
 
-            if DRY_RUN:
-                log(f"Would pause '{tag}'", "f_recycle")
-                log(f"Would addtags '{err_tag}'", "f_recycle")
+            if DRY_RUN: log(f"Would pause '{tag}' and addtags '{err_tag}'", "f_recycle")
             else:
                 if self.api.request("POST", "grid/pause", {"ids": [id_]}):
-                    log("Pause succeeded", "f_succes")
-
                     existing_tags = inst.get("tags") or []
                     if err_tag not in existing_tags:
                         self.api.request("POST", "grid/tag", {"ids": [id_], "add_tags": [err_tag], "remove_tags": []})
-                        log(f"Tags applied ({err_tag})", "f_succes")
 
     def _check_expirations(self):
-        log("Checking log expirations and purges", "trace")
         with self.strike_lock:
             now = time.time()
             dirty = False
             expired_tags = []
-
             active_names = {self.get_val(inst, "torrent.name") for inst in self.current_instances}
             for tag, state in list(self.logs_state.items()):
                 if tag not in active_names:
@@ -712,9 +1212,7 @@ class RustatioManager:
                     continue
 
                 if state.get("last_count_time", 0) > 0 and (now - state["last_count_time"]) > WATCHER_STRIKE_TIME:
-                    if state.get("action", 0) == 0:
-                        expired_tags.append(tag)
-
+                    if state.get("action", 0) == 0: expired_tags.append(tag)
                 if state.get("action", 0) > 0 and (now - state["action"]) > WATCHER_PAUSE_TIME:
                     self._trigger_watcher_resume(tag, state["action"])
                     expired_tags.append(tag)
@@ -723,73 +1221,188 @@ class RustatioManager:
                 if tag in self.logs_state:
                     del self.logs_state[tag]
                     dirty = True
-
-            if dirty:
-                self.save_logs_state()
+            if dirty: self.save_logs_state()
 
     def _trigger_watcher_resume(self, tag, action_ts):
         inst = self._find_instance_by_name(tag)
         if not inst: return
-
         state = self.get_val(inst, "stats.state")
         if self.is_action_valid("resume", state):
             log("Pause ended. Try to resume and remove tag", "warning")
-            log(f"Torrent name : {tag}", "f_data")
-
             id_ = inst.get("id")
             err_tag = f"Err {self.get_elapsed_since_midnight_tag(action_ts)}"
 
-            if DRY_RUN:
-                log(f"Would resume '{tag}'", "f_recycle")
-                log(f"Would removetags '{err_tag}'", "f_recycle")
+            if DRY_RUN: log(f"Would resume '{tag}' and removetags '{err_tag}'", "f_recycle")
             else:
                 if self.api.request("POST", "grid/resume", {"ids": [id_]}):
-                    log("Resume succeeded", "f_succes")
-
                     existing_tags = inst.get("tags") or []
                     if err_tag in existing_tags:
                         self.api.request("POST", "grid/tag", {"ids": [id_], "add_tags": [], "remove_tags": [err_tag]})
-                        log(f"Tags removed ({err_tag})", "f_succes")
 
     def run(self):
         initial_interval = 5
         log(f"Starting RustatioManager daemon", "start")
         self.load_configs()
+        self.stop_event.clear()
 
         interval = REFRESH_INTERVAL
         if interval == 0 and self.default_config:
             interval = int(self.get_val(self.default_config, "scrape_interval", 60))
 
         interval = max(0, interval - initial_interval)
-
         log(f"REFRESH INTERVAL : {interval + initial_interval}s", "data")
 
         if LOGS_WATCHER:
-            threading.Thread(target=self.logs_watcher_thread, daemon=True).start()
+            self.logs_thread = threading.Thread(target=self.logs_watcher_thread, daemon=True)
+            self.logs_thread.start()
 
-        while True:
+        while not self.stop_event.is_set():
             try:
                 resp = requests.get(f"{RUSTATIO_API}/health", timeout=3)
                 if resp.text == "OK": break
-            except Exception:
-                pass
+            except Exception: pass
+            if self.stop_event.is_set(): return
             log(f"Rustatio not ready. Retry in {initial_interval}s", "warning")
-            time.sleep(initial_interval)
+            self.stop_event.wait(initial_interval)
 
-        while True:
-            time.sleep(initial_interval)
-
+        while not self.stop_event.is_set():
+            if self.stop_event.wait(initial_interval): break
             if LOGFILE and LOGFILE != "/dev/null" and not os.path.exists(LOGFILE):
                 setup_file_handler()
                 log("Log recreated automatically", "start")
                 self.load_configs()
 
-            try:
-                self.process_rules()
-            except Exception as e:
-                log(f"Error in process_rules: {str(e)}", "error")
-            time.sleep(interval)
+            try: self.process_rules()
+            except Exception as e: log(f"Error in process_rules: {str(e)}", "error")
+            
+            if self.stop_event.wait(interval): break
+            
+        log("RustatioManager stopped", "finish")
+        
+    def stop(self):
+        self.stop_event.set()
+
+
+# ==========================================
+# FLASK WEB PANEL (ADMIN)
+# ==========================================
+manager = None
+manager_thread = None
+
+@app.route('/')
+def index():
+    return render_template_string(HTML_TEMPLATE)
+
+@app.route('/api/status', methods=['GET'])
+def get_status():
+    global manager_thread
+    if manager_thread and manager_thread.is_alive():
+        return jsonify({"running": True, "pid": os.getpid()})
+    return jsonify({"running": False})
+
+@app.route('/api/daemon/<action>', methods=['POST'])
+def manage_daemon(action):
+    global manager, manager_thread
+    
+    if action == 'stop':
+        if manager and manager_thread and manager_thread.is_alive():
+            manager.stop()
+            manager_thread.join(timeout=5)
+        return jsonify({"success": True})
+
+    elif action == 'start':
+        if not manager_thread or not manager_thread.is_alive():
+            manager = RustatioManager()
+            manager_thread = threading.Thread(target=manager.run, daemon=True)
+            manager_thread.start()
+        return jsonify({"success": True})
+
+    elif action == 'restart':
+        if manager and manager_thread and manager_thread.is_alive():
+            manager.stop()
+            manager_thread.join(timeout=5)
+        manager = RustatioManager()
+        manager_thread = threading.Thread(target=manager.run, daemon=True)
+        manager_thread.start()
+        return jsonify({"success": True})
+
+    return jsonify({"success": False, "error": "Action invalide ou état incorrect"})
+
+@app.route('/api/rules', methods=['GET', 'POST'])
+def manage_rules():
+    if request.method == 'POST':
+        content = request.json.get('content', '')
+        os.makedirs(os.path.dirname(RULES_FILE), exist_ok=True)
+        with open(RULES_FILE, 'w', encoding='utf-8') as f:
+            f.write(content)
+        if manager:
+            manager.load_configs()
+        return jsonify({"success": True})
+    else:
+        content = ""
+        if os.path.exists(RULES_FILE):
+            with open(RULES_FILE, 'r', encoding='utf-8') as f:
+                content = f.read()
+        return jsonify({"content": content})
+
+@app.route('/api/logs', methods=['GET'])
+def get_logs():
+    content = "Fichier log introuvable."
+    if os.path.exists(LOGFILE):
+        with open(LOGFILE, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+            content = "".join(lines[-100:])
+    return jsonify({"content": content})
+
+@app.route('/api/logs/clear', methods=['POST'])
+def clear_logs():
+    if os.path.exists(LOGFILE):
+        with open(LOGFILE, 'w', encoding='utf-8') as f:
+            f.write("")
+    return jsonify({"success": True})
+
+@app.route('/api/logs/archive', methods=['POST'])
+def archive_logs():
+    if not os.path.exists(LOGFILE):
+        return jsonify({"success": False, "error": "Fichier de log introuvable"}), 404
+    try:
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        dir_name = os.path.dirname(LOGFILE)
+        base_name = os.path.basename(LOGFILE)
+        name, ext = os.path.splitext(base_name)
+        archive_name = f"{name}_{timestamp}{ext}"
+        archive_path = os.path.join(dir_name, archive_name)
+        
+        shutil.copy2(LOGFILE, archive_path)
+        with open(LOGFILE, 'w', encoding='utf-8') as f:
+            f.write(f"--- Logs archivés le {timestamp} ---\n")
+            
+        return jsonify({"success": True, "filename": archive_name})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/admin/restart', methods=['POST'])
+def restart_admin():
+    def delayed_restart():
+        time.sleep(1)
+        os._exit(42)
+
+    threading.Thread(target=delayed_restart).start()
+    return jsonify({"success": True, "message": "Redémarrage du processus en cours..."})
+
+
+def run_flask_app():
+    log_werkzeug = logging.getLogger('werkzeug')
+    log_werkzeug.setLevel(logging.ERROR)
+    
+    log(f"Admin web panel started on port {ADMIN_PORT}", "start")
+    app.run(host='0.0.0.0', port=ADMIN_PORT, debug=False, use_reloader=False)
 
 if __name__ == "__main__":
+    # Démarrage automatique du Daemon dans un thread d'arrière-plan
     manager = RustatioManager()
-    manager.run()
+    manager_thread = threading.Thread(target=manager.run, daemon=True)
+    manager_thread.start()
+
+    # Le panneau web tourne sur le processus principal (bloquant)
+    run_flask_app()
