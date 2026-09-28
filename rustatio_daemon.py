@@ -14,6 +14,8 @@ import urllib.parse
 import requests
 import copy
 import datetime
+import ast
+import operator
 from collections import defaultdict
 from flask import Flask, request, jsonify, render_template_string
 
@@ -246,10 +248,10 @@ HTML_TEMPLATE = """
             <h1>⚙️ Rustatio Control</h1>
             <div class="controls">
                 <span id="daemon-status" class="status-badge status-stopped">Vérification...</span>
-                <button class="start" onclick="daemonAction('start')">▶ Démarrer</button>
-                <button class="stop" onclick="daemonAction('stop')">⏹ Arrêter</button>
-                <button onclick="daemonAction('restart')">🔄 Redémarrer</button>
-                <button style="background-color: #555;" onclick="restartAdmin()">♻️ Redémarrer Admin</button>
+                <button class="start" onclick="daemonAction('start')">▶ Démarrer Daemon</button>
+                <button class="stop" onclick="daemonAction('stop')">⏹ Arrêter Daemon</button>
+                <button onclick="daemonAction('restart')">🔄 Redémarrer Daemon</button>
+                <button style="background-color: #555;" onclick="restartAdmin()">♻️ Redémarrer Script</button>
             </div>
         </div>
 
@@ -708,6 +710,11 @@ console_handler = logging.StreamHandler()
 console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
 
+class FlushingRotatingFileHandler(RotatingFileHandler):
+    def emit(self, record):
+        super().emit(record)
+        self.flush()
+
 def setup_file_handler():
     if LOGFILE and LOGFILE != "/dev/null":
         for h in logger.handlers[:]:
@@ -719,7 +726,8 @@ def setup_file_handler():
             os.makedirs(log_dir, exist_ok=True)
         if not os.path.exists(LOGFILE):
             open(LOGFILE, 'a').close()
-        file_handler = RotatingFileHandler(LOGFILE, maxBytes=1024*1024, backupCount=10)
+        
+        file_handler = FlushingRotatingFileHandler(LOGFILE, maxBytes=1024*1024, backupCount=10)
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
 
@@ -792,6 +800,149 @@ class APIClient:
                     time.sleep(2)
         return None
 
+
+# ==========================================
+# AST EVALUATOR (REPLACES EVAL SAFELY)
+# ==========================================
+class ASTEvaluator:
+    BINARY_OPS = {
+        ast.Add: operator.add,
+        ast.Sub: operator.sub,
+        ast.Mult: operator.mul,
+        ast.Div: operator.truediv,
+        ast.FloorDiv: operator.floordiv,
+        ast.Mod: operator.mod,
+        ast.Pow: operator.pow,
+    }
+
+    UNARY_OPS = {
+        ast.UAdd: operator.pos,
+        ast.USub: operator.neg,
+        ast.Not: operator.not_,
+    }
+
+    COMP_OPS = {
+        ast.Eq: operator.eq,
+        ast.NotEq: operator.ne,
+        ast.Lt: operator.lt,
+        ast.LtE: operator.le,
+        ast.Gt: operator.gt,
+        ast.GtE: operator.ge,
+        ast.In: lambda a, b: a in b,
+        ast.NotIn: lambda a, b: a not in b,
+    }
+
+    ALLOWED_FUNCS = {
+        "str": str,
+        "float": float,
+        "int": int,
+        "bool": bool,
+    }
+
+    ALLOWED_METHODS = {"lower", "upper", "strip", "hex", "startswith", "endswith"}
+
+    def __init__(self, context):
+        self.context = context
+
+    def eval(self, node):
+        if isinstance(node, ast.Expression):
+            return self.eval(node.body)
+
+        elif isinstance(node, ast.Constant):
+            return node.value
+
+        elif hasattr(ast, 'Num') and isinstance(node, ast.Num):
+            return node.n
+        elif hasattr(ast, 'Str') and isinstance(node, ast.Str):
+            return node.s
+        elif hasattr(ast, 'NameConstant') and isinstance(node, ast.NameConstant):
+            return node.value
+        elif hasattr(ast, 'Bytes') and isinstance(node, ast.Bytes):
+            return node.s
+
+        elif isinstance(node, ast.Name):
+            if node.id in ("True", "true"):
+                return True
+            if node.id in ("False", "false"):
+                return False
+            if node.id in ("None", "null"):
+                return None
+            if node.id in self.context:
+                return self.context[node.id]
+            if node.id in self.ALLOWED_FUNCS:
+                return self.ALLOWED_FUNCS[node.id]
+            raise NameError(f"Name '{node.id}' is not defined in evaluation context")
+
+        elif isinstance(node, ast.BoolOp):
+            if isinstance(node.op, ast.And):
+                for val in node.values:
+                    res = self.eval(val)
+                    if not res:
+                        return res
+                return res
+            elif isinstance(node.op, ast.Or):
+                for val in node.values:
+                    res = self.eval(val)
+                    if res:
+                        return res
+                return res
+
+        elif isinstance(node, ast.UnaryOp):
+            op_type = type(node.op)
+            if op_type in self.UNARY_OPS:
+                return self.UNARY_OPS[op_type](self.eval(node.operand))
+            raise TypeError(f"Unsupported unary operator: {op_type}")
+
+        elif isinstance(node, ast.BinOp):
+            op_type = type(node.op)
+            if op_type in self.BINARY_OPS:
+                left = self.eval(node.left)
+                right = self.eval(node.right)
+                return self.BINARY_OPS[op_type](left, right)
+            raise TypeError(f"Unsupported binary operator: {op_type}")
+
+        elif isinstance(node, ast.Compare):
+            left = self.eval(node.left)
+            for op, comparator in zip(node.ops, node.comparators):
+                op_type = type(op)
+                if op_type not in self.COMP_OPS:
+                    raise TypeError(f"Unsupported comparison operator: {op_type}")
+                right = self.eval(comparator)
+                if not self.COMP_OPS[op_type](left, right):
+                    return False
+                left = right
+            return True
+
+        elif isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name):
+                func_name = node.func.id
+                args = [self.eval(arg) for arg in node.args]
+                kwargs = {kw.arg: self.eval(kw.value) for kw in node.keywords}
+                if func_name in self.context and callable(self.context[func_name]):
+                    return self.context[func_name](*args, **kwargs)
+                if func_name in self.ALLOWED_FUNCS:
+                    return self.ALLOWED_FUNCS[func_name](*args, **kwargs)
+                raise NameError(f"Function '{func_name}' is not allowed or defined")
+
+            elif isinstance(node.func, ast.Attribute):
+                obj = self.eval(node.func.value)
+                method_name = node.func.attr
+                if method_name in self.ALLOWED_METHODS and hasattr(obj, method_name):
+                    args = [self.eval(arg) for arg in node.args]
+                    kwargs = {kw.arg: self.eval(kw.value) for kw in node.keywords}
+                    return getattr(obj, method_name)(*args, **kwargs)
+                raise AttributeError(f"Method '{method_name}' is not allowed")
+
+        elif isinstance(node, ast.Attribute):
+            obj = self.eval(node.value)
+            attr_name = node.attr
+            if hasattr(obj, attr_name):
+                return getattr(obj, attr_name)
+            return None
+
+        raise TypeError(f"Unsupported AST node type: {type(node).__name__}")
+
+
 # ==========================================
 # CORE MANAGER
 # ==========================================
@@ -803,7 +954,6 @@ class RustatioManager:
         self.strike_lock = threading.Lock()
         self.logs_state = self.load_logs_state()
         self.rand_cache = {}
-        self.used_rand_keys = set()
         self.current_instances = []
         
         # Thread Controls
@@ -902,19 +1052,19 @@ class RustatioManager:
 
                         py_cond = self.translate_condition(cond)
                         try:
-                            compiled_cond = compile(py_cond, '<string>', 'eval')
+                            ast_tree = ast.parse(py_cond, mode='eval')
                             self.rules_lines.append({
-                                "raw": line, "cond_str": cond, "compiled": compiled_cond,
+                                "raw": line, "cond_str": cond, "ast_tree": ast_tree,
                                 "action": action, "assign": assign,
                                 "default_keys": default_keys, "instance_keys": instance_keys
                             })
-                            log(f"Rule successfully compiled -> Python condition: {py_cond}", "trace")
+                            log(f"Rule successfully parsed to AST -> Condition: {py_cond}", "trace")
                         except SyntaxError as e:
                             log(f"Generated rule syntax error: {py_cond} ({e})", "error")
                     else:
                         log(f"Invalid rule skipped: {line}", "denied")
 
-                log(f"Rules loaded and compiled from {RULES_FILE}", "start")
+                log(f"Rules loaded and compiled to AST from {RULES_FILE}", "start")
             else:
                 log(f"Rules file {RULES_FILE} not found", "error")
         except Exception as e:
@@ -949,15 +1099,23 @@ class RustatioManager:
         midnight = time.mktime((t_struct.tm_year, t_struct.tm_mon, t_struct.tm_mday, 0, 0, 0, t_struct.tm_wday, t_struct.tm_yday, t_struct.tm_isdst))
         return self.format_time_bash_style(int(ts - midnight))
 
-    def get_cached_rand(self, path, low, high, raw_match):
+    def get_cached_rand(self, path, low, high, raw_match, tracker=None):
         key = f"{path}:{low}:{high}:{raw_match}"
         if key not in self.rand_cache:
             l, h = float(low), float(high)
             if l > h: l, h = h, l
             self.rand_cache[key] = random.uniform(l, h)
             log(f"Generated new cached random for {key}: {self.rand_cache[key]}", "trace")
-        self.used_rand_keys.add(key)
+        if tracker is not None:
+            tracker.append(key)
         return self.rand_cache[key]
+
+    def clear_rand_keys(self, keys):
+        if keys:
+            for k in keys:
+                if k in self.rand_cache:
+                    self.rand_cache.pop(k, None)
+                    log(f"Purged cached random key after API success: {k}", "trace")
 
     def validate_rule_keys(self, rule, sample_inst):
         for key in rule["default_keys"]:
@@ -994,22 +1152,31 @@ class RustatioManager:
         c = self.re_num_neq.sub(r'(__get_num__("\1") != \2)', c)
         return c
 
-    def evaluate_rule(self, inst, compiled_cond):
+    def evaluate_rule(self, inst, ast_tree):
+        eval_rand_keys = []
         eval_context = {
             '__get__': lambda path, d=None: self.get_val(inst, path, d),
             '__get_num__': lambda path: self.get_num(inst, path),
             '__tags__': inst.get("tags") or [],
             '__info_hash__': lambda: bytes(inst.get("torrent", {}).get("info_hash", [])).hex(),
             '__default__': lambda k: self.get_val(self.default_config, k),
-            '__get_rand__': self.get_cached_rand
+            '__get_rand__': lambda path, low, high, raw_match: self.get_cached_rand(path, low, high, raw_match, eval_rand_keys),
+            'str': str,
+            'float': float,
+            'int': int,
+            'bool': bool,
+            'True': True,
+            'False': False,
+            'None': None,
         }
         try:
-            result = eval(compiled_cond, {"__builtins__": {"str": str, "float": float}}, eval_context)
+            evaluator = ASTEvaluator(eval_context)
+            result = evaluator.eval(ast_tree)
             log(f"Evaluated rule for instance ID {inst.get('id')}: result = {result}", "trace")
-            return result
+            return bool(result), eval_rand_keys
         except Exception as e:
             log(f"Evaluation error for instance ID {inst.get('id')}: {e}", "trace")
-            return False
+            return False, []
 
     def is_action_valid(self, action, state):
         if action == "start": return (state == "Stopped")
@@ -1056,11 +1223,12 @@ class RustatioManager:
                         log(f"TOR_KEEP_LAST triggered: skipping action '{rule['action']}' for instance {inst.get('id')}.", "trace")
                         continue
 
-                if self.evaluate_rule(inst, rule["compiled"]):
+                matched, rand_keys = self.evaluate_rule(inst, rule["ast_tree"])
+                if matched:
                     log(f"Rule matched! Applying action '{rule['action']}' on instance ID {inst.get('id')}", "trace")   
-                    self.apply_action(inst, rule["action"], rule["assign"], rule["raw"])
+                    self.apply_action(inst, rule["action"], rule["assign"], rule["raw"], rand_keys)
 
-    def apply_action(self, inst, action, assign, rule_line):
+    def apply_action(self, inst, action, assign, rule_line, used_keys=None):
         id_ = inst.get("id")
         name = self.get_val(inst, "torrent.name")
 
@@ -1078,6 +1246,7 @@ class RustatioManager:
             elif self.api.request("POST", "grid/tag", payload):
                 inst["tags"] = list(set(existing_tags + new_tags))
                 log(f"Tags added ({assign})", "f_succes")
+                self.clear_rand_keys(used_keys)
             else:
                 log(f"Failed to add tags ({assign}) for instance {id_}", "f_error")
 
@@ -1092,6 +1261,7 @@ class RustatioManager:
             elif self.api.request("POST", "grid/tag", payload):
                 inst["tags"] = [t for t in existing_tags if t not in del_tags]
                 log(f"Tags removed ({assign})", "f_succes")
+                self.clear_rand_keys(used_keys)
             else:
                 log(f"Failed to remove tags ({assign}) for instance {id_}", "f_error")
 
@@ -1111,6 +1281,7 @@ class RustatioManager:
                 elif self.api.request("PATCH", f"instances/{id_}/config", payload):
                     inst.setdefault("config", {})[key] = val
                     log(f"Patch succeeded ({assign})", "f_succes")
+                    self.clear_rand_keys(used_keys)
                 else: log("Patch failed", "f_error")
             else: log(f"update: invalid assign '{assign}'", "warning")
 
@@ -1132,6 +1303,7 @@ class RustatioManager:
             elif self.api.request("POST", f"faker/{id_}/start", payload):
                 inst.setdefault("stats", {})["state"] = "Running"
                 log("Start succeeded", "f_succes")
+                self.clear_rand_keys(used_keys)
 
         elif action in ["stop", "pause", "resume"]:
             endpoints = {"stop": f"faker/{id_}/stop", "pause": "grid/pause", "resume": "grid/resume"}
@@ -1140,6 +1312,7 @@ class RustatioManager:
             elif self.api.request("POST", endpoints[action], payload):
                 inst.setdefault("stats", {})["state"] = "Stopped" if action == "stop" else ("Paused" if action == "pause" else "Running")
                 log(f"{action.capitalize()} succeeded", "f_succes")
+                self.clear_rand_keys(used_keys)
 
         elif action == "delete":
             if "instance" in assign:
@@ -1147,6 +1320,7 @@ class RustatioManager:
                 elif self.api.request("DELETE", f"instances/{id_}?force=true"):
                     inst["_deleted"] = True
                     log("Delete succeeded", "f_succes")
+                    self.clear_rand_keys(used_keys)
 
             if "watchfile" in assign or "archive" in assign:
                 hex_hash = bytes(inst.get("torrent", {}).get("info_hash", [])).hex()
@@ -1175,9 +1349,6 @@ class RustatioManager:
                                         log("Delete succeeded", "f_succes")
                                     else:
                                         log("Failed to delete file", "f_error")
-
-        for key in self.used_rand_keys: self.rand_cache.pop(key, None)
-        self.used_rand_keys.clear()
 
     def logs_watcher_thread(self):
         url = f"{self.api.base_url}/api/logs"
@@ -1339,6 +1510,8 @@ class RustatioManager:
         
     def stop(self):
         self.stop_event.set()
+        for h in logger.handlers:
+            h.flush()
 
 
 # ==========================================
@@ -1358,33 +1531,36 @@ def get_status():
         return jsonify({"running": True, "pid": os.getpid()})
     return jsonify({"running": False})
 
+daemon_lock = threading.Lock()
+
 @app.route('/api/daemon/<action>', methods=['POST'])
 def manage_daemon(action):
     global manager, manager_thread
     
-    if action == 'stop':
-        if manager and manager_thread and manager_thread.is_alive():
-            manager.stop()
-            manager_thread.join(timeout=5)
-        return jsonify({"success": True})
+    with daemon_lock:
+        if action == 'stop':
+            if manager and manager_thread and manager_thread.is_alive():
+                manager.stop()
+                manager_thread.join(timeout=5)
+            return jsonify({"success": True})
 
-    elif action == 'start':
-        if not manager_thread or not manager_thread.is_alive():
+        elif action == 'start':
+            if not manager_thread or not manager_thread.is_alive():
+                manager = RustatioManager()
+                manager_thread = threading.Thread(target=manager.run, daemon=True)
+                manager_thread.start()
+            return jsonify({"success": True})
+
+        elif action == 'restart':
+            if manager and manager_thread and manager_thread.is_alive():
+                manager.stop()
+                manager_thread.join(timeout=5)
             manager = RustatioManager()
             manager_thread = threading.Thread(target=manager.run, daemon=True)
             manager_thread.start()
-        return jsonify({"success": True})
+            return jsonify({"success": True})
 
-    elif action == 'restart':
-        if manager and manager_thread and manager_thread.is_alive():
-            manager.stop()
-            manager_thread.join(timeout=5)
-        manager = RustatioManager()
-        manager_thread = threading.Thread(target=manager.run, daemon=True)
-        manager_thread.start()
-        return jsonify({"success": True})
-
-    return jsonify({"success": False, "error": "Action invalide ou état incorrect"})
+        return jsonify({"success": False, "error": "Action invalide ou état incorrect"})
 
 @app.route('/api/rules', methods=['GET', 'POST'])
 def manage_rules():
@@ -1457,10 +1633,8 @@ def run_flask_app():
     app.run(host='0.0.0.0', port=ADMIN_PORT, debug=False, use_reloader=False)
 
 if __name__ == "__main__":
-    # Démarrage automatique du Daemon dans un thread d'arrière-plan
     manager = RustatioManager()
     manager_thread = threading.Thread(target=manager.run, daemon=True)
     manager_thread.start()
 
-    # Le panneau web tourne sur le processus principal (bloquant)
     run_flask_app()
