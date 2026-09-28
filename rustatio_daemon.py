@@ -1129,7 +1129,7 @@ class RustatioManager:
         return True
 
     def translate_condition(self, cond_str):
-        c = cond_str.replace("AND", "and").replace("OR", "or")
+        c = re.sub(r"\b(AND|OR)\b", lambda m: m.group(0).lower(), cond_str)
         c = self.re_default_config.sub(r'__default__("\1")', c)
 
         def repl_bool(m):
@@ -1286,19 +1286,7 @@ class RustatioManager:
             else: log(f"update: invalid assign '{assign}'", "warning")
 
         elif action == "start":
-            parts = assign.split("=", 1)
-            if len(parts) < 2:
-                log(f"update: invalid assign '{assign}'", "warning")
-                return
-            lhs = parts[0].strip()
-            val = self._resolve_assignment_val(parts[1].strip().rstrip(";"))
-            if val == "__MISSING__":
-                log(f"default_config key '{parts[1].strip()}' not found in defaults", "f_error")
-                return
-
             payload = {"torrent": copy.deepcopy(inst.get("torrent", {})), "config": copy.deepcopy(inst.get("config", {}))}
-            if lhs.startswith("config."): payload["config"][lhs.replace("config.", "")] = val
-
             if DRY_RUN: log(f"Would start ID='{id_}'", "f_recycle")
             elif self.api.request("POST", f"faker/{id_}/start", payload):
                 inst.setdefault("stats", {})["state"] = "Running"
