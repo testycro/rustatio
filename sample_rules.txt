@@ -27,7 +27,7 @@ stats.leechers > 0 AND tags = Idle | removetags | Idle
 
 stats.ratio: 1.0 - 2.5 AND config.upload_rate > 2 AND tags != SlowRatio AND tags != Protected | addtags | SlowRatio
 
-stats.leechers > 15 AND stats.seeders > 100 AND tags = SlowRatio AND tags != Protected AND tags != Idle | addtags | Forced
+stats.leechers > 15 AND stats.seeders > 100 AND tags = SlowRatio AND tags != Protected AND tags != Idle AND tags != Forced | addtags | Forced
 stats.leechers < 15 AND tags = Forced AND tags = SlowRatio AND tags != Protected AND tags != Idle | removetags | Forced
 
 tags = Protected AND config.upload_rate > 0 | update | config.upload_rate = 0
