@@ -257,6 +257,41 @@ HTML_TEMPLATE = """
         .refresh-spinner.active {
             opacity: 1;
         }
+        .refresh-slot {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 1cm;
+            height: 16px;
+            margin: 0 8px;
+            flex-shrink: 0;
+        }
+        .progress-container {
+            width: 100%;
+            height: 4px;
+            background-color: #2a2a2a;
+            border-radius: 2px;
+            overflow: hidden;
+            transition: opacity 0.2s ease;
+        }
+        .progress-bar {
+            height: 100%;
+            width: 0%;
+            background-color: var(--rust-orange);
+        }
+        .refresh-slot .refresh-spinner {
+            position: absolute;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+            pointer-events: none;
+        }
+        .refresh-slot .refresh-spinner.active {
+            opacity: 1;
+        }
+        .refresh-slot:has(.refresh-spinner.active) .progress-container {
+            opacity: 0;
+        }
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
@@ -315,6 +350,12 @@ HTML_TEMPLATE = """
             <div class="collapsible-header" onclick="togglePanel('panel-watcher')">
                 <h2 style="display: flex; align-items: center;">
                     <span class="collapse-icon">▶</span> 👁️ Log Watcher
+                    <div class="refresh-slot">
+                        <div class="progress-container">
+                            <div id="watcher-progress-bar" class="progress-bar"></div>
+                        </div>
+                        <span id="watcher-spinner" class="refresh-spinner" title="Mise à jour..."></span>
+                    </div>
                 </h2>
                 <div class="controls" onclick="event.stopPropagation()">
                     <span id="watcher-status" class="status-badge status-stopped">Vérification...</span>
@@ -323,7 +364,7 @@ HTML_TEMPLATE = """
                     <button onclick="watcherAction('restart')">🔄 Redémarrer</button>
                 </div>
             </div>
-            
+
             <div class="collapse-content" style="margin-top: 15px;">
                 <div style="background: #181818; border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; overflow-x: auto;">
                     <table style="width: 100%; border-collapse: collapse; font-size: 0.95em; text-align: left;">
@@ -368,7 +409,12 @@ HTML_TEMPLATE = """
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                 <h2 style="display: flex; align-items: center;">
                     🔍 Logs ({{ logfile_filename }})
-                    <span id="log-spinner" class="refresh-spinner" title="Mise à jour..."></span>
+                    <div class="refresh-slot">
+                        <div class="progress-container">
+                            <div id="log-progress-bar" class="progress-bar"></div>
+                        </div>
+                        <span id="log-spinner" class="refresh-spinner" title="Mise à jour..."></span>
+                    </div>
                 </h2>
                 <div style="display: flex; gap: 8px; align-items: center;">
                     <button onclick="clearLogs()" class="small stop">Vider</button>
@@ -663,6 +709,16 @@ HTML_TEMPLATE = """
             if (container.children.length === 0) addRuleRow();
         }
 
+        function resetAndStartProgress(barId, durationMs) {
+            const bar = document.getElementById(barId);
+            if (!bar) return;
+            bar.style.transition = 'none';
+            bar.style.width = '0%';
+            void bar.offsetWidth;
+            bar.style.transition = `width ${durationMs}ms linear`;
+            bar.style.width = '100%';
+        }
+
         function toggleRawEditor() {
             const raw = document.getElementById('raw-editor-container');
             if (raw.style.display === 'block') {
@@ -712,6 +768,8 @@ HTML_TEMPLATE = """
 
         async function fetchWatcherStatus() {
             const badge = document.getElementById('watcher-status');
+            const spinner = document.getElementById('watcher-spinner');
+            if (spinner) spinner.classList.add('active');
             try {
                 const res = await fetch('/api/watcher/status');
                 if (!res.ok) throw new Error('Erreur HTTP ' + res.status);
@@ -729,6 +787,8 @@ HTML_TEMPLATE = """
             } catch (err) {
                 badge.className = 'status-badge status-stopped';
                 badge.innerText = 'Erreur de connexion';
+            } finally {
+                setTimeout(() => { if (spinner) spinner.classList.remove('active'); }, 500);
             }
         }
 
@@ -763,6 +823,8 @@ HTML_TEMPLATE = """
         }
 
         async function fetchWatcherState() {
+            const spinner = document.getElementById('watcher-spinner');
+            if (spinner) spinner.classList.add('active');
             try {
                 const res = await fetch('/api/watcher/state');
                 if (!res.ok) return;
@@ -798,6 +860,8 @@ HTML_TEMPLATE = """
                 tbody.innerHTML = html;
             } catch (err) {
                 console.error("Erreur de récupération de l'état du watcher:", err);
+            } finally {
+                setTimeout(() => { if (spinner) spinner.classList.remove('active'); }, 500);
             }
         }
 
@@ -823,6 +887,12 @@ HTML_TEMPLATE = """
             if (res.ok) alert('Règles sauvegardées avec succès !');
         }
 
+        async function refreshWatcher() {
+            await fetchWatcherStatus();
+            await fetchWatcherState();
+            resetAndStartProgress('watcher-progress-bar', 5000);
+        }
+
         async function fetchLogs() {
             const spinner = document.getElementById('log-spinner');
             const linesCount = document.getElementById('log-lines')?.value || 100;
@@ -844,6 +914,7 @@ HTML_TEMPLATE = """
             } finally {
                 setTimeout(() => {
                     if (spinner) spinner.classList.remove('active');
+                    resetAndStartProgress('log-progress-bar', 5000);
                 }, 500);
             }
         }
@@ -1007,13 +1078,11 @@ HTML_TEMPLATE = """
 
         loadRules();
         fetchStatus();
-        fetchWatcherStatus();
-        fetchWatcherState();
+        refreshWatcher();
         fetchLogs();
         fetchEnvConfig();
         setInterval(fetchStatus, 5000);
-        setInterval(fetchWatcherStatus, 5000);
-        setInterval(fetchWatcherState, 5000);
+        setInterval(refreshWatcher, 5000);
         setInterval(fetchLogs, 5000);
     </script>
 </body>
