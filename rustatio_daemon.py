@@ -115,7 +115,12 @@ HTML_TEMPLATE = """
         button.stop { background-color: var(--danger); }
         button.start { background-color: var(--success); }
         button.small { padding: 4px 8px; font-size: 0.8em; }
-        
+        button:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+            filter: grayscale(100%);
+            pointer-events: none;
+        }
         .rule-row {
             display: flex;
             gap: 12px;
@@ -127,7 +132,6 @@ HTML_TEMPLATE = """
             border: 1px solid var(--border-color);
             position: relative;
         }
-
         .rule-block {
             background: var(--section-bg);
             border: 1px solid var(--border-color);
@@ -137,7 +141,6 @@ HTML_TEMPLATE = """
             flex-direction: column;
             gap: 8px;
         }
-
         .rule-block-title {
             font-size: 0.75em;
             font-weight: bold;
@@ -148,11 +151,9 @@ HTML_TEMPLATE = """
             padding-bottom: 4px;
             margin-bottom: 2px;
         }
-
         .block-conditions { flex: 3; }
         .block-action { flex: 1; min-width: 160px; }
         .block-assign { flex: 2; min-width: 220px; }
-
         .rule-arrow {
             display: flex;
             align-items: center;
@@ -162,7 +163,6 @@ HTML_TEMPLATE = """
             font-weight: bold;
             user-select: none;
         }
-
         .conditions-wrapper {
             display: flex;
             flex-direction: column;
@@ -177,7 +177,6 @@ HTML_TEMPLATE = """
             border-radius: 4px;
             border: 1px solid #333;
         }
-
         select, input[type="text"], input[type="number"] {
             background: #0d0d0d;
             color: #fff;
@@ -187,10 +186,8 @@ HTML_TEMPLATE = """
             font-size: 0.9em;
         }
         select:focus, input:focus { outline: 1px solid var(--rust-orange); }
-
         .cond-logop { font-weight: bold; color: var(--rust-orange); border-color: var(--rust-orange); }
         input[type="text"], input[type="number"] { flex-grow: 1; min-width: 100px; }
-
         .action-type {
             font-weight: bold;
             text-transform: uppercase;
@@ -206,7 +203,6 @@ HTML_TEMPLATE = """
         .action-type[data-action="update"] { background-color: #004d40; color: #b2dfdb; border-color: #00695c; }
         .action-type[data-action="addtags"] { background-color: #006064; color: #b2ebf2; border-color: #00838f; }
         .action-type[data-action="removetags"] { background-color: #4e342e; color: #d7ccc8; border-color: #6d4c41; }
-
         .btn-delete-rule {
             align-self: center;
             background: #333;
@@ -222,14 +218,12 @@ HTML_TEMPLATE = """
             cursor: pointer;
         }
         .btn-delete-rule:hover { background: var(--danger); color: white; }
-
         .raw-editor-container { margin-top: 15px; display: none; }
         textarea {
             width: 100%; height: 150px; background: #000; color: #fff;
             border: 1px solid var(--border-color); padding: 10px;
             font-family: monospace; resize: vertical; box-sizing: border-box;
         }
-
         #logs {
             width: 100%; height: 400px; background: #000; color: #a5d6a7;
             border: 1px solid var(--border-color); padding: 10px;
@@ -323,9 +317,9 @@ HTML_TEMPLATE = """
                 </h2>
                 <div class="controls" onclick="event.stopPropagation()">
                     <span id="daemon-status" class="status-badge status-stopped">Vérification...</span>
-                    <button class="start" onclick="daemonAction('start')">▶ Démarrer Daemon</button>
-                    <button class="stop" onclick="daemonAction('stop')">⏹ Arrêter Daemon</button>
-                    <button onclick="daemonAction('restart')">🔄 Redémarrer Daemon</button>
+                    <button id="btn-daemon-start" class="start" onclick="daemonAction('start')">▶ Démarrer Daemon</button>
+                    <button id="btn-daemon-stop" class="stop" onclick="daemonAction('stop')">⏹ Arrêter Daemon</button>
+                    <button id="btn-daemon-restart" onclick="daemonAction('restart')">🔄 Redémarrer Daemon</button>
                     <button style="background-color: #555;" onclick="restartAdmin()">♻️ Redémarrer Script</button>
                 </div>
             </div>
@@ -359,9 +353,9 @@ HTML_TEMPLATE = """
                 </h2>
                 <div class="controls" onclick="event.stopPropagation()">
                     <span id="watcher-status" class="status-badge status-stopped">Vérification...</span>
-                    <button class="start" onclick="watcherAction('start')">▶ Démarrer</button>
-                    <button class="stop" onclick="watcherAction('stop')">⏹ Arrêter</button>
-                    <button onclick="watcherAction('restart')">🔄 Redémarrer</button>
+                    <button id="btn-watcher-start" class="start" onclick="watcherAction('start')">▶ Démarrer</button>
+                    <button id="btn-watcher-stop" class="stop" onclick="watcherAction('stop')">⏹ Arrêter</button>
+                    <button id="btn-watcher-restart" onclick="watcherAction('restart')">🔄 Redémarrer</button>
                 </div>
             </div>
 
@@ -742,20 +736,30 @@ HTML_TEMPLATE = """
 
         async function fetchStatus() {
             const badge = document.getElementById('daemon-status');
+            const btnStart = document.getElementById('btn-daemon-start');
+            const btnStop = document.getElementById('btn-daemon-stop');
+            const btnRestart = document.getElementById('btn-daemon-restart');
             try {
                 const res = await fetch('/api/status');
                 if (!res.ok) throw new Error('Erreur HTTP ' + res.status);
                 const data = await res.json();
-                if (data.running) {
+                const isRunning = !!data.running;
+                if (isRunning) {
                     badge.className = 'status-badge status-running';
                     badge.innerText = "En cours d'exécution (PID: " + data.pid + ")";
                 } else {
                     badge.className = 'status-badge status-stopped';
                     badge.innerText = 'Arrêté';
                 }
+                if (btnStart) btnStart.disabled = isRunning;
+                if (btnStop) btnStop.disabled = !isRunning;
+                if (btnRestart) btnRestart.disabled = !isRunning;
             } catch (err) {
                 badge.className = 'status-badge status-stopped';
                 badge.innerText = 'Erreur de connexion';
+                if (btnStart) btnStart.disabled = false;
+                if (btnStop) btnStop.disabled = true;
+                if (btnRestart) btnRestart.disabled = true;
             }
         }
 
@@ -769,12 +773,16 @@ HTML_TEMPLATE = """
         async function fetchWatcherStatus() {
             const badge = document.getElementById('watcher-status');
             const spinner = document.getElementById('watcher-spinner');
+            const btnStart = document.getElementById('btn-watcher-start');
+            const btnStop = document.getElementById('btn-watcher-stop');
+            const btnRestart = document.getElementById('btn-watcher-restart');
             if (spinner) spinner.classList.add('active');
             try {
                 const res = await fetch('/api/watcher/status');
                 if (!res.ok) throw new Error('Erreur HTTP ' + res.status);
                 const data = await res.json();
-                if (data.running) {
+                const isRunning = !!data.running;
+                if (isRunning) {
                     badge.className = 'status-badge status-running';
                     badge.innerText = `En cours d'exécution`;
                 } else if (data.status === 'crashed') {
@@ -784,9 +792,15 @@ HTML_TEMPLATE = """
                     badge.className = 'status-badge status-stopped';
                     badge.innerText = 'Arrêté (Thread inactif)';
                 }
+                if (btnStart) btnStart.disabled = isRunning;
+                if (btnStop) btnStop.disabled = !isRunning;
+                if (btnRestart) btnRestart.disabled = !isRunning;
             } catch (err) {
                 badge.className = 'status-badge status-stopped';
                 badge.innerText = 'Erreur de connexion';
+                if (btnStart) btnStart.disabled = false;
+                if (btnStop) btnStop.disabled = true;
+                if (btnRestart) btnRestart.disabled = true;
             } finally {
                 setTimeout(() => { if (spinner) spinner.classList.remove('active'); }, 500);
             }
