@@ -27,6 +27,7 @@ app = Flask(__name__)
 PORT = int(os.environ.get("PORT", 8080))
 ADMIN_PORT = PORT + 1
 RUSTATIO_API = os.environ.get("RUSTATIO_API", f"http://127.0.0.1:{PORT}")
+AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "")
 REFRESH_INTERVAL = int(os.environ.get("REFRESH_INTERVAL", 0))
 ARCHIVE_FOLDER = os.environ.get("ARCHIVE_FOLDER", "/data/archived")
 RULES_FILE = os.environ.get("RULES_FILE", "/data/rules.txt")
@@ -240,48 +241,151 @@ HTML_TEMPLATE = """
         }
         .status-running { background: rgba(76, 175, 80, 0.2); color: var(--success); }
         .status-stopped { background: rgba(244, 67, 54, 0.2); color: var(--danger); }
+        .refresh-spinner {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border: 2px solid rgba(206, 65, 43, 0.3);
+            border-radius: 50%;
+            border-top-color: var(--rust-orange);
+            animation: spin 0.8s linear infinite;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+            margin-left: 8px;
+            vertical-align: middle;
+        }
+        .refresh-spinner.active {
+            opacity: 1;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .collapsible-header {
+            cursor: pointer;
+            user-select: none;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .collapse-icon {
+            display: inline-block;
+            transition: transform 0.2s ease;
+            margin-right: 8px;
+            font-size: 0.8em;
+            color: var(--rust-orange);
+        }
+        .panel.collapsed .collapse-content {
+            display: none !important;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="header">
-            <h1>⚙️ Rustatio Control</h1>
-            <div class="controls">
-                <span id="daemon-status" class="status-badge status-stopped">Vérification...</span>
-                <button class="start" onclick="daemonAction('start')">▶ Démarrer Daemon</button>
-                <button class="stop" onclick="daemonAction('stop')">⏹ Arrêter Daemon</button>
-                <button onclick="daemonAction('restart')">🔄 Redémarrer Daemon</button>
-                <button style="background-color: #555;" onclick="restartAdmin()">♻️ Redémarrer Script</button>
+        <div class="panel collapsed" id="panel-control">
+            <div class="collapsible-header" onclick="togglePanel('panel-control')">
+                <h2 style="display: flex; align-items: center;">
+                    <span class="collapse-icon">▶</span> ⚙️ Rustatio Control
+                </h2>
+                <div class="controls" onclick="event.stopPropagation()">
+                    <span id="daemon-status" class="status-badge status-stopped">Vérification...</span>
+                    <button class="start" onclick="daemonAction('start')">▶ Démarrer Daemon</button>
+                    <button class="stop" onclick="daemonAction('stop')">⏹ Arrêter Daemon</button>
+                    <button onclick="daemonAction('restart')">🔄 Redémarrer Daemon</button>
+                    <button style="background-color: #555;" onclick="restartAdmin()">♻️ Redémarrer Script</button>
+                </div>
+            </div>
+
+            <div class="collapse-content" style="margin-top: 15px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <span style="font-size: 0.8em; font-weight: bold; color: #888; text-transform: uppercase; letter-spacing: 1px;">
+                        🔧 Configuration de l'environnement (Modifications temporaires)
+                    </span>
+                    <div style="display: flex; gap: 8px;">
+                        <button onclick="resetEnvConfig()" class="small" style="background: #444;">🔄 Réinitialiser</button>
+                        <button onclick="saveEnvConfig()" class="small" style="background: var(--rust-orange);">⚡ Appliquer à la session</button>
+                    </div>
+                </div>
+                <div id="env-config-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px;">
+                    <div style="color: #666; font-size: 0.85em;">Chargement des variables...</div>
+                </div>
             </div>
         </div>
 
-        <div class="panel">
-            <h2>📝 Éditeur de Règles (rules.txt)</h2>
-            <p style="font-size: 0.85em; color: #888;">Gestion visuelle structurée : Condition(s) ➔ Action ➔ Assignation/Paramètres.</p>
-            <div id="visual-rules-container"></div>
-            <div style="display: flex; gap: 10px; margin-top: 10px;">
-                <button onclick="addRuleRow()">➕ Ajouter une règle</button>
-                <button onclick="toggleRawEditor()" class="small" style="background: #555;">🔄 Vue Texte Brut</button>
-                <button onclick="saveRules()" style="margin-left: auto;">💾 Sauvegarder les règles</button>
+        <div class="panel collapsed" id="panel-watcher">
+            <div class="collapsible-header" onclick="togglePanel('panel-watcher')">
+                <h2 style="display: flex; align-items: center;">
+                    <span class="collapse-icon">▶</span> 👁️ Log Watcher
+                </h2>
+                <div class="controls" onclick="event.stopPropagation()">
+                    <span id="watcher-status" class="status-badge status-stopped">Vérification...</span>
+                    <button class="start" onclick="watcherAction('start')">▶ Démarrer</button>
+                    <button class="stop" onclick="watcherAction('stop')">⏹ Arrêter</button>
+                    <button onclick="watcherAction('restart')">🔄 Redémarrer</button>
+                </div>
             </div>
-            <div class="raw-editor-container" id="raw-editor-container">
-                <p style="font-size: 0.85em; color: #e84d35;">Éditeur manuel (Format : condition | action | assignation)</p>
-                <textarea id="rules-editor" onchange="parseTextToVisual()"></textarea>
+            
+            <div class="collapse-content" style="margin-top: 15px;">
+                <div style="background: #181818; border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; overflow-x: auto;">
+                    <table style="width: 100%; border-collapse: collapse; font-size: 0.95em; text-align: left;">
+                        <thead>
+                            <tr style="border-bottom: 1px solid var(--border-color); color: #888;">
+                                <th style="padding: 10px;">Torrent (Tag)</th>
+                                <th style="padding: 10px;">Statut</th>
+                                <th style="padding: 10px;">Détails (Erreurs / Strikes)</th>
+                                <th style="padding: 10px;">Temps restant</th>
+                            </tr>
+                        </thead>
+                        <tbody id="watcher-state-body">
+                            <tr><td colspan="4" style="padding: 15px; text-align: center; color: #666;">Aucune erreur en cours ...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel collapsed" id="panel-rules">
+            <div class="collapsible-header" onclick="togglePanel('panel-rules')">
+                <h2 style="display: flex; align-items: center;">
+                    <span class="collapse-icon">▶</span> 📝 Éditeur de Règles ({{ rules_filename }})
+                </h2>
+            </div>
+            <div class="collapse-content" style="margin-top: 10px;">
+                <p style="font-size: 0.85em; color: #888;">Gestion visuelle structurée : Condition(s) ➔ Action ➔ Assignation/Paramètres.</p>
+                <div id="visual-rules-container"></div>
+                <div style="display: flex; gap: 10px; margin-top: 10px;">
+                    <button onclick="addRuleRow()">➕ Ajouter une règle</button>
+                    <button onclick="toggleRawEditor()" class="small" style="background: #555;">🔄 Vue Texte Brut</button>
+                    <button onclick="saveRules()" style="margin-left: auto;">💾 Sauvegarder les règles</button>
+                </div>
+                <div class="raw-editor-container" id="raw-editor-container">
+                    <p style="font-size: 0.85em; color: #e84d35;">Éditeur manuel (Format : condition | action | assignation)</p>
+                    <textarea id="rules-editor" onchange="parseTextToVisual()"></textarea>
+                </div>
             </div>
         </div>
 
         <div class="panel">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                <h2>🔍 Logs (rustatio_daemon.log)</h2>
-                <div style="display: flex; gap: 8px;">
+                <h2 style="display: flex; align-items: center;">
+                    🔍 Logs ({{ logfile_filename }})
+                    <span id="log-spinner" class="refresh-spinner" title="Mise à jour..."></span>
+                </h2>
+                <div style="display: flex; gap: 8px; align-items: center;">
                     <button onclick="clearLogs()" class="small stop">Vider</button>
                     <button onclick="archiveLogs()" class="small" style="background-color: #2e7d32;">📁 Archiver</button>
                     <button onclick="fetchLogs()" class="small">Rafraîchir</button>
+                    <label for="log-lines" style="font-size: 0.85em; color: #888;">Lignes :</label>
+                    <select id="log-lines" onchange="fetchLogs()" style="padding: 3px 6px; font-size: 0.85em;">
+                        <option value="50">50</option>
+                        <option value="100" selected>100</option>
+                        <option value="200">200</option>
+                        <option value="500">500</option>
+                        <option value="1000">1000</option>
+                    </select>
                 </div>
             </div>
             <div id="logs"></div>
         </div>
-    </div>
 
     <datalist id="default-config-list">
         <option value="default_config.upload_rate"></option>
@@ -355,6 +459,8 @@ HTML_TEMPLATE = """
         const OPERATORS = [":", "=", "<", ">", "!=", "<=", ">=", "~"];
         const ACTIONS = ["start", "stop", "pause", "resume", "delete", "update", "addtags", "removetags"];
         const LOGICAL_OPS = ["AND", "OR"];
+
+        let currentReadonlyKeys = [];
 
         function createOptions(arr, selected = '') {
             return arr.map(item => `<option value="${item}" ${item === selected ? 'selected' : ''}>${item}</option>`).join('');
@@ -567,6 +673,16 @@ HTML_TEMPLATE = """
                 raw.style.display = 'block';
             }
         }
+        
+        function togglePanel(panelId) {
+            const panel = document.getElementById(panelId);
+            if (!panel) return;
+            const icon = panel.querySelector('.collapse-icon');
+            panel.classList.toggle('collapsed');
+            if (icon) {
+                icon.textContent = panel.classList.contains('collapsed') ? '▶' : '▼';
+            }
+        }
 
         async function fetchStatus() {
             const badge = document.getElementById('daemon-status');
@@ -594,6 +710,97 @@ HTML_TEMPLATE = """
             setTimeout(fetchLogs, 1000);
         }
 
+        async function fetchWatcherStatus() {
+            const badge = document.getElementById('watcher-status');
+            try {
+                const res = await fetch('/api/watcher/status');
+                if (!res.ok) throw new Error('Erreur HTTP ' + res.status);
+                const data = await res.json();
+                if (data.running) {
+                    badge.className = 'status-badge status-running';
+                    badge.innerText = `En cours d'exécution`;
+                } else if (data.status === 'crashed') {
+                    badge.className = 'status-badge status-stopped';
+                    badge.innerText = `Crashé : ${data.error}`;
+                } else {
+                    badge.className = 'status-badge status-stopped';
+                    badge.innerText = 'Arrêté (Thread inactif)';
+                }
+            } catch (err) {
+                badge.className = 'status-badge status-stopped';
+                badge.innerText = 'Erreur de connexion';
+            }
+        }
+
+        async function watcherAction(action) {
+            try { await fetch(`/api/watcher/${action}`, { method: 'POST' }); } 
+            catch (e) { console.error(e); }
+            setTimeout(fetchWatcherStatus, 1000);
+            setTimeout(fetchLogs, 1000);
+        }
+
+        function formatTimeLeft(seconds) {
+            if (seconds <= 0) return "Expiration...";
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = seconds % 60;
+            if (h > 0) return `${h}h ${m}m ${s}s`;
+            return `${m}m ${s}s`;
+        }
+
+        function toggleTokenVisibility() {
+            const input = document.getElementById('auth-token-input');
+            const btn = document.getElementById('auth-token-btn');
+            if (input) {
+                if (input.type === 'password') {
+                    input.type = 'text';
+                    if (btn) btn.textContent = '🙈';
+                } else {
+                    input.type = 'password';
+                    if (btn) btn.textContent = '👁️';
+                }
+            }
+        }
+
+        async function fetchWatcherState() {
+            try {
+                const res = await fetch('/api/watcher/state');
+                if (!res.ok) return;
+                const data = await res.json();
+                const tbody = document.getElementById('watcher-state-body');
+                
+                if (Object.keys(data.state).length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="4" style="padding: 15px; text-align: center; color: #666;">Aucune erreur en cours ...</td></tr>';
+                    return;
+                }
+                
+                let html = '';
+                for (const [tag, info] of Object.entries(data.state)) {
+                    let errDetails = '';
+                    for (const [err, count] of Object.entries(info.errors)) {
+                        errDetails += `<div style="font-size: 0.85em; color: #aaa; margin-top: 4px;">- ${err}: <strong style="color:#fff;">${count}</strong></div>`;
+                    }
+                    
+                    let statusBadge = info.status === "En pause" 
+                        ? `<span class="status-badge status-stopped" style="background: rgba(230, 81, 0, 0.2); color: #ffb74d;">En pause</span>`
+                        : `<span class="status-badge status-running" style="color: #a5d6a7;">Observation</span>`;
+                        
+                    html += `<tr style="border-bottom: 1px solid #333;">
+                        <td style="padding: 10px; word-break: break-all; max-width: 250px;"><strong>${tag}</strong></td>
+                        <td style="padding: 10px;">${statusBadge}</td>
+                        <td style="padding: 10px;">
+                            <span style="color: var(--rust-orange); font-weight: bold;">Total Strikes : ${info.total_strikes}</span>
+                            ${errDetails}
+                        </td>
+                        <td style="padding: 10px; color: #64b5f6; font-weight: bold;">${formatTimeLeft(info.time_left)}</td>
+                    </tr>`;
+                }
+                tbody.innerHTML = html;
+            } catch (err) {
+                console.error("Erreur de récupération de l'état du watcher:", err);
+            }
+        }
+
         async function loadRules() {
             try {
                 const res = await fetch('/api/rules');
@@ -617,13 +824,28 @@ HTML_TEMPLATE = """
         }
 
         async function fetchLogs() {
+            const spinner = document.getElementById('log-spinner');
+            const linesCount = document.getElementById('log-lines')?.value || 100;
+            if (spinner) spinner.classList.add('active');
             try {
-                const res = await fetch('/api/logs');
+                const res = await fetch(`/api/logs?lines=${linesCount}`);
                 const data = await res.json();
                 const logDiv = document.getElementById('logs');
+                const isAtBottom = logDiv.scrollHeight - logDiv.clientHeight - logDiv.scrollTop <= 30;
+                const scrollOffsetFromBottom = logDiv.scrollHeight - logDiv.scrollTop;
                 logDiv.textContent = data.content;
-                logDiv.scrollTop = logDiv.scrollHeight;
-            } catch (e) { console.error(e); }
+                if (isAtBottom) {
+                    logDiv.scrollTop = logDiv.scrollHeight;
+                } else {
+                    logDiv.scrollTop = logDiv.scrollHeight - scrollOffsetFromBottom;
+                }
+            } catch (e) { 
+                console.error(e); 
+            } finally {
+                setTimeout(() => {
+                    if (spinner) spinner.classList.remove('active');
+                }, 500);
+            }
         }
 
         async function clearLogs() {
@@ -660,10 +882,138 @@ HTML_TEMPLATE = """
             }
         }
 
+        async function fetchEnvConfig() {
+            try {
+                const res = await fetch('/api/env');
+                if (!res.ok) return;
+                const data = await res.json();
+                const container = document.getElementById('env-config-grid');
+                if (!container) return;
+
+                const config = data.config || {};
+                currentReadonlyKeys = data.readonly || [];
+
+                let html = '';
+                for (const [key, val] of Object.entries(config)) {
+                    let inputHtml = '';
+                    const isReadOnly = currentReadonlyKeys.includes(key);
+
+                    const cardStyle = isReadOnly 
+                        ? 'background: #121212; border: 1px dashed #333; opacity: 0.75;' 
+                        : 'background: #181818; border: 1px solid var(--border-color);';
+                    
+                    const labelHtml = isReadOnly 
+                        ? `<span style="color: #777; font-family: monospace;" title="Lecture seule (redémarrage requis)">🔒 ${key}</span>` 
+                        : `<span style="color: #aaa; font-family: monospace;">${key}</span>`;
+
+                    if (key === 'AUTH_TOKEN') {
+                        inputHtml = `
+                            <div style="display: inline-flex; align-items: center; gap: 4px;">
+                                <input id="env-input-${key}" type="password" value="${val}" ${isReadOnly ? 'readonly' : ''} 
+                                       style="background: #181818; border: 1px solid #333; border-radius: 4px; color: #888; font-family: monospace; width: 100px; padding: 2px 5px; text-align: right; cursor: not-allowed;">
+                                <button id="auth-token-btn" onclick="toggleTokenVisibility()" type="button"
+                                        style="background: none; border: none; cursor: pointer; padding: 0; font-size: 1em;">👁️</button>
+                            </div>`;
+                    } else if (key === 'LOGS_WATCHER' || key === 'TOR_KEEP_LAST') {
+                        const intVal = parseInt(val, 10) || 0;
+                        inputHtml = `
+                            <select id="env-input-${key}" style="background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-family: monospace; padding: 2px 5px;">
+                                <option value="0" ${intVal === 0 ? 'selected' : ''}>0</option>
+                                <option value="1" ${intVal === 1 ? 'selected' : ''}>1</option>
+                            </select>`;
+                    } else if (key === 'DRY_RUN' || typeof val === 'boolean') {
+                        const boolVal = (val === true || val === 'true');
+                        inputHtml = `
+                            <select id="env-input-${key}" style="background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-family: monospace; padding: 2px 5px;">
+                                <option value="true" ${boolVal ? 'selected' : ''}>true</option>
+                                <option value="false" ${!boolVal ? 'selected' : ''}>false</option>
+                            </select>`;
+                    } else {
+                        const inputBg = isReadOnly ? '#181818' : '#222';
+                        const inputBorder = isReadOnly ? '1px solid #333' : '1px solid #444';
+                        const inputColor = isReadOnly ? '#888' : '#fff';
+                        const inputCursor = isReadOnly ? 'not-allowed' : 'text';
+
+                        inputHtml = `
+                            <input id="env-input-${key}" type="${typeof val === 'number' ? 'number' : 'text'}" value="${val}" ${isReadOnly ? 'readonly' : ''} 
+                                   style="background: ${inputBg}; border: ${inputBorder}; border-radius: 4px; color: ${inputColor}; font-family: monospace; width: 110px; padding: 2px 5px; text-align: right; cursor: ${inputCursor};">`;
+                    }
+
+                    html += `
+                        <div style="${cardStyle} padding: 8px 12px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; font-size: 0.85em;">
+                            ${labelHtml}
+                            <div style="margin-left: 10px;">${inputHtml}</div>
+                        </div>`;
+                }
+                container.innerHTML = html;
+            } catch (e) {
+                console.error("Erreur de chargement des variables :", e);
+            }
+        }
+
+        async function saveEnvConfig() {
+            const payload = {};
+
+            document.querySelectorAll('[id^="env-input-"]').forEach(el => {
+                const key = el.id.replace('env-input-', '');
+                if (!currentReadonlyKeys.includes(key)) {
+                    if (key === 'LOGS_WATCHER' || key === 'TOR_KEEP_LAST') {
+                        payload[key] = parseInt(el.value, 10);
+                    } else if (el.value === 'true' || el.value === 'false') {
+                        payload[key] = el.value === 'true';
+                    } else if (el.type === 'number') {
+                        payload[key] = parseInt(el.value, 10);
+                    } else {
+                        payload[key] = el.value;
+                    }
+                }
+            });
+
+            try {
+                const res = await fetch('/api/env', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                const data = await res.json();
+
+                if (res.ok) {
+                    alert("Configuration appliquée à la session en cours.");
+                    fetchEnvConfig();
+                } else {
+                    alert(`Erreur (${res.status}) : ${data.message || 'Action non autorisée'}`);
+                }
+            } catch (e) {
+                console.error("Erreur d'envoi de la configuration :", e);
+            }
+        }
+
+        async function resetEnvConfig() {
+            if (!confirm("Rétablir les variables de session à leurs valeurs initiales ?")) return;
+
+            try {
+                const res = await fetch('/api/env/reset', { method: 'POST' });
+                if (res.ok) {
+                    await fetchEnvConfig();
+                    alert("Configuration réinitialisée aux valeurs de départ.");
+                } else {
+                    alert("Erreur lors de la réinitialisation.");
+                }
+            } catch (e) {
+                console.error("Erreur de réinitialisation :", e);
+            }
+        }
+
         loadRules();
         fetchStatus();
+        fetchWatcherStatus();
+        fetchWatcherState();
         fetchLogs();
+        fetchEnvConfig();
         setInterval(fetchStatus, 5000);
+        setInterval(fetchWatcherStatus, 5000);
+        setInterval(fetchWatcherState, 5000);
         setInterval(fetchLogs, 5000);
     </script>
 </body>
@@ -769,6 +1119,10 @@ class APIClient:
         self.base_url = base_url.rstrip("/")
         self.session = requests.Session()
         self.session.headers.update({"Accept": "application/json"})
+
+        if AUTH_TOKEN:
+            self.session.headers.update({"Authorization": f"Bearer {AUTH_TOKEN}"})
+
         log(f"APIClient initialized with base_url: {self.base_url}", "trace")
 
     def request(self, method, endpoint, payload=None, timeout=5):
@@ -958,6 +1312,9 @@ class RustatioManager:
         
         # Thread Controls
         self.stop_event = threading.Event()
+        self.logs_thread = None
+        self.stop_event = threading.Event()
+        self.watcher_stop_event = threading.Event()  # <--- AJOUT
         self.logs_thread = None
 
         log("Initializing regex patterns for RustatioManager", "trace")
@@ -1347,18 +1704,21 @@ class RustatioManager:
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no"
         }
-        while not self.stop_event.is_set():
+        if AUTH_TOKEN:
+            headers["Authorization"] = f"Bearer {AUTH_TOKEN}"
+
+        while not self.stop_event.is_set() and not self.watcher_stop_event.is_set():
             try:
                 with requests.get(url, stream=True, headers=headers, timeout=60) as r:
                     for line in r.iter_lines(decode_unicode=True):
-                        if self.stop_event.is_set(): return
+                        if self.stop_event.is_set() or self.watcher_stop_event.is_set(): return
                         self._check_expirations()
                         if line and line.startswith("data:"):
                             self._handle_log_event(line[5:].strip())
             except requests.exceptions.Timeout:
                 self._check_expirations()
             except Exception as e:
-                if self.stop_event.is_set():
+                if self.stop_event.is_set() or self.watcher_stop_event.is_set():
                     log(f"logs_watcher_thread stopping", "trace")
                     return
                 log(f"logs_watcher_thread exception encountered: {e}", "trace")
@@ -1416,17 +1776,26 @@ class RustatioManager:
 
     def _check_expirations(self):
         log("Checking log expirations and purges", "trace")
+        
+        with self.strike_lock:
+            if not self.current_instances:
+                log("Skip _check_expirations: current_instances is empty", "trace")
+                return
+            instances_snapshot = list(self.current_instances)
+
         now = time.time()
         dirty = False
         expired_tags = []
-        active_names = {self.get_val(inst, "torrent.name") for inst in self.current_instances}
+        active_names = {self.get_val(inst, "torrent.name") for inst in instances_snapshot}
+
         for tag, state in list(self.logs_state.items()):
             if tag not in active_names:
                 expired_tags.append(tag)
                 continue
 
             if state.get("last_count_time", 0) > 0 and (now - state["last_count_time"]) > WATCHER_STRIKE_TIME:
-                if state.get("action", 0) == 0: expired_tags.append(tag)
+                if state.get("action", 0) == 0: 
+                    expired_tags.append(tag)
             if state.get("action", 0) > 0 and (now - state["action"]) > WATCHER_PAUSE_TIME:
                 self._trigger_watcher_resume(tag, state["action"])
                 expired_tags.append(tag)
@@ -1435,7 +1804,9 @@ class RustatioManager:
             if tag in self.logs_state:
                 del self.logs_state[tag]
                 dirty = True
-        if dirty: self.save_logs_state()
+
+        if dirty: 
+            self.save_logs_state()
 
     def _trigger_watcher_resume(self, tag, action_ts):
         inst = self._find_instance_by_name(tag)
@@ -1470,12 +1841,15 @@ class RustatioManager:
         log(f"REFRESH INTERVAL : {interval + initial_interval}s", "data")
 
         if LOGS_WATCHER:
-            self.logs_thread = threading.Thread(target=self.logs_watcher_thread, daemon=True)
-            self.logs_thread.start()
+            self.start_watcher()
+
+        headers = {}
+        if AUTH_TOKEN:
+            headers["Authorization"] = f"Bearer {AUTH_TOKEN}"
 
         while not self.stop_event.is_set():
             try:
-                resp = requests.get(f"{RUSTATIO_API}/health", timeout=3)
+                resp = requests.get(f"{RUSTATIO_API}/health", headers=headers, timeout=3)
                 if resp.text == "OK": break
             except Exception: pass
             if self.stop_event.is_set(): return
@@ -1489,13 +1863,34 @@ class RustatioManager:
                 log("Log recreated automatically", "start")
                 self.load_configs()
 
-            try: self.process_rules()
-            except Exception as e: log(f"Error in process_rules: {str(e)}", "error")
+            try: 
+                self.process_rules()
+                if LOGS_WATCHER:
+                    self._check_expirations()
+            except Exception as e: 
+                log(f"Error in process_rules: {str(e)}", "error")
             
             if self.stop_event.wait(interval): break
             
         log("RustatioManager stopped", "finish")
-        
+
+    def is_watcher_running(self):
+        return self.logs_thread is not None and self.logs_thread.is_alive()
+
+    def start_watcher(self):
+        if not self.is_watcher_running():
+            self.watcher_stop_event.clear()
+            self.logs_thread = threading.Thread(target=self.logs_watcher_thread, daemon=True)
+            self.logs_thread.start()
+            log("Log Watcher started", "start")
+
+    def stop_watcher(self):
+        if self.is_watcher_running():
+            self.watcher_stop_event.set()
+            if self.logs_thread:
+                self.logs_thread.join(timeout=3)
+            log("Log Watcher stopped", "finish")
+
     def stop(self):
         self.stop_event.set()
         for h in logger.handlers:
@@ -1508,9 +1903,37 @@ class RustatioManager:
 manager = None
 manager_thread = None
 
+@app.before_request
+def require_auth():
+    if not AUTH_TOKEN:
+        return None
+
+    auth_header = request.headers.get("Authorization", "")
+    token_param = request.args.get("token", "")
+    auth = request.authorization
+
+    if auth_header.startswith("Bearer ") and auth_header[7:].strip() == AUTH_TOKEN:
+        return None
+
+    if auth and (auth.password == AUTH_TOKEN or auth.username == AUTH_TOKEN):
+        return None
+
+    if token_param == AUTH_TOKEN:
+        return None
+
+    return jsonify({"error": "Accès non autorisé"}), 401, {
+        'WWW-Authenticate': 'Basic realm="Rustatio Admin"'
+    }
+
 @app.route('/')
 def index():
-    return render_template_string(HTML_TEMPLATE)
+    rules_filename = os.path.basename(RULES_FILE) if RULES_FILE else "rules.txt"
+    logfile_filename = os.path.basename(LOGFILE) if LOGFILE else "rustatio_daemon.log"
+    return render_template_string(
+        HTML_TEMPLATE, 
+        rules_filename=rules_filename, 
+        logfile_filename=logfile_filename
+    )
 
 @app.route('/api/status', methods=['GET'])
 def get_status():
@@ -1570,10 +1993,15 @@ def manage_rules():
 @app.route('/api/logs', methods=['GET'])
 def get_logs():
     content = "Fichier log introuvable."
+    try:
+        lines_limit = int(request.args.get('lines', 100))
+    except ValueError:
+        lines_limit = 100
+
     if os.path.exists(LOGFILE):
         with open(LOGFILE, 'r', encoding='utf-8') as f:
             lines = f.readlines()
-            content = "".join(lines[-100:])
+            content = "".join(lines[-lines_limit:])
     return jsonify({"content": content})
 
 @app.route('/api/logs/clear', methods=['POST'])
@@ -1612,6 +2040,141 @@ def restart_admin():
     threading.Thread(target=delayed_restart).start()
     return jsonify({"success": True, "message": "Redémarrage du processus en cours..."})
 
+@app.route('/api/watcher/status', methods=['GET'])
+def get_watcher_status():
+    if manager:
+        if manager.is_watcher_running():
+            return jsonify({
+                "running": True, 
+                "status": "ok", 
+                "pid": os.getpid()
+            })
+        elif getattr(manager, 'watcher_error', None):
+            return jsonify({
+                "running": False, 
+                "status": "crashed", 
+                "error": manager.watcher_error
+            })
+    return jsonify({"running": False, "status": "stopped"})
+
+@app.route('/api/watcher/state', methods=['GET'])
+def get_watcher_state():
+    if not manager:
+        return jsonify({"state": {}})
+    
+    now = time.time()
+    res = {}
+    
+    with manager.strike_lock:
+        for tag, state in manager.logs_state.items():
+            counts = sum(state.get("counts", {}).values())
+            action_ts = state.get("action", 0)
+            last_ts = state.get("last_count_time", 0)
+            
+            if action_ts > 0:
+                status = "En pause"
+                time_left = max(0, int((action_ts + WATCHER_PAUSE_TIME) - now))
+            else:
+                status = "En observation"
+                time_left = max(0, int((last_ts + WATCHER_STRIKE_TIME) - now))
+                
+            res[tag] = {
+                "errors": state.get("counts", {}),
+                "total_strikes": counts,
+                "status": status,
+                "time_left": time_left
+            }
+            
+    return jsonify({"state": res})
+
+@app.route('/api/watcher/<action>', methods=['POST'])
+def manage_watcher(action):
+    if not manager or not manager_thread or not manager_thread.is_alive():
+        return jsonify({"success": False, "error": "Le daemon principal est arrêté"})
+
+    if action == 'start':
+        manager.start_watcher()
+        return jsonify({"success": True})
+    elif action == 'stop':
+        manager.stop_watcher()
+        return jsonify({"success": True})
+    elif action == 'restart':
+        manager.stop_watcher()
+        time.sleep(3)
+        manager.start_watcher()
+        return jsonify({"success": True})
+
+    return jsonify({"success": False, "error": "Action invalide"})
+
+INITIAL_ENV = {
+    'REFRESH_INTERVAL': REFRESH_INTERVAL,
+    'DRY_RUN': DRY_RUN,
+    'LOGS_WATCHER': LOGS_WATCHER,
+    'WATCHER_MAX_STRIKE': WATCHER_MAX_STRIKE,
+    'WATCHER_STRIKE_TIME': WATCHER_STRIKE_TIME,
+    'WATCHER_PAUSE_TIME': WATCHER_PAUSE_TIME,
+    'TOR_KEEP_LAST': TOR_KEEP_LAST
+}
+READONLY_KEYS = {
+    'PORT', 'ADMIN_PORT', 'RUSTATIO_API', 'AUTH_TOKEN', 
+    'ARCHIVE_FOLDER', 'RULES_FILE', 'DEFAULTS_FILE', 
+    'LOGFILE', 'CHECK_LOGS_FILE'
+}
+
+@app.route('/api/env', methods=['GET', 'POST'])
+def handle_env_config():
+    if request.method == 'POST':
+        data = request.json or {}
+
+        forbidden_attempts = [key for key in data if key in READONLY_KEYS]
+        if forbidden_attempts:
+            return jsonify({
+                "status": "forbidden",
+                "message": f"Modification interdite pour : {', '.join(forbidden_attempts)}"
+            }), 403
+
+        for key, val in data.items():
+            if key in globals() and key not in READONLY_KEYS:
+                if key in ('LOGS_WATCHER', 'TOR_KEEP_LAST'):
+                    globals()[key] = 1 if str(val) in ('1', 'true', 'True') else 0
+                elif isinstance(globals()[key], bool) or key == 'DRY_RUN':
+                    if isinstance(val, str):
+                        globals()[key] = val.lower() == 'true'
+                    else:
+                        globals()[key] = bool(val)
+                elif isinstance(globals()[key], int):
+                    globals()[key] = int(val)
+                elif isinstance(globals()[key], float):
+                    globals()[key] = float(val)
+                else:
+                    globals()[key] = str(val)
+
+        return jsonify({"status": "success", "message": "Variables mises à jour temporairement"})
+
+    config_keys = [
+        'PORT', 'ADMIN_PORT', 'RUSTATIO_API', 'AUTH_TOKEN',
+        'REFRESH_INTERVAL', 'ARCHIVE_FOLDER', 'RULES_FILE',
+        'DEFAULTS_FILE', 'DRY_RUN', 'LOGFILE', 'CHECK_LOGS_FILE',
+        'LOGS_WATCHER', 'WATCHER_MAX_STRIKE', 'WATCHER_STRIKE_TIME',
+        'WATCHER_PAUSE_TIME', 'TOR_KEEP_LAST'
+    ]
+    
+    return jsonify({
+        "config": {
+            k: (int(globals().get(k)) if k in ('LOGS_WATCHER', 'TOR_KEEP_LAST') else globals().get(k))
+            for k in config_keys
+        },
+        "readonly": list(READONLY_KEYS)
+    })
+
+@app.route('/api/env/reset', methods=['POST'])
+def reset_env_config():
+    # Restauration des variables d'origine
+    for key, val in INITIAL_ENV.items():
+        if key in globals() and key not in READONLY_KEYS:
+            globals()[key] = val
+            
+    return jsonify({"status": "success", "message": "Configuration réinitialisée aux valeurs d'origine"})
 
 def run_flask_app():
     log_werkzeug = logging.getLogger('werkzeug')
