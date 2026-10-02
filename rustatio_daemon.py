@@ -17,7 +17,7 @@ import datetime
 import ast
 import operator
 from collections import defaultdict
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, jsonify, render_template_string, make_response, redirect
 
 app = Flask(__name__)
 
@@ -45,6 +45,77 @@ TOR_KEEP_LAST = int(os.environ.get("TOR_KEEP_LAST", 1))
 # ==========================================
 # HTML TEMPLATE (ADMIN PANEL)
 # ==========================================
+LOGIN_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rustatio - Authentification</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #121212;
+            color: #e0e0e0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .login-card {
+            background: #1e1e1e;
+            border: 1px solid #3d3d3d;
+            border-radius: 8px;
+            padding: 30px;
+            width: 100%;
+            max-width: 360px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+            text-align: center;
+        }
+        h2 { color: #ce412b; margin-top: 0; margin-bottom: 20px; }
+        input[type="password"] {
+            width: 100%;
+            padding: 10px;
+            background: #0d0d0d;
+            color: #fff;
+            border: 1px solid #3d3d3d;
+            border-radius: 4px;
+            box-sizing: border-box;
+            margin-bottom: 15px;
+            font-size: 1em;
+        }
+        input[type="password"]:focus { outline: 1px solid #ce412b; }
+        button {
+            width: 100%;
+            background-color: #ce412b;
+            color: white;
+            border: none;
+            padding: 10px;
+            border-radius: 4px;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 1em;
+            transition: background 0.2s;
+        }
+        button:hover { background-color: #e84d35; }
+        .error { color: #f44336; font-size: 0.85em; margin-bottom: 10px; display: none; }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <h2>🔒 Connexion Rustatio</h2>
+        {% if error %}
+            <div class="error" style="display:block;">Token invalide, veuillez réespayer.</div>
+        {% endif %}
+        <form method="POST" action="/login">
+            <input type="password" name="token" placeholder="Entrez votre jeton d'accès..." required autofocus>
+            <button type="submit">Se connecter</button>
+        </form>
+    </div>
+</body>
+</html>
+"""
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="fr">
@@ -1990,28 +2061,53 @@ manager_thread = None
 def require_auth():
     if not AUTH_TOKEN:
         return None
+    if request.path == '/login':
+        return None
 
     auth_header = request.headers.get("Authorization", "")
     token_param = request.args.get("token", "")
+    token_cookie = request.cookies.get("auth_token", "")
     auth = request.authorization
 
+    token_is_valid = False
     if auth_header.startswith("Bearer ") and auth_header[7:].strip() == AUTH_TOKEN:
+        token_is_valid = True
+    elif auth and (auth.password == AUTH_TOKEN or auth.username == AUTH_TOKEN):
+        token_is_valid = True
+    elif token_param == AUTH_TOKEN:
+        token_is_valid = True
+    elif token_cookie == AUTH_TOKEN:
+        token_is_valid = True
+
+    if token_is_valid:
         return None
 
-    if auth and (auth.password == AUTH_TOKEN or auth.username == AUTH_TOKEN):
-        return None
+    if request.path.startswith('/api/'):
+        return jsonify({"error": "Accès non autorisé"}), 401
 
-    if token_param == AUTH_TOKEN:
-        return None
+    has_error = bool(token_param)
+    return render_template_string(LOGIN_TEMPLATE, error=has_error), 401
 
-    return jsonify({"error": "Accès non autorisé"}), 401, {
-        'WWW-Authenticate': 'Basic realm="Rustatio Admin"'
-    }
+@app.route('/login', methods=['POST'])
+def login():
+    token = request.form.get('token', '')
+    if AUTH_TOKEN and token == AUTH_TOKEN:
+        resp = make_response(redirect('/'))
+        resp.set_cookie('auth_token', token, httponly=True, samesite='Lax')
+        return resp
+    return render_template_string(LOGIN_TEMPLATE, error=True), 401
 
 @app.route('/')
 def index():
     rules_filename = os.path.basename(RULES_FILE) if RULES_FILE else "rules.txt"
     logfile_filename = os.path.basename(LOGFILE) if LOGFILE else "rustatio_daemon.log"
+
+    token_param = request.args.get("token", "")
+    if token_param and token_param == AUTH_TOKEN:
+        resp = make_response(redirect('/'))
+        resp.set_cookie('auth_token', token_param, httponly=True, samesite='Lax')
+        return resp
+
     return render_template_string(
         HTML_TEMPLATE, 
         rules_filename=rules_filename, 
@@ -2190,16 +2286,27 @@ def manage_watcher(action):
     return jsonify({"success": False, "error": "Action invalide"})
 
 INITIAL_ENV = {
+    'PORT': PORT,
+    'ADMIN_PORT': ADMIN_PORT,
+    'RUSTATIO_API': RUSTATIO_API,
+    'AUTH_TOKEN': AUTH_TOKEN,
     'REFRESH_INTERVAL': REFRESH_INTERVAL,
+    'ARCHIVE_FOLDER': ARCHIVE_FOLDER,
+    'RULES_FILE': RULES_FILE,
+    'DEFAULTS_FILE': DEFAULTS_FILE,
     'DRY_RUN': DRY_RUN,
+    'LOGFILE': LOGFILE,
+    'CHECK_LOGS_FILE': CHECK_LOGS_FILE,
     'LOGS_WATCHER': LOGS_WATCHER,
     'WATCHER_MAX_STRIKE': WATCHER_MAX_STRIKE,
     'WATCHER_STRIKE_TIME': WATCHER_STRIKE_TIME,
     'WATCHER_PAUSE_TIME': WATCHER_PAUSE_TIME,
-    'TOR_KEEP_LAST': TOR_KEEP_LAST
+    'TOR_KEEP_LAST': TOR_KEEP_LAST,
+    'RUST_LOG': os.getenv("RUST_LOG", "info"),
+    'RUST_DAEMON_LOG': os.getenv("RUST_DAEMON_LOG", "")
 }
 READONLY_KEYS = {
-    'PORT', 'ADMIN_PORT', 'RUSTATIO_API', 'AUTH_TOKEN', 
+    'PORT', 'ADMIN_PORT', 'RUSTATIO_API', 
     'ARCHIVE_FOLDER', 'RULES_FILE', 'DEFAULTS_FILE', 
     'LOGFILE', 'CHECK_LOGS_FILE'
 }
