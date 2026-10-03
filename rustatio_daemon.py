@@ -104,18 +104,42 @@ LOGIN_TEMPLATE = """
 </head>
 <body>
     <div class="login-card">
-        <h2>🔒 Connexion Rustatio</h2>
+        <div style="text-align: right; margin-bottom: 10px;">
+            <span onclick="setLang('fr')" style="cursor: pointer; margin-right: 5px;" id="btn-fr">🇫🇷</span>
+            <span onclick="setLang('en')" style="cursor: pointer;" id="btn-en">🇬🇧</span>
+        </div>
+        <h2 id="i-title">🔒 Connexion Rustatio</h2>
         {% if error %}
-            <div class="error" style="display:block;">Token invalide, veuillez réespayer.</div>
+            <div class="error" style="display:block;" id="i-err">Token invalide, veuillez réessayer.</div>
         {% endif %}
         <form method="POST" action="/login">
-            <input type="password" name="token" placeholder="Entrez votre jeton d'accès..." required autofocus>
-            <button type="submit">Se connecter</button>
+            <input type="password" name="token" id="i-input" placeholder="Entrez votre jeton d'accès..." required autofocus>
+            <button type="submit" id="i-btn">Se connecter</button>
         </form>
     </div>
+    <script>
+        const i18nLogin = {
+            fr: { title: "🔒 Connexion Rustatio", err: "Token invalide, veuillez réessayer.", ph: "Entrez votre jeton d'accès...", btn: "Se connecter" },
+            en: { title: "🔒 Rustatio Login", err: "Invalid token, please try again.", ph: "Enter your access token...", btn: "Login" }
+        };
+        let currentLang = localStorage.getItem('rustatio_lang') || 'fr';
+        function setLang(lang) {
+            currentLang = lang;
+            localStorage.setItem('rustatio_lang', lang);
+            document.getElementById('i-title').innerText = i18nLogin[lang].title;
+            if (document.getElementById('i-err')) document.getElementById('i-err').innerText = i18nLogin[lang].err;
+            document.getElementById('i-input').placeholder = i18nLogin[lang].ph;
+            document.getElementById('i-btn').innerText = i18nLogin[lang].btn;
+            
+            document.getElementById('btn-fr').style.opacity = lang === 'fr' ? '1' : '0.5';
+            document.getElementById('btn-en').style.opacity = lang === 'en' ? '1' : '0.5';
+        }
+        window.onload = () => setLang(currentLang);
+    </script>
 </body>
 </html>
 """
+
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="fr">
@@ -377,6 +401,30 @@ HTML_TEMPLATE = """
         .panel.collapsed .collapse-content {
             display: none !important;
         }
+        .lang-container {
+            display: inline-flex;
+            align-items: center;
+            margin-right: 15px;
+        }
+        .lang-select {
+            background: #181818;
+            color: #fff;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 5px 10px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            outline: none;
+            transition: all 0.2s ease;
+        }
+        .lang-select:hover {
+            background: #252525;
+            border-color: var(--rust-orange);
+        }
+        .lang-select:focus {
+            border-color: var(--rust-orange);
+        }
     </style>
 </head>
 <body>
@@ -384,29 +432,40 @@ HTML_TEMPLATE = """
         <div class="panel collapsed" id="panel-control">
             <div class="collapsible-header" onclick="togglePanel('panel-control')">
                 <h2 style="display: flex; align-items: center;">
-                    <span class="collapse-icon">▶</span> ⚙️ Rustatio Control
+                    <span class="collapse-icon">▶</span> 
+                    <span data-i18n="ctrl_title" style="margin-right: 15px;">⚙️ Rustatio Control</span>
+                    <div class="lang-container" onclick="event.stopPropagation()">
+                        <select id="lang-select" class="lang-select" onchange="setLang(this.value)">
+                            <option value="fr">🇫🇷 FR</option>
+                            <option value="en">🇬🇧 EN</option>
+                        </select>
+                        <div style="display:none;">
+                            <button id="btn-fr"></button>
+                            <button id="btn-en"></button>
+                        </div>
+                    </div>
                 </h2>
                 <div class="controls" onclick="event.stopPropagation()">
-                    <span id="daemon-status" class="status-badge status-stopped">Vérification...</span>
-                    <button id="btn-daemon-start" class="start" onclick="daemonAction('start')">▶ Démarrer Daemon</button>
-                    <button id="btn-daemon-stop" class="stop" onclick="daemonAction('stop')">⏹ Arrêter Daemon</button>
-                    <button id="btn-daemon-restart" onclick="daemonAction('restart')">🔄 Redémarrer Daemon</button>
-                    <button style="background-color: #555;" onclick="restartAdmin()">♻️ Redémarrer Script</button>
+                    <span id="daemon-status" class="status-badge status-stopped" data-i18n="daemon_check">Vérification...</span>
+                    <button id="btn-daemon-start" class="start" onclick="daemonAction('start')" data-i18n="btn_daemon_start">▶ Démarrer Daemon</button>
+                    <button id="btn-daemon-stop" class="stop" onclick="daemonAction('stop')" data-i18n="btn_daemon_stop">⏹ Arrêter Daemon</button>
+                    <button id="btn-daemon-restart" onclick="daemonAction('restart')" data-i18n="btn_daemon_restart">🔄 Redémarrer Daemon</button>
+                    <button style="background-color: #555;" onclick="restartAdmin()" data-i18n="btn_script_restart">♻️ Redémarrer Script</button>
                 </div>
             </div>
 
             <div class="collapse-content" style="margin-top: 15px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                    <span style="font-size: 0.8em; font-weight: bold; color: #888; text-transform: uppercase; letter-spacing: 1px;">
+                    <span style="font-size: 0.8em; font-weight: bold; color: #888; text-transform: uppercase; letter-spacing: 1px;" data-i18n="env_title">
                         🔧 Configuration de l'environnement (Modifications temporaires)
                     </span>
                     <div style="display: flex; gap: 8px;">
-                        <button onclick="resetEnvConfig()" class="small" style="background: #444;">🔄 Réinitialiser</button>
-                        <button onclick="saveEnvConfig()" class="small" style="background: var(--rust-orange);">⚡ Appliquer à la session</button>
+                        <button onclick="resetEnvConfig()" class="small" style="background: #444;" data-i18n="btn_reset">🔄 Réinitialiser</button>
+                        <button onclick="saveEnvConfig()" class="small" style="background: var(--rust-orange);" data-i18n="btn_apply">⚡ Appliquer à la session</button>
                     </div>
                 </div>
                 <div id="env-config-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px;">
-                    <div style="color: #666; font-size: 0.85em;">Chargement des variables...</div>
+                    <div style="color: #666; font-size: 0.85em;" data-i18n="env_loading">Chargement des variables...</div>
                 </div>
             </div>
         </div>
@@ -414,7 +473,7 @@ HTML_TEMPLATE = """
         <div class="panel collapsed" id="panel-watcher">
             <div class="collapsible-header" onclick="togglePanel('panel-watcher')">
                 <h2 style="display: flex; align-items: center;">
-                    <span class="collapse-icon">▶</span> 👁️ Log Watcher
+                    <span class="collapse-icon">▶</span> <span data-i18n="watcher_title">👁️️ Log Watcher</span>
                     <div class="refresh-slot">
                         <div class="progress-container">
                             <div id="watcher-progress-bar" class="progress-bar"></div>
@@ -423,10 +482,10 @@ HTML_TEMPLATE = """
                     </div>
                 </h2>
                 <div class="controls" onclick="event.stopPropagation()">
-                    <span id="watcher-status" class="status-badge status-stopped">Vérification...</span>
-                    <button id="btn-watcher-start" class="start" onclick="watcherAction('start')">▶ Démarrer</button>
-                    <button id="btn-watcher-stop" class="stop" onclick="watcherAction('stop')">⏹ Arrêter</button>
-                    <button id="btn-watcher-restart" onclick="watcherAction('restart')">🔄 Redémarrer</button>
+                    <span id="watcher-status" class="status-badge status-stopped" data-i18n="daemon_check">Vérification...</span>
+                    <button id="btn-watcher-start" class="start" onclick="watcherAction('start')" data-i18n="btn_start">▶ Démarrer</button>
+                    <button id="btn-watcher-stop" class="stop" onclick="watcherAction('stop')" data-i18n="btn_stop">⏹ Arrêter</button>
+                    <button id="btn-watcher-restart" onclick="watcherAction('restart')" data-i18n="btn_restart">🔄 Redémarrer</button>
                 </div>
             </div>
 
@@ -435,14 +494,14 @@ HTML_TEMPLATE = """
                     <table style="width: 100%; border-collapse: collapse; font-size: 0.95em; text-align: left;">
                         <thead>
                             <tr style="border-bottom: 1px solid var(--border-color); color: #888;">
-                                <th style="padding: 10px;">Torrent (Tag)</th>
-                                <th style="padding: 10px;">Statut</th>
-                                <th style="padding: 10px;">Détails (Erreurs / Strikes)</th>
-                                <th style="padding: 10px;">Temps restant</th>
+                                <th style="padding: 10px;" data-i18n="th_torrent">Torrent (Tag)</th>
+                                <th style="padding: 10px;" data-i18n="th_status">Statut</th>
+                                <th style="padding: 10px;" data-i18n="th_details">Détails (Erreurs / Strikes)</th>
+                                <th style="padding: 10px;" data-i18n="th_time">Temps restant</th>
                             </tr>
                         </thead>
                         <tbody id="watcher-state-body">
-                            <tr><td colspan="4" style="padding: 15px; text-align: center; color: #666;">Aucune erreur en cours ...</td></tr>
+                            <tr><td colspan="4" style="padding: 15px; text-align: center; color: #666;" data-i18n="watcher_empty">Aucune erreur en cours ...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -452,19 +511,19 @@ HTML_TEMPLATE = """
         <div class="panel collapsed" id="panel-rules">
             <div class="collapsible-header" onclick="togglePanel('panel-rules')">
                 <h2 style="display: flex; align-items: center;">
-                    <span class="collapse-icon">▶</span> 📝 Éditeur de Règles ({{ rules_filename }})
+                    <span class="collapse-icon">▶</span> <span data-i18n="rules_title">📝 Éditeur de Règles</span>&nbsp;({{ rules_filename }})
                 </h2>
             </div>
             <div class="collapse-content" style="margin-top: 10px;">
-                <p style="font-size: 0.85em; color: #888;">Gestion visuelle structurée : Condition(s) ➔ Action ➔ Assignation/Paramètres.</p>
+                <p style="font-size: 0.85em; color: #888;" data-i18n="rules_desc">Gestion visuelle structurée : Condition(s) ➔ Action ➔ Assignation/Paramètres.</p>
                 <div id="visual-rules-container"></div>
                 <div style="display: flex; gap: 10px; margin-top: 10px;">
-                    <button onclick="addRuleRow()">➕ Ajouter une règle</button>
-                    <button onclick="toggleRawEditor()" class="small" style="background: #555;">🔄 Vue Texte Brut</button>
-                    <button onclick="saveRules()" style="margin-left: auto;">💾 Sauvegarder les règles</button>
+                    <button onclick="addRuleRow()" data-i18n="btn_add_rule">➕ Ajouter une règle</button>
+                    <button onclick="toggleRawEditor()" class="small" style="background: #555;" data-i18n="btn_raw_view">🔄 Vue Texte Brut</button>
+                    <button onclick="saveRules()" style="margin-left: auto;" data-i18n="btn_save_rules">💾 Sauvegarder les règles</button>
                 </div>
                 <div class="raw-editor-container" id="raw-editor-container">
-                    <p style="font-size: 0.85em; color: #e84d35;">Éditeur manuel (Format : condition | action | assignation)</p>
+                    <p style="font-size: 0.85em; color: #e84d35;" data-i18n="raw_hint">Éditeur manuel (Format : condition | action | assignation)</p>
                     <textarea id="rules-editor" onchange="parseTextToVisual()"></textarea>
                 </div>
             </div>
@@ -473,7 +532,7 @@ HTML_TEMPLATE = """
         <div class="panel">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                 <h2 style="display: flex; align-items: center;">
-                    🔍 Logs ({{ logfile_filename }})
+                    <span data-i18n="logs_title">🔍 Logs</span>&nbsp;({{ logfile_filename }})
                     <div class="refresh-slot">
                         <div class="progress-container">
                             <div id="log-progress-bar" class="progress-bar"></div>
@@ -482,10 +541,10 @@ HTML_TEMPLATE = """
                     </div>
                 </h2>
                 <div style="display: flex; gap: 8px; align-items: center;">
-                    <button onclick="clearLogs()" class="small stop">Vider</button>
-                    <button onclick="archiveLogs()" class="small" style="background-color: #2e7d32;">📁 Archiver</button>
-                    <button onclick="fetchLogs()" class="small">Rafraîchir</button>
-                    <label for="log-lines" style="font-size: 0.85em; color: #888;">Lignes :</label>
+                    <button onclick="clearLogs()" class="small stop" data-i18n="btn_clear">Vider</button>
+                    <button onclick="archiveLogs()" class="small" style="background-color: #2e7d32;" data-i18n="btn_archive">📁 Archiver</button>
+                    <button onclick="fetchLogs()" class="small" data-i18n="btn_refresh">Rafraîchir</button>
+                    <label for="log-lines" style="font-size: 0.85em; color: #888;" data-i18n="lbl_lines">Lignes :</label>
                     <select id="log-lines" onchange="fetchLogs()" style="padding: 3px 6px; font-size: 0.85em;">
                         <option value="50">50</option>
                         <option value="100" selected>100</option>
@@ -529,6 +588,93 @@ HTML_TEMPLATE = """
     </datalist>
 
     <script>
+        const i18n = {
+            fr: {
+                ctrl_title: "⚙️ Rustatio Control", daemon_check: "Vérification...", btn_daemon_start: "▶ Démarrer Daemon",
+                btn_daemon_stop: "⏹ Arrêter Daemon", btn_daemon_restart: "🔄 Redémarrer Daemon", btn_script_restart: "♻️ Redémarrer Script",
+                env_title: "🔧 Configuration de l'environnement (Modifications temporaires)", btn_reset: "🔄 Réinitialiser",
+                btn_apply: "⚡ Appliquer à la session", env_loading: "Chargement des variables...", watcher_title: "👁️ Log Watcher",
+                btn_start: "▶ Démarrer", btn_stop: "⏹ Arrêter", btn_restart: "🔄 Redémarrer", th_torrent: "Torrent (Tag)",
+                th_status: "Statut", th_details: "Détails (Erreurs / Strikes)", th_time: "Temps restant", watcher_empty: "Aucune erreur en cours ...",
+                rules_title: "📝 Éditeur de Règles", rules_desc: "Gestion visuelle structurée : Condition(s) ➔ Action ➔ Assignation/Paramètres.",
+                btn_add_rule: "➕ Ajouter une règle", btn_raw_view: "🔄 Vue Texte Brut", btn_save_rules: "💾 Sauvegarder les règles",
+                raw_hint: "Éditeur manuel (Format : condition | action | assignation)", logs_title: "🔍 Logs", btn_clear: "Vider",
+                btn_archive: "📁 Archiver", btn_refresh: "Rafraîchir", lbl_lines: "Lignes :", no_params: "Aucun paramètre",
+                ph_val: "Valeur ou default_config...", ph_param: "Paramètres (ex: étiquette1, étiquette2)", ph_ex: "Ex: 1.8 - 2.4",
+                ph_val_only: "Valeur", rule_cond: "1. Condition(s)", btn_add_cond: "➕ Condition", btn_del: "Supprimer",
+                btn_del_rule: "Supprimer la règle", rule_act: "2. Action", rule_param: "3. Paramètres / Assignation",
+                daemon_running: "En cours d'exécution", daemon_stopped: "Arrêté", conn_err: "Erreur de connexion", crash: "Crashé :",
+                thread_inactive: "Arrêté (Thread inactif)", expiring: "Expiration...", paused: "En pause", obs: "Observation",
+                strikes: "Total Strikes :", rule_saved: "Règles sauvegardées avec succès !", confirm_clear: "Voulez-vous vraiment vider le fichier de logs ?",
+                err_clear: "Erreur lors de la suppression des logs.", archive_success: "Logs archivés avec succès : ",
+                archive_err: "Erreur lors de l'archivage : ", confirm_restart: "Voulez-vous vraiment redémarrer le panneau d'administration ?",
+                restart_msg: "Le panneau admin redémarre... La page va se recharger dans 3 secondes.", err_restart: "Erreur lors de la demande de redémarrage.",
+                read_only: "Lecture seule (redémarrage requis)", env_applied: "Configuration appliquée à la session en cours.", env_err: "Erreur",
+                unauth: "Action non autorisée", confirm_reset: "Rétablir les variables de session à leurs valeurs initiales ?",
+                reset_success: "Configuration réinitialisée aux valeurs de départ.", reset_err: "Erreur lors de la réinitialisation.", page_title: "Rustatio - Panneau de Contrôle"
+            },
+            en: {
+                ctrl_title: "⚙️ Rustatio Control", daemon_check: "Checking...", btn_daemon_start: "▶ Start Daemon",
+                btn_daemon_stop: "⏹ Stop Daemon", btn_daemon_restart: "🔄 Restart Daemon", btn_script_restart: "♻️ Restart Script",
+                env_title: "🔧 Environment Configuration (Temporary overrides)", btn_reset: "🔄 Reset", btn_apply: "⚡ Apply to session",
+                env_loading: "Loading variables...", watcher_title: "👁️ Log Watcher", btn_start: "▶ Start", btn_stop: "⏹ Stop",
+                btn_restart: "🔄 Restart", th_torrent: "Torrent (Tag)", th_status: "Status", th_details: "Details (Errors / Strikes)",
+                th_time: "Time remaining", watcher_empty: "No errors at the moment ...", rules_title: "📝 Rules Editor",
+                rules_desc: "Structured visual management: Condition(s) ➔ Action ➔ Assignment/Parameters.", btn_add_rule: "➕ Add a rule",
+                btn_raw_view: "🔄 Raw Text View", btn_save_rules: "💾 Save rules", raw_hint: "Manual editor (Format: condition | action | assignment)",
+                logs_title: "🔍 Logs", btn_clear: "Clear", btn_archive: "📁 Archive", btn_refresh: "Refresh", lbl_lines: "Lines:",
+                no_params: "No parameters", ph_val: "Value or default_config...", ph_param: "Parameters (e.g. tag1, tag2)", ph_ex: "E.g.: 1.8 - 2.4",
+                ph_val_only: "Value", rule_cond: "1. Condition(s)", btn_add_cond: "➕ Condition", btn_del: "Delete",
+                btn_del_rule: "Delete rule", rule_act: "2. Action", rule_param: "3. Parameters / Assignment",
+                daemon_running: "Running", daemon_stopped: "Stopped", conn_err: "Connection error", crash: "Crashed:",
+                thread_inactive: "Stopped (Inactive thread)", expiring: "Expiring...", paused: "Paused", obs: "Observing",
+                strikes: "Total Strikes :", rule_saved: "Rules successfully saved!", confirm_clear: "Are you sure you want to clear the logs file?",
+                err_clear: "Error while clearing logs.", archive_success: "Logs successfully archived: ",
+                archive_err: "Error archiving logs: ", confirm_restart: "Are you sure you want to restart the administration panel?",
+                restart_msg: "Admin panel is restarting... The page will reload in 3 seconds.", err_restart: "Error while requesting restart.",
+                read_only: "Read-only (requires restart)", env_applied: "Configuration applied to current session.", env_err: "Error",
+                unauth: "Unauthorized action", confirm_reset: "Reset session variables to their initial values?",
+                reset_success: "Configuration reset to default values.", reset_err: "Error while resetting configuration.", page_title: "Rustatio - Control Panel"
+            }
+        };
+
+        let currentLang = localStorage.getItem('rustatio_lang') || 'fr';
+
+        function t(key) {
+            return (i18n[currentLang] && i18n[currentLang][key]) ? i18n[currentLang][key] : key;
+        }
+
+        function setLang(lang) {
+            currentLang = lang;
+            localStorage.setItem('rustatio_lang', lang);
+            
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.getAttribute('data-i18n');
+                if (el.tagName === 'INPUT' && el.type === 'button') {
+                    el.value = t(key);
+                } else {
+                    el.textContent = t(key);
+                }
+            });
+            
+            document.title = t('page_title');
+            
+            const selectElem = document.getElementById('lang-select');
+            if (selectElem && selectElem.value !== lang) {
+                selectElem.value = lang;
+            }
+
+            if(typeof fetchStatus === 'function') fetchStatus();
+            if(typeof fetchWatcherStatus === 'function') fetchWatcherStatus();
+            if(typeof fetchWatcherState === 'function') fetchWatcherState();
+            if(typeof fetchEnvConfig === 'function') fetchEnvConfig();
+            
+            const raw = document.getElementById('raw-editor-container');
+            if (raw && raw.style.display !== 'block' && typeof parseTextToVisual === 'function') {
+                parseTextToVisual();
+            }
+        }
+
         const FIELDS = [
             "id", "torrent.info_hash", "torrent.announce", "torrent.name", "torrent.total_size",
             "torrent.piece_length", "torrent.num_pieces", "torrent.comment", "torrent.created_by",
@@ -582,7 +728,7 @@ HTML_TEMPLATE = """
         }
 
         function getActionValueInput(configKey, val) {
-            return `<input type="text" class="action-assign-val" list="default-config-list" placeholder="Valeur ou default_config..." value="${val.replace(/"/g, '&quot;')}">`;
+            return `<input type="text" class="action-assign-val" list="default-config-list" placeholder="${t('ph_val')}" value="${val.replace(/"/g, '&quot;')}">`;
         }
 
         function applyActionStyle(selectElem) {
@@ -599,7 +745,7 @@ HTML_TEMPLATE = """
             const assignArrow = row.querySelector('.arrow-assign');
 
             if (['start', 'stop', 'pause', 'resume'].includes(action)) {
-                container.innerHTML = '<span style="color: #666; font-size: 0.85em; italic;">Aucun paramètre</span>';
+                container.innerHTML = `<span style="color: #666; font-size: 0.85em; font-style: italic;">${t('no_params')}</span>`;
                 assignBlock.style.opacity = '0.5';
                 if (assignArrow) assignArrow.style.opacity = '0.3';
             } else {
@@ -614,14 +760,14 @@ HTML_TEMPLATE = """
                         ${getActionValueInput(confKey, '')}
                     `;
                 } else {
-                    container.innerHTML = `<input type="text" class="action-assign-text" placeholder="Paramètres (ex: étiquette1, étiquette2)" value="">`;
+                    container.innerHTML = `<input type="text" class="action-assign-text" placeholder="${t('ph_param')}" value="">`;
                 }
             }
         }
 
         function renderActionAssignContainer(action, assignVal) {
             if (['start', 'stop', 'pause', 'resume'].includes(action)) {
-                return '<span style="color: #666; font-size: 0.85em; italic;">Aucun paramètre</span>';
+                return `<span style="color: #666; font-size: 0.85em; font-style: italic;">${t('no_params')}</span>`;
             } else if (action === 'update') {
                 let confKey = 'config.upload_rate';
                 let val = '';
@@ -640,7 +786,7 @@ HTML_TEMPLATE = """
                     ${getActionValueInput(confKey, val)}
                 `;
             } else {
-                return `<input type="text" class="action-assign-text" placeholder="Paramètres (ex: étiquette1, étiquette2)" value="${(assignVal||'').replace(/"/g, '&quot;')}">`;
+                return `<input type="text" class="action-assign-text" placeholder="${t('ph_param')}" value="${(assignVal||'').replace(/"/g, '&quot;')}">`;
             }
         }
 
@@ -651,14 +797,14 @@ HTML_TEMPLATE = """
             if (container.children.length > 0) {
                 logOpHtml = `<select class="cond-logop">${createOptions(LOGICAL_OPS, logOp || 'AND')}</select>`;
             }
-            const placeholder = opVal === ':' ? "Ex: 1.8 - 2.4" : "Valeur";
+            const placeholder = opVal === ':' ? t('ph_ex') : t('ph_val_only');
 
             block.innerHTML = `
                 ${logOpHtml}
                 <select class="cond-field">${createOptions(FIELDS, fieldVal)}</select>
                 <select class="cond-op">${createOptions(OPERATORS, opVal)}</select>
                 <input type="text" class="cond-val" placeholder="${placeholder}" value="${condVal.replace(/"/g, '&quot;')}">
-                ${container.children.length > 0 ? `<button class="stop small" onclick="this.parentElement.remove()" title="Supprimer">✕</button>` : ''}
+                ${container.children.length > 0 ? `<button class="stop small" onclick="this.parentElement.remove()" title="${t('btn_del')}">✕</button>` : ''}
             `;
             container.appendChild(block);
         }
@@ -671,23 +817,23 @@ HTML_TEMPLATE = """
 
             row.innerHTML = `
                 <div class="rule-block block-conditions">
-                    <div class="rule-block-title">1. Condition(s)</div>
+                    <div class="rule-block-title">${t('rule_cond')}</div>
                     <div class="conditions-wrapper"></div>
-                    <button class="small" onclick="addCondition(this.previousElementSibling)" style="align-self: flex-start; margin-top: 4px;">➕ Condition</button>
+                    <button class="small" onclick="addCondition(this.previousElementSibling)" style="align-self: flex-start; margin-top: 4px;">➕ ${t('btn_add_cond')}</button>
                 </div>
                 <div class="rule-arrow">➔</div>
                 <div class="rule-block block-action">
-                    <div class="rule-block-title">2. Action</div>
+                    <div class="rule-block-title">${t('rule_act')}</div>
                     <select class="action-type" data-action="${actionVal}" onchange="updateActionUI(this)">${createOptions(ACTIONS, actionVal)}</select>
                 </div>
                 <div class="rule-arrow arrow-assign" style="${isSimpleAction ? 'opacity: 0.3;' : ''}">➔</div>
                 <div class="rule-block block-assign" style="${isSimpleAction ? 'opacity: 0.5;' : ''}">
-                    <div class="rule-block-title">3. Paramètres / Assignation</div>
+                    <div class="rule-block-title">${t('rule_param')}</div>
                     <div class="action-assign-container" style="display: flex; gap: 6px; align-items: center; flex-grow: 1;">
                         ${renderActionAssignContainer(actionVal, assignVal)}
                     </div>
                 </div>
-                <button class="btn-delete-rule" onclick="this.closest('.rule-row').remove()" title="Supprimer la règle">✕</button>
+                <button class="btn-delete-rule" onclick="this.closest('.rule-row').remove()" title="${t('btn_del_rule')}">✕</button>
             `;
             
             const condWrapper = row.querySelector('.conditions-wrapper');
@@ -736,6 +882,7 @@ HTML_TEMPLATE = """
 
         function parseTextToVisual() {
             const container = document.getElementById('visual-rules-container');
+            if (!container) return;
             container.innerHTML = '';
             const text = document.getElementById('rules-editor').value;
             const lines = text.split('\\n');
@@ -812,22 +959,22 @@ HTML_TEMPLATE = """
             const btnRestart = document.getElementById('btn-daemon-restart');
             try {
                 const res = await fetch('/api/status');
-                if (!res.ok) throw new Error('Erreur HTTP ' + res.status);
+                if (!res.ok) throw new Error('HTTP ' + res.status);
                 const data = await res.json();
                 const isRunning = !!data.running;
                 if (isRunning) {
                     badge.className = 'status-badge status-running';
-                    badge.innerText = "En cours d'exécution (PID: " + data.pid + ")";
+                    badge.innerText = `${t('daemon_running')} (PID: ${data.pid})`;
                 } else {
                     badge.className = 'status-badge status-stopped';
-                    badge.innerText = 'Arrêté';
+                    badge.innerText = t('daemon_stopped');
                 }
                 if (btnStart) btnStart.disabled = isRunning;
                 if (btnStop) btnStop.disabled = !isRunning;
                 if (btnRestart) btnRestart.disabled = !isRunning;
             } catch (err) {
                 badge.className = 'status-badge status-stopped';
-                badge.innerText = 'Erreur de connexion';
+                badge.innerText = t('conn_err');
                 if (btnStart) btnStart.disabled = false;
                 if (btnStop) btnStop.disabled = true;
                 if (btnRestart) btnRestart.disabled = true;
@@ -850,25 +997,25 @@ HTML_TEMPLATE = """
             if (spinner) spinner.classList.add('active');
             try {
                 const res = await fetch('/api/watcher/status');
-                if (!res.ok) throw new Error('Erreur HTTP ' + res.status);
+                if (!res.ok) throw new Error('HTTP ' + res.status);
                 const data = await res.json();
                 const isRunning = !!data.running;
                 if (isRunning) {
                     badge.className = 'status-badge status-running';
-                    badge.innerText = `En cours d'exécution`;
+                    badge.innerText = t('daemon_running');
                 } else if (data.status === 'crashed') {
                     badge.className = 'status-badge status-stopped';
-                    badge.innerText = `Crashé : ${data.error}`;
+                    badge.innerText = `${t('crash')} ${data.error}`;
                 } else {
                     badge.className = 'status-badge status-stopped';
-                    badge.innerText = 'Arrêté (Thread inactif)';
+                    badge.innerText = t('thread_inactive');
                 }
                 if (btnStart) btnStart.disabled = isRunning;
                 if (btnStop) btnStop.disabled = !isRunning;
                 if (btnRestart) btnRestart.disabled = !isRunning;
             } catch (err) {
                 badge.className = 'status-badge status-stopped';
-                badge.innerText = 'Erreur de connexion';
+                badge.innerText = t('conn_err');
                 if (btnStart) btnStart.disabled = false;
                 if (btnStop) btnStop.disabled = true;
                 if (btnRestart) btnRestart.disabled = true;
@@ -885,7 +1032,7 @@ HTML_TEMPLATE = """
         }
 
         function formatTimeLeft(seconds) {
-            if (seconds <= 0) return "Expiration...";
+            if (seconds <= 0) return t('expiring');
             const h = Math.floor(seconds / 3600);
             const m = Math.floor((seconds % 3600) / 60);
             const s = seconds % 60;
@@ -917,7 +1064,7 @@ HTML_TEMPLATE = """
                 const tbody = document.getElementById('watcher-state-body');
                 
                 if (Object.keys(data.state).length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="4" style="padding: 15px; text-align: center; color: #666;">Aucune erreur en cours ...</td></tr>';
+                    tbody.innerHTML = `<tr><td colspan="4" style="padding: 15px; text-align: center; color: #666;">${t('watcher_empty')}</td></tr>`;
                     return;
                 }
                 
@@ -928,15 +1075,15 @@ HTML_TEMPLATE = """
                         errDetails += `<div style="font-size: 0.85em; color: #aaa; margin-top: 4px;">- ${err}: <strong style="color:#fff;">${count}</strong></div>`;
                     }
                     
-                    let statusBadge = info.status === "En pause" 
-                        ? `<span class="status-badge status-stopped" style="background: rgba(230, 81, 0, 0.2); color: #ffb74d;">En pause</span>`
-                        : `<span class="status-badge status-running" style="color: #a5d6a7;">Observation</span>`;
+                    let statusBadge = info.status === "paused" 
+                        ? `<span class="status-badge status-stopped" style="background: rgba(230, 81, 0, 0.2); color: #ffb74d;">${t('paused')}</span>`
+                        : `<span class="status-badge status-running" style="color: #a5d6a7;">${t('obs')}</span>`;
                         
                     html += `<tr style="border-bottom: 1px solid #333;">
                         <td style="padding: 10px; word-break: break-all; max-width: 250px;"><strong>${tag}</strong></td>
                         <td style="padding: 10px;">${statusBadge}</td>
                         <td style="padding: 10px;">
-                            <span style="color: var(--rust-orange); font-weight: bold;">Total Strikes : ${info.total_strikes}</span>
+                            <span style="color: var(--rust-orange); font-weight: bold;">${t('strikes')} ${info.total_strikes}</span>
                             ${errDetails}
                         </td>
                         <td style="padding: 10px; color: #64b5f6; font-weight: bold;">${formatTimeLeft(info.time_left)}</td>
@@ -944,7 +1091,7 @@ HTML_TEMPLATE = """
                 }
                 tbody.innerHTML = html;
             } catch (err) {
-                console.error("Erreur de récupération de l'état du watcher:", err);
+                console.error(err);
             } finally {
                 setTimeout(() => { if (spinner) spinner.classList.remove('active'); }, 500);
             }
@@ -969,7 +1116,7 @@ HTML_TEMPLATE = """
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ content })
             });
-            if (res.ok) alert('Règles sauvegardées avec succès !');
+            if (res.ok) alert(t('rule_saved'));
         }
 
         async function refreshWatcher() {
@@ -1005,11 +1152,11 @@ HTML_TEMPLATE = """
         }
 
         async function clearLogs() {
-            if (!confirm("Voulez-vous vraiment vider le fichier de logs ?")) return;
+            if (!confirm(t('confirm_clear'))) return;
             try {
                 const res = await fetch('/api/logs/clear', { method: 'POST' });
                 if (res.ok) fetchLogs();
-                else alert("Erreur lors de la suppression des logs.");
+                else alert(t('err_clear'));
             } catch (e) { console.error(e); }
         }
 
@@ -1018,23 +1165,23 @@ HTML_TEMPLATE = """
                 const res = await fetch('/api/logs/archive', { method: 'POST' });
                 const data = await res.json();
                 if (res.ok && data.success) {
-                    alert("Logs archivés avec succès : " + data.filename);
+                    alert(t('archive_success') + data.filename);
                     fetchLogs();
                 } else {
-                    alert("Erreur lors de l'archivage : " + (data.error || "Inconnue"));
+                    alert(t('archive_err') + (data.error || ""));
                 }
             } catch (e) { console.error(e); }
         }
 
         async function restartAdmin() {
-            if (!confirm("Voulez-vous vraiment redémarrer le panneau d'administration ?")) return;
+            if (!confirm(t('confirm_restart'))) return;
             try {
                 await fetch('/api/admin/restart', { method: 'POST' });
-                alert("Le panneau admin redémarre... La page va se recharger dans 3 secondes.");
+                alert(t('restart_msg'));
                 setTimeout(() => window.location.reload(), 3000);
             } catch (e) {
                 console.error(e);
-                alert("Erreur lors de la demande de redémarrage.");
+                alert(t('err_restart'));
             }
         }
 
@@ -1059,7 +1206,7 @@ HTML_TEMPLATE = """
                         : 'background: #181818; border: 1px solid var(--border-color);';
                     
                     const labelHtml = isReadOnly 
-                        ? `<span style="color: #777; font-family: monospace;" title="Lecture seule (redémarrage requis)">🔒 ${key}</span>` 
+                        ? `<span style="color: #777; font-family: monospace;" title="${t('read_only')}">🔒 ${key}</span>` 
                         : `<span style="color: #aaa; font-family: monospace;">${key}</span>`;
 
                     if (key === 'AUTH_TOKEN') {
@@ -1103,7 +1250,7 @@ HTML_TEMPLATE = """
                 }
                 container.innerHTML = html;
             } catch (e) {
-                console.error("Erreur de chargement des variables :", e);
+                console.error(e);
             }
         }
 
@@ -1135,32 +1282,33 @@ HTML_TEMPLATE = """
                 const data = await res.json();
 
                 if (res.ok) {
-                    alert("Configuration appliquée à la session en cours.");
+                    alert(t('env_applied'));
                     fetchEnvConfig();
                 } else {
-                    alert(`Erreur (${res.status}) : ${data.message || 'Action non autorisée'}`);
+                    alert(`${t('env_err')} (${res.status}) : ${data.message || t('unauth')}`);
                 }
             } catch (e) {
-                console.error("Erreur d'envoi de la configuration :", e);
+                console.error(e);
             }
         }
 
         async function resetEnvConfig() {
-            if (!confirm("Rétablir les variables de session à leurs valeurs initiales ?")) return;
+            if (!confirm(t('confirm_reset'))) return;
 
             try {
                 const res = await fetch('/api/env/reset', { method: 'POST' });
                 if (res.ok) {
                     await fetchEnvConfig();
-                    alert("Configuration réinitialisée aux valeurs de départ.");
+                    alert(t('reset_success'));
                 } else {
-                    alert("Erreur lors de la réinitialisation.");
+                    alert(t('reset_err'));
                 }
             } catch (e) {
-                console.error("Erreur de réinitialisation :", e);
+                console.error(e);
             }
         }
 
+        setLang(currentLang);
         loadRules();
         fetchStatus();
         refreshWatcher();
@@ -1464,11 +1612,10 @@ class RustatioManager:
         self.rand_cache = {}
         self.current_instances = []
         
-        # Thread Controls
         self.stop_event = threading.Event()
         self.logs_thread = None
         self.stop_event = threading.Event()
-        self.watcher_stop_event = threading.Event()  # <--- AJOUT
+        self.watcher_stop_event = threading.Event()
         self.logs_thread = None
 
         log("Initializing regex patterns for RustatioManager", "trace")
@@ -2251,10 +2398,10 @@ def get_watcher_state():
             last_ts = state.get("last_count_time", 0)
             
             if action_ts > 0:
-                status = "En pause"
+                status = "paused"
                 time_left = max(0, int((action_ts + WATCHER_PAUSE_TIME) - now))
             else:
-                status = "En observation"
+                status = "observing"
                 time_left = max(0, int((last_ts + WATCHER_STRIKE_TIME) - now))
                 
             res[tag] = {
@@ -2305,8 +2452,9 @@ INITIAL_ENV = {
     'RUST_LOG': os.getenv("RUST_LOG", "info"),
     'RUST_DAEMON_LOG': os.getenv("RUST_DAEMON_LOG", "")
 }
+
 READONLY_KEYS = {
-    'PORT', 'ADMIN_PORT', 'RUSTATIO_API', 
+    'PORT', 'ADMIN_PORT', 'RUSTATIO_API', 'AUTH_TOKEN',
     'ARCHIVE_FOLDER', 'RULES_FILE', 'DEFAULTS_FILE', 
     'LOGFILE', 'CHECK_LOGS_FILE'
 }
@@ -2359,7 +2507,6 @@ def handle_env_config():
 
 @app.route('/api/env/reset', methods=['POST'])
 def reset_env_config():
-    # Restauration des variables d'origine
     for key, val in INITIAL_ENV.items():
         if key in globals() and key not in READONLY_KEYS:
             globals()[key] = val
