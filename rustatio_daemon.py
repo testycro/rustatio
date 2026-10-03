@@ -24,23 +24,111 @@ app = Flask(__name__)
 # ==========================================
 # CONFIGURATION
 # ==========================================
-PORT = int(os.environ.get("PORT", 8080))
-ADMIN_PORT = PORT + 1
-RUSTATIO_API = os.environ.get("RUSTATIO_API", f"http://127.0.0.1:{PORT}")
-AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "")
-REFRESH_INTERVAL = int(os.environ.get("REFRESH_INTERVAL", 0))
-ARCHIVE_FOLDER = os.environ.get("ARCHIVE_FOLDER", "/data/archived")
-RULES_FILE = os.environ.get("RULES_FILE", "/data/rules.txt")
-DEFAULTS_FILE = os.environ.get("DEFAULTS_FILE", "/data/state.json")
-DRY_RUN = os.environ.get("DRY_RUN", "false").lower() == "true"
-LOGFILE = os.environ.get("LOGFILE", "/data/rustatio_daemon.log")
-CHECK_LOGS_FILE = os.environ.get("CHECK_LOGS_FILE", os.path.join(os.path.dirname(RULES_FILE), "check_logs.json"))
+DEFAULT_CONFIG = {
+    'PORT': 8080,
+    'RUSTATIO_API': "http://127.0.0.1",
+    'ADMIN_PORT': "",
+    'AUTH_TOKEN': "",
+    'REFRESH_INTERVAL': 0,
+    'ARCHIVE_FOLDER': "/data/archived",
+    'RULES_FILE': "/data/rules.txt",
+    'DEFAULTS_FILE': "/data/state.json",
+    'DRY_RUN': False,
+    'LOGFILE': "/data/rustatio_daemon.log",
+    'CHECK_LOGS_FILE': "/data/check_logs.json",
+    'LOGS_WATCHER': 1,
+    'RUST_DAEMON_LOG': "",
+    'WATCHER_MAX_STRIKE': 3,
+    'WATCHER_STRIKE_TIME': 3600,
+    'WATCHER_PAUSE_TIME': 3600,
+    'TOR_KEEP_LAST': 1
+}
 
-LOGS_WATCHER = int(os.environ.get("LOGS_WATCHER", 1))
-WATCHER_MAX_STRIKE = int(os.environ.get("WATCHER_MAX_STRIKE", 3))
-WATCHER_STRIKE_TIME = int(os.environ.get("WATCHER_STRIKE_TIME", 3600))
-WATCHER_PAUSE_TIME = int(os.environ.get("WATCHER_PAUSE_TIME", 3600))
-TOR_KEEP_LAST = int(os.environ.get("TOR_KEEP_LAST", 1))
+READONLY_KEYS = {
+    'PORT', 'ADMIN_PORT', 'RUSTATIO_API',
+    'ARCHIVE_FOLDER', 'RULES_FILE', 'DEFAULTS_FILE', 
+    'LOGFILE', 'CHECK_LOGS_FILE'
+}
+
+# ==============================================================================
+# 2. CONFIG MANAGER
+# ==============================================================================
+def parse_value(val, sample_value):
+    if isinstance(sample_value, bool):
+        return str(val).lower() in ("true", "1", "yes")
+    if isinstance(sample_value, int):
+        if str(val).lower() in ("true", "yes"):
+            return 1
+        if str(val).lower() in ("false", "no"):
+            return 0
+        return int(val)
+    return str(val)
+
+class ConfigManager:
+    def __init__(self, defaults: dict, readonly_keys: set):
+        self.readonly_keys = readonly_keys
+        self.initial_state = {}
+        self.state = {}
+        self._load(defaults)
+
+    def _sync_to_globals(self): # globals part
+        globals().update(self.state) # globals part
+
+    def _load(self, defaults: dict):
+        for key, default_val in defaults.items():
+            env_val = os.getenv(key)
+            self.initial_state[key] = parse_value(env_val, default_val) if env_val is not None else default_val
+
+        port = self.initial_state['PORT']
+        admin_port = self.initial_state['ADMIN_PORT']
+
+        self.initial_state['ADMIN_PORT'] = int(admin_port) if admin_port else port + 1
+        self.initial_state['RUSTATIO_API'] = os.getenv("RUSTATIO_API", f"http://127.0.0.1:{port}")
+
+        self.state = self.initial_state.copy()
+        self._sync_to_globals() # globals part
+
+    def update(self, new_data: dict):
+        forbidden = [k for k in new_data if k in self.readonly_keys]
+        if forbidden:
+            return False, f"Modification interdite pour : {', '.join(forbidden)}"
+
+        for key, val in new_data.items():
+            if key in self.state:
+                sample_val = self.initial_state.get(key, "")
+                self.state[key] = parse_value(val, sample_val)
+
+        self._sync_to_globals() # globals part
+        return True, "Variables mises à jour temporairement"
+
+    def reset(self):
+        for key, value in self.initial_state.items():
+            if key not in self.readonly_keys:
+                self.state[key] = value
+        self._sync_to_globals() # globals part
+
+
+config = ConfigManager(DEFAULT_CONFIG, READONLY_KEYS)
+
+# ==========================================
+# FOLDERS AND FILES INITIALISATION
+# ==========================================
+def ensure_paths_exist():
+    if RULES_FILE:
+        rules_dir = os.path.dirname(RULES_FILE)
+        if rules_dir:
+            os.makedirs(rules_dir, exist_ok=True)
+        if not os.path.exists(RULES_FILE):
+            with open(RULES_FILE, "w", encoding="utf-8") as f:
+                f.write("# Fichier de règles Rustatio\n")
+
+    if DEFAULTS_FILE:
+        defaults_dir = os.path.dirname(DEFAULTS_FILE)
+        if defaults_dir:
+            os.makedirs(defaults_dir, exist_ok=True)
+        if not os.path.exists(DEFAULTS_FILE):
+            with open(DEFAULTS_FILE, "w", encoding="utf-8") as f:
+                json.dump({"default_config": {}}, f, indent=4)
 
 # ==========================================
 # HTML TEMPLATE (ADMIN PANEL)
@@ -608,10 +696,10 @@ HTML_TEMPLATE = """
                 strikes: "Total Strikes :", rule_saved: "Règles sauvegardées avec succès !", confirm_clear: "Voulez-vous vraiment vider le fichier de logs ?",
                 err_clear: "Erreur lors de la suppression des logs.", archive_success: "Logs archivés avec succès : ",
                 archive_err: "Erreur lors de l'archivage : ", confirm_restart: "Voulez-vous vraiment redémarrer le panneau d'administration ?",
-                restart_msg: "Le panneau admin redémarre... La page va se recharger dans 3 secondes.", err_restart: "Erreur lors de la demande de redémarrage.",
-                read_only: "Lecture seule (redémarrage requis)", env_applied: "Configuration appliquée à la session en cours.", env_err: "Erreur",
+                restart_msg: "Le panneau admin redémarre...\\nLa page va se recharger dans 3 secondes.", err_restart: "Erreur lors de la demande de redémarrage.",
+                read_only: "Lecture seule (redémarrage requis)", env_applied: "Configuration appliquée à la session en cours.\\nLa page va se recharger dans 3 secondes.", env_err: "Erreur",
                 unauth: "Action non autorisée", confirm_reset: "Rétablir les variables de session à leurs valeurs initiales ?",
-                reset_success: "Configuration réinitialisée aux valeurs de départ.", reset_err: "Erreur lors de la réinitialisation.", page_title: "Rustatio - Panneau de Contrôle"
+                reset_success: "Configuration réinitialisée aux valeurs de départ.\\nLa page va se recharger dans 3 secondes.", reset_err: "Erreur lors de la réinitialisation.", page_title: "Rustatio - Panneau de Contrôle"
             },
             en: {
                 ctrl_title: "⚙️ Rustatio Control", daemon_check: "Checking...", btn_daemon_start: "▶ Start Daemon",
@@ -631,10 +719,10 @@ HTML_TEMPLATE = """
                 strikes: "Total Strikes :", rule_saved: "Rules successfully saved!", confirm_clear: "Are you sure you want to clear the logs file?",
                 err_clear: "Error while clearing logs.", archive_success: "Logs successfully archived: ",
                 archive_err: "Error archiving logs: ", confirm_restart: "Are you sure you want to restart the administration panel?",
-                restart_msg: "Admin panel is restarting... The page will reload in 3 seconds.", err_restart: "Error while requesting restart.",
-                read_only: "Read-only (requires restart)", env_applied: "Configuration applied to current session.", env_err: "Error",
+                restart_msg: "Admin panel is restarting...\\nThe page will reload in 3 seconds.", err_restart: "Error while requesting restart.",
+                read_only: "Read-only (requires restart)", env_applied: "Configuration applied to current session.\\nThe page will reload in 3 seconds.", env_err: "Error",
                 unauth: "Unauthorized action", confirm_reset: "Reset session variables to their initial values?",
-                reset_success: "Configuration reset to default values.", reset_err: "Error while resetting configuration.", page_title: "Rustatio - Control Panel"
+                reset_success: "Configuration reset to default values.\\nThe page will reload in 3 seconds.", reset_err: "Error while resetting configuration.", page_title: "Rustatio - Control Panel"
             }
         };
 
@@ -1041,7 +1129,7 @@ HTML_TEMPLATE = """
         }
 
         function toggleTokenVisibility() {
-            const input = document.getElementById('auth-token-input');
+            const input = document.getElementById('env-input-AUTH_TOKEN');
             const btn = document.getElementById('auth-token-btn');
             if (input) {
                 if (input.type === 'password') {
@@ -1213,7 +1301,7 @@ HTML_TEMPLATE = """
                         inputHtml = `
                             <div style="display: inline-flex; align-items: center; gap: 4px;">
                                 <input id="env-input-${key}" type="password" value="${val}" ${isReadOnly ? 'readonly' : ''} 
-                                       style="background: #181818; border: 1px solid #333; border-radius: 4px; color: #888; font-family: monospace; width: 100px; padding: 2px 5px; text-align: right; cursor: not-allowed;">
+                                       style="background: #181818; border: 1px solid #333; border-radius: 4px; color: #888; font-family: monospace; width: 100px; padding: 2px 5px; text-align: right; ${isReadOnly ? 'cursor: not-allowed;' : ''}">
                                 <button id="auth-token-btn" onclick="toggleTokenVisibility()" type="button"
                                         style="background: none; border: none; cursor: pointer; padding: 0; font-size: 1em;">👁️</button>
                             </div>`;
@@ -1284,6 +1372,7 @@ HTML_TEMPLATE = """
                 if (res.ok) {
                     alert(t('env_applied'));
                     fetchEnvConfig();
+                    setTimeout(() => window.location.reload(), 3000);
                 } else {
                     alert(`${t('env_err')} (${res.status}) : ${data.message || t('unauth')}`);
                 }
@@ -1300,6 +1389,7 @@ HTML_TEMPLATE = """
                 if (res.ok) {
                     await fetchEnvConfig();
                     alert(t('reset_success'));
+                    setTimeout(() => window.location.reload(), 3000);
                 } else {
                     alert(t('reset_err'));
                 }
@@ -2432,85 +2522,22 @@ def manage_watcher(action):
 
     return jsonify({"success": False, "error": "Action invalide"})
 
-INITIAL_ENV = {
-    'PORT': PORT,
-    'ADMIN_PORT': ADMIN_PORT,
-    'RUSTATIO_API': RUSTATIO_API,
-    'AUTH_TOKEN': AUTH_TOKEN,
-    'REFRESH_INTERVAL': REFRESH_INTERVAL,
-    'ARCHIVE_FOLDER': ARCHIVE_FOLDER,
-    'RULES_FILE': RULES_FILE,
-    'DEFAULTS_FILE': DEFAULTS_FILE,
-    'DRY_RUN': DRY_RUN,
-    'LOGFILE': LOGFILE,
-    'CHECK_LOGS_FILE': CHECK_LOGS_FILE,
-    'LOGS_WATCHER': LOGS_WATCHER,
-    'WATCHER_MAX_STRIKE': WATCHER_MAX_STRIKE,
-    'WATCHER_STRIKE_TIME': WATCHER_STRIKE_TIME,
-    'WATCHER_PAUSE_TIME': WATCHER_PAUSE_TIME,
-    'TOR_KEEP_LAST': TOR_KEEP_LAST,
-    'RUST_LOG': os.getenv("RUST_LOG", "info"),
-    'RUST_DAEMON_LOG': os.getenv("RUST_DAEMON_LOG", "")
-}
-
-READONLY_KEYS = {
-    'PORT', 'ADMIN_PORT', 'RUSTATIO_API', 'AUTH_TOKEN',
-    'ARCHIVE_FOLDER', 'RULES_FILE', 'DEFAULTS_FILE', 
-    'LOGFILE', 'CHECK_LOGS_FILE'
-}
-
 @app.route('/api/env', methods=['GET', 'POST'])
 def handle_env_config():
     if request.method == 'POST':
-        data = request.json or {}
+        success, message = config.update(request.json or {})
+        if not success:
+            return jsonify({"status": "forbidden", "message": message}), 403
+        return jsonify({"status": "success", "message": message})
 
-        forbidden_attempts = [key for key in data if key in READONLY_KEYS]
-        if forbidden_attempts:
-            return jsonify({
-                "status": "forbidden",
-                "message": f"Modification interdite pour : {', '.join(forbidden_attempts)}"
-            }), 403
-
-        for key, val in data.items():
-            if key in globals() and key not in READONLY_KEYS:
-                if key in ('LOGS_WATCHER', 'TOR_KEEP_LAST'):
-                    globals()[key] = 1 if str(val) in ('1', 'true', 'True') else 0
-                elif isinstance(globals()[key], bool) or key == 'DRY_RUN':
-                    if isinstance(val, str):
-                        globals()[key] = val.lower() == 'true'
-                    else:
-                        globals()[key] = bool(val)
-                elif isinstance(globals()[key], int):
-                    globals()[key] = int(val)
-                elif isinstance(globals()[key], float):
-                    globals()[key] = float(val)
-                else:
-                    globals()[key] = str(val)
-
-        return jsonify({"status": "success", "message": "Variables mises à jour temporairement"})
-
-    config_keys = [
-        'PORT', 'ADMIN_PORT', 'RUSTATIO_API', 'AUTH_TOKEN',
-        'REFRESH_INTERVAL', 'ARCHIVE_FOLDER', 'RULES_FILE',
-        'DEFAULTS_FILE', 'DRY_RUN', 'LOGFILE', 'CHECK_LOGS_FILE',
-        'LOGS_WATCHER', 'WATCHER_MAX_STRIKE', 'WATCHER_STRIKE_TIME',
-        'WATCHER_PAUSE_TIME', 'TOR_KEEP_LAST'
-    ]
-    
     return jsonify({
-        "config": {
-            k: (int(globals().get(k)) if k in ('LOGS_WATCHER', 'TOR_KEEP_LAST') else globals().get(k))
-            for k in config_keys
-        },
-        "readonly": list(READONLY_KEYS)
+        "config": config.state,
+        "readonly": list(config.readonly_keys)
     })
 
 @app.route('/api/env/reset', methods=['POST'])
 def reset_env_config():
-    for key, val in INITIAL_ENV.items():
-        if key in globals() and key not in READONLY_KEYS:
-            globals()[key] = val
-            
+    config.reset()
     return jsonify({"status": "success", "message": "Configuration réinitialisée aux valeurs d'origine"})
 
 def run_flask_app():
@@ -2521,6 +2548,8 @@ def run_flask_app():
     app.run(host='0.0.0.0', port=ADMIN_PORT, debug=False, use_reloader=False)
 
 if __name__ == "__main__":
+    ensure_paths_exist()
+
     manager = RustatioManager()
     manager_thread = threading.Thread(target=manager.run, daemon=True)
     manager_thread.start()
