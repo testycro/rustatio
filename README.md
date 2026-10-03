@@ -1,16 +1,13 @@
-<h1>This is a python/shell script that allows you to modify the behavior of Rustatio (Docker) with custom rules and admin panel.</h1>
+<h1>This is a python script that allows you to modify the behavior of Rustatio (Docker) with custom rules and admin panel.</h1>
 
 - Work with rustatio 2.x.x in the same container
 - Work better with https://github.com/takitsu21/rustatio/releases/tag/v2.6.0 (less bugs)
-- Place the files according to the indicated paths.
-- Edit "rustatio_daemon.py" to match your config ("rustatio_daemon.sh" for bash version)
-- Don't forget to create your rules's file in the right folder, there is a sample <b>for bash</b>
-- Add following lines to your docker-compose (PYTHON or BASH)
-- Admin panel (python only) is on Rustatio's port +1 (ex: 8080+1 = 8081)
+- Place the files according to the indicated paths in your docker-compose.
+- Edit "rustatio_daemon.py" to match your config
+- Don't forget to create your rules
+- Admin panel is on Rustatio's port +1 (ex: 8080+1 = 8081)
 
-<img width="1680" height="1049" alt="Admin_Panel" src="https://github.com/user-attachments/assets/cc912b3b-8692-4bfa-be16-36ecd49f9dfc" />
-
-PYTHON version (With Admin Panel on port 8081)
+- Add following lines to your docker-compose
 ```yaml
 services:
   rustatio:
@@ -22,15 +19,8 @@ services:
       - /your/path/to/rustatio_daemon.py:/rustatio_daemon.py:ro
 ```
 
-BASH version (Deprecated) will be removed soon
-```yaml
-services:
-  rustatio:
-    entrypoint: ["/entrypoint.sh"]
-    volumes:
-      - /your/path/to/entrypoint.sh:/entrypoint.sh:ro
-      - /your/path/to/rustatio_daemon.sh:/rustatio_daemon.sh:ro
-```
+<img width="1680" height="1128" alt="pan" src="https://github.com/user-attachments/assets/f66fc085-ccf2-4635-8649-f7c7e6d9b3ed" />
+
 
 <h1>Rules</h1>
 
