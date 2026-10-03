@@ -6,6 +6,7 @@ import time
 import json
 import logging
 from logging.handlers import RotatingFileHandler
+import functools
 import threading
 import random
 import re
@@ -16,6 +17,7 @@ import copy
 import datetime
 import ast
 import operator
+import hmac
 from collections import defaultdict
 from flask import Flask, request, jsonify, render_template_string, make_response, redirect
 
@@ -49,6 +51,12 @@ READONLY_KEYS = {
     'ARCHIVE_FOLDER', 'RULES_FILE', 'DEFAULTS_FILE', 
     'LOGFILE', 'CHECK_LOGS_FILE'
 }
+
+FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+    <circle cx="32" cy="32" r="30" fill="#121212" stroke="#ce412b" stroke-width="3"/>
+    <path d="M32 10 a22 22 0 1 0 0.001 0" fill="none" stroke="#ce412b" stroke-width="4" stroke-dasharray="6,6"/>
+    <text x="32" y="43" font-family="sans-serif" font-weight="900" font-size="34" fill="#ce412b" text-anchor="middle">R</text>
+</svg>"""
 
 # ==============================================================================
 # 2. CONFIG MANAGER
@@ -2293,6 +2301,38 @@ class RustatioManager:
 # ==========================================
 manager = None
 manager_thread = None
+request_history = defaultdict(list)
+rate_limit_lock = threading.Lock()
+
+def get_client_ip():
+    x_forwarded = request.headers.get('X-Forwarded-For')
+    if x_forwarded:
+        return x_forwarded.split(',')[0].strip()
+    return request.remote_addr or '127.0.0.1'
+
+def rate_limit(max_requests=5, window_seconds=60, methods=None):
+    def decorator(f):
+        @functools.wraps(f)
+        def wrapper(*args, **kwargs):
+            if methods and request.method not in methods:
+                return f(*args, **kwargs)
+
+            ip = get_client_ip()
+            now = time.time()
+            
+            with rate_limit_lock:
+                request_history[ip] = [t for t in request_history[ip] if now - t < window_seconds]
+                
+                if len(request_history[ip]) >= max_requests:
+                    if request.path.startswith('/api/'):
+                        return jsonify({"error": "Rate limit dépassé. Réessayez plus tard."}), 429
+                    return render_template_string(LOGIN_TEMPLATE, error=True), 429
+
+                request_history[ip].append(now)
+
+            return f(*args, **kwargs)
+        return wrapper
+    return decorator
 
 @app.before_request
 def require_auth():
@@ -2302,30 +2342,24 @@ def require_auth():
         return None
 
     auth_header = request.headers.get("Authorization", "")
-    token_param = request.args.get("token", "")
     token_cookie = request.cookies.get("auth_token", "")
-    auth = request.authorization
+    
+    candidate = ""
+    if auth_header.startswith("Bearer "):
+        candidate = auth_header[7:].strip()
+    elif token_cookie:
+        candidate = token_cookie
 
-    token_is_valid = False
-    if auth_header.startswith("Bearer ") and auth_header[7:].strip() == AUTH_TOKEN:
-        token_is_valid = True
-    elif auth and (auth.password == AUTH_TOKEN or auth.username == AUTH_TOKEN):
-        token_is_valid = True
-    elif token_param == AUTH_TOKEN:
-        token_is_valid = True
-    elif token_cookie == AUTH_TOKEN:
-        token_is_valid = True
-
-    if token_is_valid:
+    if candidate and hmac.compare_digest(candidate, AUTH_TOKEN):
         return None
 
     if request.path.startswith('/api/'):
         return jsonify({"error": "Accès non autorisé"}), 401
 
-    has_error = bool(token_param)
-    return render_template_string(LOGIN_TEMPLATE, error=has_error), 401
+    return render_template_string(LOGIN_TEMPLATE, error=False), 401
 
 @app.route('/login', methods=['POST'])
+@rate_limit(max_requests=5, window_seconds=60)
 def login():
     token = request.form.get('token', '')
     if AUTH_TOKEN and token == AUTH_TOKEN:
@@ -2351,6 +2385,12 @@ def index():
         logfile_filename=logfile_filename
     )
 
+@app.route('/favicon.ico')
+def favicon():
+    response = make_response(FAVICON_SVG)
+    response.headers['Content-Type'] = 'image/svg+xml'
+    return response
+
 @app.route('/api/status', methods=['GET'])
 def get_status():
     global manager_thread
@@ -2361,6 +2401,7 @@ def get_status():
 daemon_lock = threading.Lock()
 
 @app.route('/api/daemon/<action>', methods=['POST'])
+@rate_limit(max_requests=2, window_seconds=60)
 def manage_daemon(action):
     global manager, manager_thread
     
@@ -2390,6 +2431,7 @@ def manage_daemon(action):
         return jsonify({"success": False, "error": "Action invalide ou état incorrect"})
 
 @app.route('/api/rules', methods=['GET', 'POST'])
+@rate_limit(max_requests=2, window_seconds=60, methods=['POST'])
 def manage_rules():
     if request.method == 'POST':
         content = request.json.get('content', '')
@@ -2421,6 +2463,7 @@ def get_logs():
     return jsonify({"content": content})
 
 @app.route('/api/logs/clear', methods=['POST'])
+@rate_limit(max_requests=2, window_seconds=60)
 def clear_logs():
     if os.path.exists(LOGFILE):
         with open(LOGFILE, 'w', encoding='utf-8') as f:
@@ -2428,6 +2471,7 @@ def clear_logs():
     return jsonify({"success": True})
 
 @app.route('/api/logs/archive', methods=['POST'])
+@rate_limit(max_requests=2, window_seconds=60)
 def archive_logs():
     if not os.path.exists(LOGFILE):
         return jsonify({"success": False, "error": "Fichier de log introuvable"}), 404
@@ -2448,6 +2492,7 @@ def archive_logs():
         return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route('/api/admin/restart', methods=['POST'])
+@rate_limit(max_requests=2, window_seconds=60)
 def restart_admin():
     def delayed_restart():
         time.sleep(1)
@@ -2504,6 +2549,7 @@ def get_watcher_state():
     return jsonify({"state": res})
 
 @app.route('/api/watcher/<action>', methods=['POST'])
+@rate_limit(max_requests=2, window_seconds=60)
 def manage_watcher(action):
     if not manager or not manager_thread or not manager_thread.is_alive():
         return jsonify({"success": False, "error": "Le daemon principal est arrêté"})
@@ -2523,6 +2569,7 @@ def manage_watcher(action):
     return jsonify({"success": False, "error": "Action invalide"})
 
 @app.route('/api/env', methods=['GET', 'POST'])
+@rate_limit(max_requests=2, window_seconds=60, methods=['POST'])
 def handle_env_config():
     if request.method == 'POST':
         success, message = config.update(request.json or {})
@@ -2536,6 +2583,7 @@ def handle_env_config():
     })
 
 @app.route('/api/env/reset', methods=['POST'])
+@rate_limit(max_requests=2, window_seconds=60)
 def reset_env_config():
     config.reset()
     return jsonify({"status": "success", "message": "Configuration réinitialisée aux valeurs d'origine"})
