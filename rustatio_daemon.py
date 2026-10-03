@@ -101,10 +101,25 @@ class ConfigManager:
         if forbidden:
             return False, f"Modification interdite pour : {', '.join(forbidden)}"
 
+        ALLOWED_LOG_LEVELS = {"", "TRACE", "DEBUG", "INFO", "WARN", "ERROR"}
+
         for key, val in new_data.items():
             if key in self.state:
+                if key == 'RUST_DAEMON_LOG':
+                    val_str = str(val).strip().upper()
+                    if val_str not in ALLOWED_LOG_LEVELS:
+                        return False, f"Valeur invalide pour RUST_DAEMON_LOG. Autorisé : {', '.join(sorted(ALLOWED_LOG_LEVELS))}"
+                    val = val_str
+
                 sample_val = self.initial_state.get(key, "")
-                self.state[key] = parse_value(val, sample_val)
+                parsed_val = parse_value(val, sample_val)
+                self.state[key] = parsed_val
+                
+                os.environ[key] = str(parsed_val)
+                
+                if key == 'RUST_DAEMON_LOG':
+                    new_level = RUST_LOG_LEVELS.get(val_str, logging.INFO)
+                    logging.getLogger("Rustatio").setLevel(new_level)
 
         self._sync_to_globals() # globals part
         return True, "Variables mises à jour temporairement"
@@ -594,6 +609,7 @@ HTML_TEMPLATE = """
                                 <th style="padding: 10px;" data-i18n="th_status">Statut</th>
                                 <th style="padding: 10px;" data-i18n="th_details">Détails (Erreurs / Strikes)</th>
                                 <th style="padding: 10px;" data-i18n="th_time">Temps restant</th>
+                                <th style="padding: 10px;">Action</th>
                             </tr>
                         </thead>
                         <tbody id="watcher-state-body">
@@ -707,7 +723,9 @@ HTML_TEMPLATE = """
                 restart_msg: "Le panneau admin redémarre...\\nLa page va se recharger dans 3 secondes.", err_restart: "Erreur lors de la demande de redémarrage.",
                 read_only: "Lecture seule (redémarrage requis)", env_applied: "Configuration appliquée à la session en cours.\\nLa page va se recharger dans 3 secondes.", env_err: "Erreur",
                 unauth: "Action non autorisée", confirm_reset: "Rétablir les variables de session à leurs valeurs initiales ?",
-                reset_success: "Configuration réinitialisée aux valeurs de départ.\\nLa page va se recharger dans 3 secondes.", reset_err: "Erreur lors de la réinitialisation.", page_title: "Rustatio - Panneau de Contrôle"
+                reset_success: "Configuration réinitialisée aux valeurs de départ.\\nLa page va se recharger dans 3 secondes.", reset_err: "Erreur lors de la réinitialisation.",
+                page_title: "Rustatio - Panneau de Contrôle", clearnresume: "▶ Nettoyer & Reprendre", clearnresume_msg: "Voulez-vous vraiment nettoyer les strikes et reprendre le torrent",
+                clearnresume_err: "Erreur lors de la reprise du torrent."
             },
             en: {
                 ctrl_title: "⚙️ Rustatio Control", daemon_check: "Checking...", btn_daemon_start: "▶ Start Daemon",
@@ -730,7 +748,9 @@ HTML_TEMPLATE = """
                 restart_msg: "Admin panel is restarting...\\nThe page will reload in 3 seconds.", err_restart: "Error while requesting restart.",
                 read_only: "Read-only (requires restart)", env_applied: "Configuration applied to current session.\\nThe page will reload in 3 seconds.", env_err: "Error",
                 unauth: "Unauthorized action", confirm_reset: "Reset session variables to their initial values?",
-                reset_success: "Configuration reset to default values.\\nThe page will reload in 3 seconds.", reset_err: "Error while resetting configuration.", page_title: "Rustatio - Control Panel"
+                reset_success: "Configuration reset to default values.\\nThe page will reload in 3 seconds.", reset_err: "Error while resetting configuration.",
+                page_title: "Rustatio - Control Panel", clearnresume: "▶ Clear & Resume", clearnresume_msg: "Would you like to clear strikes and resume torrent",
+                clearnresume_err: "Failed to resume torrent."
             }
         };
 
@@ -1183,6 +1203,9 @@ HTML_TEMPLATE = """
                             ${errDetails}
                         </td>
                         <td style="padding: 10px; color: #64b5f6; font-weight: bold;">${formatTimeLeft(info.time_left)}</td>
+                        <td style="padding: 10px;">
+                            <button class="small start" style="background-color: #2e7d32;" onclick="clearAndResume(this.dataset.tag)" data-tag="${tag.replace(/"/g, '&quot;')}">${t('clearnresume')}</button>
+                        </td>
                     </tr>`;
                 }
                 tbody.innerHTML = html;
@@ -1190,6 +1213,25 @@ HTML_TEMPLATE = """
                 console.error(err);
             } finally {
                 setTimeout(() => { if (spinner) spinner.classList.remove('active'); }, 500);
+            }
+        }
+
+        async function clearAndResume(tag) {
+            if (!confirm(`${t('clearnresume_msg')}:\\n${tag} ?`)) return;
+            try {
+                const res = await fetch('/api/watcher/clear_resume', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tag })
+                });
+                if (res.ok) {
+                    setTimeout(refreshWatcher, 1000);
+                } else {
+                t('clearnresume_err')
+                    alert(t('clearnresume_err'));
+                }
+            } catch (e) { 
+                console.error(e); 
             }
         }
 
@@ -1313,6 +1355,14 @@ HTML_TEMPLATE = """
                                 <button id="auth-token-btn" onclick="toggleTokenVisibility()" type="button"
                                         style="background: none; border: none; cursor: pointer; padding: 0; font-size: 1em;">👁️</button>
                             </div>`;
+                    } else if (key === 'RUST_DAEMON_LOG') {
+                        const currentVal = (val || '').toString().toUpperCase();
+                        const levels = ['', 'TRACE', 'DEBUG', 'INFO', 'WARN', 'ERROR'];
+                        const options = levels.map(l => `<option value="${l}" ${currentVal === l ? 'selected' : ''}>${l || '(Default)'}</option>`).join('');
+                        inputHtml = `
+                            <select id="env-input-${key}" style="background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-family: monospace; padding: 2px 5px;">
+                                ${options}
+                            </select>`;
                     } else if (key === 'LOGS_WATCHER' || key === 'TOR_KEEP_LAST') {
                         const intVal = parseInt(val, 10) || 0;
                         inputHtml = `
@@ -1487,7 +1537,8 @@ STYLE_LEVELS = {
     "trace": logging.DEBUG, "finish": logging.INFO, "task": logging.INFO,
     "recycle": logging.INFO, "lock": logging.INFO, "data": logging.INFO,
     "saving": logging.INFO, "succes": logging.INFO, "start": logging.INFO,
-    "warning": logging.WARNING, "error": logging.ERROR, "denied": logging.ERROR,
+    "pinned": logging.INFO, "warning": logging.WARNING, "watcher": logging.WARNING,
+    "marked": logging.WARNING, "error": logging.ERROR, "denied": logging.ERROR
 }
 
 def log(msg, style="default"):
@@ -1504,7 +1555,8 @@ def log(msg, style="default"):
     prefixes = {
         "start": "🚀 ", "error": "❌ ", "succes": "✅️ ", "warning": "⚠️ ",
         "denied": "🚫 ", "saving": "💾 ", "data": "🧪 ", "lock": "🔒 ",
-        "recycle": "♻️ ", "task": "⚡ ", "finish": "🏁 ", "trace": "🔍 "
+        "recycle": "♻️ ", "task": "⚡ ", "finish": "🏁 ", "trace": "🔍 ",
+        "watcher": "👁 ", "pinned": "📍 ", "marked": "🔖 "
     }
     prefix = prefixes.get(base_style, "")
     level = STYLE_LEVELS.get(base_style, logging.INFO)
@@ -2160,7 +2212,7 @@ class RustatioManager:
         state = self.get_val(inst, "stats.state")
         if self.is_action_valid("pause", state):
             log(f"Repeated error detected (x{WATCHER_MAX_STRIKE}). Try to pause for {self.format_time_bash_style(WATCHER_PAUSE_TIME)} and add tag", "warning")
-            log(f"Torrent name : {tag}", "f_data")
+            log(f"Torrent name : {tag}", "f_marked")
             log(f"{rest}", "f_data")
             id_ = inst.get("id")
             err_tag = f"Err {self.get_elapsed_since_midnight_tag(action_ts)}"
@@ -2212,8 +2264,8 @@ class RustatioManager:
         if not inst: return
         state = self.get_val(inst, "stats.state")
         if self.is_action_valid("resume", state):
-            log("Pause ended. Try to resume and remove tag", "warning")
-            log(f"Torrent name : {tag}", "f_data")
+            log("Pause ended. Try to resume and remove tag", "task")
+            log(f"Torrent name : {tag}", "f_marked")
             id_ = inst.get("id")
             err_tag = f"Err {self.get_elapsed_since_midnight_tag(action_ts)}"
 
@@ -2225,6 +2277,34 @@ class RustatioManager:
                     if err_tag in existing_tags:
                         self.api.request("POST", "grid/tag", {"ids": [id_], "add_tags": [], "remove_tags": [err_tag]})
                         log(f"Tags removed ({err_tag})", "f_succes")
+
+    def clear_strike_and_resume(self, tag):
+        with self.strike_lock:
+            if tag in self.logs_state:
+                del self.logs_state[tag]
+                self.save_logs_state()
+                log(f"Strikes manually cleared for tag : {tag}", "task")
+        
+        inst = self._find_instance_by_name(tag)
+        if inst:
+            id_ = inst.get("id")
+            
+            current_tags = inst.get("tags", [])
+            if isinstance(current_tags, str):
+                current_tags = [t.strip() for t in current_tags.split(',') if t.strip()]
+                
+            err_tags_to_remove = [t for t in current_tags if t.startswith("Err ")]
+            
+            if err_tags_to_remove:
+                if self.api.request("POST", "grid/tag", {"ids": [id_], "add_tags": [], "remove_tags": err_tags_to_remove}):
+                    inst["tags"] = [t for t in current_tags if t not in err_tags_to_remove]
+                    log(f"Tags deleted ({', '.join(err_tags_to_remove)}) for instance ID : {id_}", "f_succes")
+            
+            result = self.api.request("POST", "grid/resume", {"ids": [id_]})
+            if result:
+                log(f"Resume sent for instance ID : {id_}", "f_succes")
+                return True
+        return False
 
     def run(self):
         initial_interval = 5
@@ -2431,7 +2511,7 @@ def manage_daemon(action):
         return jsonify({"success": False, "error": "Action invalide ou état incorrect"})
 
 @app.route('/api/rules', methods=['GET', 'POST'])
-@rate_limit(max_requests=2, window_seconds=60, methods=['POST'])
+@rate_limit(max_requests=3, window_seconds=60, methods=['POST'])
 def manage_rules():
     if request.method == 'POST':
         content = request.json.get('content', '')
@@ -2463,7 +2543,7 @@ def get_logs():
     return jsonify({"content": content})
 
 @app.route('/api/logs/clear', methods=['POST'])
-@rate_limit(max_requests=2, window_seconds=60)
+@rate_limit(max_requests=5, window_seconds=60)
 def clear_logs():
     if os.path.exists(LOGFILE):
         with open(LOGFILE, 'w', encoding='utf-8') as f:
@@ -2492,7 +2572,7 @@ def archive_logs():
         return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route('/api/admin/restart', methods=['POST'])
-@rate_limit(max_requests=2, window_seconds=60)
+@rate_limit(max_requests=3, window_seconds=60)
 def restart_admin():
     def delayed_restart():
         time.sleep(1)
@@ -2549,7 +2629,7 @@ def get_watcher_state():
     return jsonify({"state": res})
 
 @app.route('/api/watcher/<action>', methods=['POST'])
-@rate_limit(max_requests=2, window_seconds=60)
+@rate_limit(max_requests=3, window_seconds=60)
 def manage_watcher(action):
     if not manager or not manager_thread or not manager_thread.is_alive():
         return jsonify({"success": False, "error": "Le daemon principal est arrêté"})
@@ -2568,8 +2648,17 @@ def manage_watcher(action):
 
     return jsonify({"success": False, "error": "Action invalide"})
 
+@app.route('/api/watcher/clear_resume', methods=['POST'])
+def api_watcher_clear_resume():
+    data = request.json or {}
+    tag = data.get("tag")
+    if tag:
+        success = manager.clear_strike_and_resume(tag)
+        return jsonify({"success": success})
+    return jsonify({"success": False, "error": "Tag manquant"}), 400
+
 @app.route('/api/env', methods=['GET', 'POST'])
-@rate_limit(max_requests=2, window_seconds=60, methods=['POST'])
+@rate_limit(max_requests=5, window_seconds=60, methods=['POST'])
 def handle_env_config():
     if request.method == 'POST':
         success, message = config.update(request.json or {})
@@ -2583,7 +2672,7 @@ def handle_env_config():
     })
 
 @app.route('/api/env/reset', methods=['POST'])
-@rate_limit(max_requests=2, window_seconds=60)
+@rate_limit(max_requests=5, window_seconds=60)
 def reset_env_config():
     config.reset()
     return jsonify({"status": "success", "message": "Configuration réinitialisée aux valeurs d'origine"})
