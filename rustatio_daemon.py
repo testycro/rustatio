@@ -43,6 +43,7 @@ DEFAULT_CONFIG = {
     'WATCHER_MAX_STRIKE': 3,
     'WATCHER_STRIKE_TIME': 3600,
     'WATCHER_PAUSE_TIME': 3600,
+    'WATCHER_ANNOUNCE_TIMEOUT': 130,
     'TOR_KEEP_LAST': 1
 }
 
@@ -128,8 +129,14 @@ class ConfigManager:
         for key, value in self.initial_state.items():
             if key not in self.readonly_keys:
                 self.state[key] = value
-        self._sync_to_globals() # globals part
+                os.environ[key] = str(value)
 
+                if key == 'RUST_DAEMON_LOG':
+                    val_str = str(value).strip().upper()
+                    new_level = RUST_LOG_LEVELS.get(val_str, logging.INFO)
+                    logging.getLogger("Rustatio").setLevel(new_level)
+
+        self._sync_to_globals() # globals part
 
 config = ConfigManager(DEFAULT_CONFIG, READONLY_KEYS)
 
@@ -725,7 +732,7 @@ HTML_TEMPLATE = """
                 unauth: "Action non autorisée", confirm_reset: "Rétablir les variables de session à leurs valeurs initiales ?",
                 reset_success: "Configuration réinitialisée aux valeurs de départ.\\nLa page va se recharger dans 3 secondes.", reset_err: "Erreur lors de la réinitialisation.",
                 page_title: "Rustatio - Panneau de Contrôle", clearnresume: "▶ Nettoyer & Reprendre", clearnresume_msg: "Voulez-vous vraiment nettoyer les strikes et reprendre le torrent",
-                clearnresume_err: "Erreur lors de la reprise du torrent."
+                clearnresume_err: "Erreur lors de la reprise du torrent.", announce: "Annonce"
             },
             en: {
                 ctrl_title: "⚙️ Rustatio Control", daemon_check: "Checking...", btn_daemon_start: "▶ Start Daemon",
@@ -750,7 +757,7 @@ HTML_TEMPLATE = """
                 unauth: "Unauthorized action", confirm_reset: "Reset session variables to their initial values?",
                 reset_success: "Configuration reset to default values.\\nThe page will reload in 3 seconds.", reset_err: "Error while resetting configuration.",
                 page_title: "Rustatio - Control Panel", clearnresume: "▶ Clear & Resume", clearnresume_msg: "Would you like to clear strikes and resume torrent",
-                clearnresume_err: "Failed to resume torrent."
+                clearnresume_err: "Failed to resume torrent.", announce: "Announce"
             }
         };
 
@@ -1191,8 +1198,10 @@ HTML_TEMPLATE = """
                         errDetails += `<div style="font-size: 0.85em; color: #aaa; margin-top: 4px;">- ${err}: <strong style="color:#fff;">${count}</strong></div>`;
                     }
                     
-                    let statusBadge = info.status === "paused" 
+                    let statusBadge = info.status === "paused"
                         ? `<span class="status-badge status-stopped" style="background: rgba(230, 81, 0, 0.2); color: #ffb74d;">${t('paused')}</span>`
+                        : info.status === "announce"
+                        ? `<span class="status-badge status-announce" style="background: rgba(33, 150, 243, 0.2); color: #64b5f6;">${t('announce')}</span>`
                         : `<span class="status-badge status-running" style="color: #a5d6a7;">${t('obs')}</span>`;
                         
                     html += `<tr style="border-bottom: 1px solid #333;">
@@ -1202,7 +1211,7 @@ HTML_TEMPLATE = """
                             <span style="color: var(--rust-orange); font-weight: bold;">${t('strikes')} ${info.total_strikes}</span>
                             ${errDetails}
                         </td>
-                        <td style="padding: 10px; color: #64b5f6; font-weight: bold;">${formatTimeLeft(info.time_left)}</td>
+                        <td style="padding: 10px; color: #64b5f6; font-weight: bold;">${formatTimeLeft(info.time_left > 0 ? info.time_left : info.announce_ts)}</td>
                         <td style="padding: 10px;">
                             <button class="small start" style="background-color: #2e7d32;" onclick="clearAndResume(this.dataset.tag)" data-tag="${tag.replace(/"/g, '&quot;')}">${t('clearnresume')}</button>
                         </td>
@@ -1381,10 +1390,12 @@ HTML_TEMPLATE = """
                         const inputBg = isReadOnly ? '#181818' : '#222';
                         const inputBorder = isReadOnly ? '1px solid #333' : '1px solid #444';
                         const inputColor = isReadOnly ? '#888' : '#fff';
-                        const inputCursor = isReadOnly ? 'not-allowed' : 'text';
+                        const inputCursor = isReadOnly ? 'text' : 'text';
+                        const isNumber = typeof val === 'number';
+                        const numberAttrs = isNumber ? 'min="0" step="1"' : '';
 
                         inputHtml = `
-                            <input id="env-input-${key}" type="${typeof val === 'number' ? 'number' : 'text'}" value="${val}" ${isReadOnly ? 'readonly' : ''} 
+                            <input id="env-input-${key}" type="${isNumber ? 'number' : 'text'}" value="${val}" ${numberAttrs} ${isReadOnly ? 'readonly' : ''} 
                                    style="background: ${inputBg}; border: ${inputBorder}; border-radius: 4px; color: ${inputColor}; font-family: monospace; width: 110px; padding: 2px 5px; text-align: right; cursor: ${inputCursor};">`;
                     }
 
@@ -1402,8 +1413,10 @@ HTML_TEMPLATE = """
 
         async function saveEnvConfig() {
             const payload = {};
+            let invalidKey = null;
 
             document.querySelectorAll('[id^="env-input-"]').forEach(el => {
+                if (invalidKey) return;
                 const key = el.id.replace('env-input-', '');
                 if (!currentReadonlyKeys.includes(key)) {
                     if (key === 'LOGS_WATCHER' || key === 'TOR_KEEP_LAST') {
@@ -1411,12 +1424,22 @@ HTML_TEMPLATE = """
                     } else if (el.value === 'true' || el.value === 'false') {
                         payload[key] = el.value === 'true';
                     } else if (el.type === 'number') {
-                        payload[key] = parseInt(el.value, 10);
+                        const parsed = parseInt(el.value, 10);
+                        if (isNaN(parsed) || parsed < 0) {
+                            invalidKey = key;
+                            return;
+                        }
+                        payload[key] = parsed;
                     } else {
                         payload[key] = el.value;
                     }
                 }
             });
+
+            if (invalidKey) {
+                alert(`Valeur invalide pour ${invalidKey}. Veuillez saisir un nombre entier supérieur ou égal à 0.`);
+                return;
+            }
 
             try {
                 const res = await fetch('/api/env', {
@@ -1762,8 +1785,6 @@ class RustatioManager:
         self.rand_cache = {}
         self.current_instances = []
         
-        self.stop_event = threading.Event()
-        self.logs_thread = None
         self.stop_event = threading.Event()
         self.watcher_stop_event = threading.Event()
         self.logs_thread = None
@@ -2122,7 +2143,7 @@ class RustatioManager:
                 hex_hash = bytes(inst.get("torrent", {}).get("info_hash", [])).hex()
                 if hex_hash:
                     files_resp = self.api.request("GET", "watch/files")
-                    files = files_resp.get("data", []) if files_resp else []														
+                    files = files_resp.get("data", []) if files_resp else []                                                
                     for f in files:
                         if f.get("info_hash") == hex_hash:
                             filename, filepath = f.get("filename", ""), f.get("path", "")
@@ -2181,22 +2202,53 @@ class RustatioManager:
             event = json.loads(json_str)
             level = event.get("level", "").lower()
             msg = event.get("message", "")
+            now = time.time()
 
-            if "error" in level and "[" in msg:
+            if "[" in msg:
                 tag, rest = self._extract_bracket(msg)
                 if tag:
-                    now = time.time()
-                    state = self.logs_state.setdefault(tag, {"counts": {}, "action": 0, "last_count_time": 0})
-                    counts = state.setdefault("counts", {})
-                    counts[rest] = counts.get(rest, 0) + 1
-                    current_count = counts[rest]
-                    state["last_count_time"] = now
+                    state = self.logs_state.get(tag, {})
 
-                    if state["action"] == 0 and current_count >= WATCHER_MAX_STRIKE:
-                        self._trigger_watcher_pause(tag, rest, now)
-                        state["action"] = now
+                    if state.get("action", 0) > 0:
+                        log(f"Log ignored for '{tag}': watcher pause is currently active.", "trace")
+                        return
 
-                    self.save_logs_state()
+                    inst = self._find_instance_by_name(tag)
+                    if inst and self.get_val(inst, "stats.state") in ["Paused", "Stopped"]:
+                        log(f"Log ignored for '{tag}': torrent status is {self.get_val(inst, 'stats.state')}.", "trace")
+                        return
+
+                    state = self.logs_state.setdefault(tag, {
+                        "counts": {}, 
+                        "action": 0, 
+                        "last_count_time": 0,
+                        "announcing_time": 0
+                    })
+
+                    if "info" in level and "announcing" in msg.lower():
+                        state["announcing_time"] = now
+                        log(f"Announce detected for '{tag}', marking announce as active.", "trace")
+                    elif "error" in level:
+                        announce_ts = state.get("announcing_time", 0)
+                        is_announcing_active = (announce_ts > 0) and ((now - announce_ts) <= WATCHER_ANNOUNCE_TIMEOUT)
+
+                        if is_announcing_active:
+                            counts = state.setdefault("counts", {})
+                            counts[rest] = counts.get(rest, 0) + 1
+                            current_count = counts[rest]
+                            state["last_count_time"] = now
+                            state["announcing_time"] = 0
+
+                            log(f"Error during active announce for '{tag}' (strike {current_count}/{WATCHER_MAX_STRIKE})", "trace")
+
+                            if state["action"] == 0 and current_count >= WATCHER_MAX_STRIKE:
+                                self._trigger_watcher_pause(tag, rest, now)
+                                state["action"] = now
+
+                            self.save_logs_state()
+                        else:
+                            log(f"Error ignored for '{tag}' because no active announce in progress.", "trace")
+
         except Exception as e:
             log(f"Error: {str(e)}", "error")
 
@@ -2211,7 +2263,7 @@ class RustatioManager:
         if not inst: return
         state = self.get_val(inst, "stats.state")
         if self.is_action_valid("pause", state):
-            log(f"Repeated error detected (x{WATCHER_MAX_STRIKE}). Try to pause for {self.format_time_bash_style(WATCHER_PAUSE_TIME)} and add tag", "warning")
+            log(f"Repeated error detected (x{WATCHER_MAX_STRIKE}). Try to pause for {self.format_time_bash_style(WATCHER_PAUSE_TIME)} and add tag", "watcher")
             log(f"Torrent name : {tag}", "f_marked")
             log(f"{rest}", "f_data")
             id_ = inst.get("id")
@@ -2240,18 +2292,35 @@ class RustatioManager:
         active_names = {self.get_val(inst, "torrent.name") for inst in instances_snapshot}
 
         for tag, state in list(self.logs_state.items()):
+            # Supprimer l'état si le torrent n'existe plus
             if tag not in active_names:
                 expired_tags.append(tag)
                 continue
 
+            announce_ts = state.get("announcing_time", 0)
+            if announce_ts > 0 and (now - announce_ts) > WATCHER_ANNOUNCE_TIMEOUT:
+                state["announcing_time"] = 0
+                dirty = True
+                log(f"Announce status expired for '{tag}'", "trace")
+
             if state.get("last_count_time", 0) > 0 and (now - state["last_count_time"]) > WATCHER_STRIKE_TIME:
                 if state.get("action", 0) == 0: 
-                    expired_tags.append(tag)
+                    state["counts"] = {}
+                    state["last_count_time"] = 0
+                    dirty = True
+
             if state.get("action", 0) > 0 and (now - state["action"]) > WATCHER_PAUSE_TIME:
                 self._trigger_watcher_resume(tag, state["action"])
                 expired_tags.append(tag)
 
-        for tag in expired_tags:
+            has_counts = any(c > 0 for c in state.get("counts", {}).values())
+            has_action = state.get("action", 0) > 0
+            has_announce = state.get("announcing_time", 0) > 0
+
+            if not has_counts and not has_action and not has_announce:
+                expired_tags.append(tag)
+
+        for tag in set(expired_tags):
             if tag in self.logs_state:
                 del self.logs_state[tag]
                 dirty = True
@@ -2264,7 +2333,7 @@ class RustatioManager:
         if not inst: return
         state = self.get_val(inst, "stats.state")
         if self.is_action_valid("resume", state):
-            log("Pause ended. Try to resume and remove tag", "task")
+            log("Pause ended. Try to resume and remove tag", "watcher")
             log(f"Torrent name : {tag}", "f_marked")
             id_ = inst.get("id")
             err_tag = f"Err {self.get_elapsed_since_midnight_tag(action_ts)}"
@@ -2283,7 +2352,7 @@ class RustatioManager:
             if tag in self.logs_state:
                 del self.logs_state[tag]
                 self.save_logs_state()
-                log(f"Strikes manually cleared for tag : {tag}", "task")
+                log(f"Strikes manually cleared for tag : {tag}", "warn")
         
         inst = self._find_instance_by_name(tag)
         if inst:
@@ -2374,7 +2443,6 @@ class RustatioManager:
         self.stop_event.set()
         for h in logger.handlers:
             h.flush()
-
 
 # ==========================================
 # FLASK WEB PANEL (ADMIN)
@@ -2611,19 +2679,27 @@ def get_watcher_state():
             counts = sum(state.get("counts", {}).values())
             action_ts = state.get("action", 0)
             last_ts = state.get("last_count_time", 0)
+            announce_ts = state.get("announcing_time", 0)
             
             if action_ts > 0:
                 status = "paused"
                 time_left = max(0, int((action_ts + WATCHER_PAUSE_TIME) - now))
+            elif announce_ts > 0 and action_ts == 0:
+                status = "announce"
+                time_left = max(0, int((announce_ts + WATCHER_ANNOUNCE_TIMEOUT) - now))
             else:
                 status = "observing"
-                time_left = max(0, int((last_ts + WATCHER_STRIKE_TIME) - now))
+                if last_ts > 0:
+                    time_left = max(0, int((last_ts + WATCHER_STRIKE_TIME) - now))
+                else:
+                    time_left = 0
                 
             res[tag] = {
                 "errors": state.get("counts", {}),
                 "total_strikes": counts,
                 "status": status,
-                "time_left": time_left
+                "time_left": time_left,
+                "announce_ts": announce_ts
             }
             
     return jsonify({"state": res})
@@ -2649,6 +2725,7 @@ def manage_watcher(action):
     return jsonify({"success": False, "error": "Action invalide"})
 
 @app.route('/api/watcher/clear_resume', methods=['POST'])
+@rate_limit(max_requests=25, window_seconds=60)
 def api_watcher_clear_resume():
     data = request.json or {}
     tag = data.get("tag")
