@@ -2,11 +2,11 @@
 
 - Work with rustatio 2.x.x in the same container
 - Work better with https://github.com/takitsu21/rustatio/releases/tag/v2.6.0 (less bugs)
-- Place the files according to the indicated paths in your docker-compose.
 - Edit "rustatio_daemon.py" to match your config
 - Don't forget to create your rules
 - Admin panel is on Rustatio's port +1 (ex: 8080+1 = 8081)
 
+- Place the files according to the indicated paths in your docker-compose.
 - Add following lines to your docker-compose
 ```yaml
 services:
@@ -19,8 +19,10 @@ services:
       - /your/path/to/rustatio_daemon.py:/rustatio_daemon.py:ro
 ```
 
-<img width="1680" height="1128" alt="pan" src="https://github.com/user-attachments/assets/f66fc085-ccf2-4635-8649-f7c7e6d9b3ed" />
+> [!IMPORTANT]
+> <b>Rustatio has a known logging bug, it's recommended to set the log level to INFO in Rustatio to avoid false positives in the watcher</b>
 
+<img width="1680" height="1128" alt="pan" src="https://github.com/user-attachments/assets/f66fc085-ccf2-4635-8649-f7c7e6d9b3ed" />
 
 <h1>Rules</h1>
 
