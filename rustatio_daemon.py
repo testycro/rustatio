@@ -272,10 +272,18 @@ HTML_TEMPLATE = """
             --text-main: #e0e0e0;
             --rust-orange: #ce412b;
             --rust-orange-hover: #e84d35;
+            --rust-orange-glow: rgba(232, 77, 53, 0.85);
+            --glow-shadow: 0 0 0 2px var(--rust-orange), 0 0 14px 4px rgba(206, 65, 43, 0.75);
             --border-color: #3d3d3d;
+            --border-hover: #666666;
+            --input-bg: #0d0d0d;
+            --input-bg-hover: #161616;
             --success: #4caf50;
+            --success-hover: #66bb6a;
             --danger: #f44336;
+            --danger-hover: #ef5350;
         }
+        
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background-color: var(--bg-color);
@@ -286,6 +294,7 @@ HTML_TEMPLATE = """
             flex-direction: column;
             align-items: center;
         }
+        
         .container {
             width: 100%;
             max-width: 1450px;
@@ -293,6 +302,7 @@ HTML_TEMPLATE = """
             flex-direction: column;
             gap: 20px;
         }
+        
         .header {
             width: 100%;
             display: flex;
@@ -304,7 +314,9 @@ HTML_TEMPLATE = """
             border-radius: 8px;
             box-sizing: border-box;
         }
+        
         h1, h2 { margin: 0; color: var(--rust-orange); }
+        
         .panel {
             background: var(--panel-bg);
             border: 1px solid var(--border-color);
@@ -313,27 +325,91 @@ HTML_TEMPLATE = """
             display: flex;
             flex-direction: column;
         }
+        
         .controls { display: flex; gap: 10px; align-items: center; }
+        
         button {
             background-color: var(--rust-orange);
             color: white;
-            border: none;
+            border: 1px solid transparent;
             padding: 10px 15px;
             border-radius: 4px;
             cursor: pointer;
             font-weight: bold;
-            transition: background 0.2s, transform 0.1s;
+            outline: none;
+            transition: all 0.2s ease-in-out;
         }
-        button:hover { background-color: var(--rust-orange-hover); }
+        
+        button:hover {
+            background-color: var(--rust-orange-hover);
+            transform: translateY(-1px);
+            box-shadow: 0 0 16px 3px rgba(232, 77, 53, 0.65);
+        }
+        
+        button:active {
+            transform: translateY(0);
+            box-shadow: 0 0 8px 1px rgba(232, 77, 53, 0.5);
+        }
+        
+        button:focus-visible {
+            box-shadow: var(--glow-shadow);
+            border-color: #fff;
+        }
+        
         button.stop { background-color: var(--danger); }
+        button.stop:hover {
+            background-color: var(--danger-hover);
+            box-shadow: 0 0 16px 3px rgba(244, 67, 54, 0.65);
+        }
+        
         button.start { background-color: var(--success); }
+        button.start:hover {
+            background-color: var(--success-hover);
+            box-shadow: 0 0 16px 3px rgba(76, 175, 80, 0.65);
+        }
+        
         button.small { padding: 4px 8px; font-size: 0.8em; }
+        
         button:disabled {
             opacity: 0.4;
             cursor: not-allowed;
             filter: grayscale(100%);
             pointer-events: none;
+            box-shadow: none;
+            transform: none;
         }
+        
+        select, input[type="text"], input[type="number"] {
+            background: var(--input-bg);
+            color: #fff;
+            border: 1px solid var(--border-color);
+            padding: 7px 10px;
+            border-radius: 4px;
+            font-size: 0.9em;
+            outline: none;
+            transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
+        }
+        
+        select:hover, input[type="text"]:hover, input[type="number"]:hover {
+            border-color: var(--border-hover);
+            background-color: var(--input-bg-hover);
+            box-shadow: 0 0 6px rgba(255, 255, 255, 0.1);
+        }
+        
+        select:focus, input[type="text"]:focus, input[type="number"]:focus {
+            border-color: var(--rust-orange-hover);
+            background-color: var(--input-bg-hover);
+            box-shadow: var(--glow-shadow);
+        }
+        
+        .cond-logop {
+            font-weight: bold;
+            color: var(--rust-orange);
+            border-color: var(--rust-orange);
+        }
+        
+        input[type="text"], input[type="number"] { flex-grow: 1; min-width: 100px; }
+        
         .rule-row {
             display: flex;
             gap: 12px;
@@ -345,6 +421,7 @@ HTML_TEMPLATE = """
             border: 1px solid var(--border-color);
             position: relative;
         }
+        
         .rule-block {
             background: var(--section-bg);
             border: 1px solid var(--border-color);
@@ -354,6 +431,7 @@ HTML_TEMPLATE = """
             flex-direction: column;
             gap: 8px;
         }
+        
         .rule-block-title {
             font-size: 0.75em;
             font-weight: bold;
@@ -364,9 +442,11 @@ HTML_TEMPLATE = """
             padding-bottom: 4px;
             margin-bottom: 2px;
         }
+        
         .block-conditions { flex: 3; }
         .block-action { flex: 1; min-width: 160px; }
         .block-assign { flex: 2; min-width: 220px; }
+        
         .rule-arrow {
             display: flex;
             align-items: center;
@@ -376,11 +456,13 @@ HTML_TEMPLATE = """
             font-weight: bold;
             user-select: none;
         }
+        
         .conditions-wrapper {
             display: flex;
             flex-direction: column;
             gap: 8px;
         }
+        
         .condition-block {
             display: flex;
             gap: 6px;
@@ -390,24 +472,23 @@ HTML_TEMPLATE = """
             border-radius: 4px;
             border: 1px solid #333;
         }
-        select, input[type="text"], input[type="number"] {
-            background: #0d0d0d;
-            color: #fff;
-            border: 1px solid var(--border-color);
-            padding: 7px;
-            border-radius: 4px;
-            font-size: 0.9em;
-        }
-        select:focus, input:focus { outline: 1px solid var(--rust-orange); }
-        .cond-logop { font-weight: bold; color: var(--rust-orange); border-color: var(--rust-orange); }
-        input[type="text"], input[type="number"] { flex-grow: 1; min-width: 100px; }
+        
         .action-type {
             font-weight: bold;
             text-transform: uppercase;
             padding: 8px;
             border-radius: 4px;
             cursor: pointer;
+            border: 1px solid transparent;
+            transition: all 0.2s ease;
         }
+        
+        .action-type:hover {
+            filter: brightness(1.3);
+            transform: translateY(-1px);
+            box-shadow: 0 0 12px rgba(255, 255, 255, 0.2);
+        }
+        
         .action-type[data-action="start"] { background-color: #1b5e20; color: #a5d6a7; border-color: #2e7d32; }
         .action-type[data-action="stop"] { background-color: #b71c1c; color: #ffcdd2; border-color: #c62828; }
         .action-type[data-action="pause"] { background-color: #e65100; color: #ffe0b2; border-color: #f57c00; }
@@ -416,6 +497,7 @@ HTML_TEMPLATE = """
         .action-type[data-action="update"] { background-color: #004d40; color: #b2dfdb; border-color: #00695c; }
         .action-type[data-action="addtags"] { background-color: #006064; color: #b2ebf2; border-color: #00838f; }
         .action-type[data-action="removetags"] { background-color: #4e342e; color: #d7ccc8; border-color: #6d4c41; }
+        
         .btn-delete-rule {
             align-self: center;
             background: #333;
@@ -429,25 +511,68 @@ HTML_TEMPLATE = """
             align-items: center;
             justify-content: center;
             cursor: pointer;
+            outline: none;
+            transition: all 0.2s ease;
         }
-        .btn-delete-rule:hover { background: var(--danger); color: white; }
-        .raw-editor-container { margin-top: 15px; display: none; }
+        
+        .btn-delete-rule:hover {
+            background: var(--danger);
+            color: white;
+            border-color: var(--danger);
+            transform: scale(1.15);
+            box-shadow: 0 0 14px 2px rgba(244, 67, 54, 0.75);
+        }
+        
+        .btn-delete-rule:focus-visible {
+            box-shadow: var(--glow-shadow);
+        }
+        
+		.raw-editor-container { margin-top: 15px; display: none; }
+		
         textarea {
-            width: 100%; height: 150px; background: #000; color: #fff;
-            border: 1px solid var(--border-color); padding: 10px;
-            font-family: monospace; resize: vertical; box-sizing: border-box;
+            width: 100%;
+            height: 150px;
+            background: var(--input-bg);
+            color: #fff;
+            border: 1px solid var(--border-color);
+            padding: 10px;
+            font-family: monospace;
+            resize: vertical;
+            box-sizing: border-box;
+            border-radius: 4px;
+            outline: none;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
         }
+        
+        textarea:focus {
+            border-color: var(--rust-orange-hover);
+            box-shadow: var(--glow-shadow);
+        }
+        
         #logs {
-            width: 100%; height: 400px; background: #000; color: #a5d6a7;
-            border: 1px solid var(--border-color); padding: 10px;
-            font-family: monospace; overflow-y: scroll; box-sizing: border-box;
+            width: 100%;
+            height: 400px;
+            background: #000;
+            color: #a5d6a7;
+            border: 1px solid var(--border-color);
+            padding: 10px;
+            font-family: monospace;
+            overflow-y: scroll;
+            box-sizing: border-box;
             white-space: pre-wrap;
+            border-radius: 4px;
         }
+        
         .status-badge {
-            padding: 5px 10px; border-radius: 12px; font-size: 0.9em; font-weight: bold;
+            padding: 5px 10px;
+            border-radius: 12px;
+            font-size: 0.9em;
+            font-weight: bold;
         }
+        
         .status-running { background: rgba(76, 175, 80, 0.2); color: var(--success); }
         .status-stopped { background: rgba(244, 67, 54, 0.2); color: var(--danger); }
+        
         .refresh-spinner {
             display: inline-block;
             width: 12px;
@@ -461,9 +586,9 @@ HTML_TEMPLATE = """
             margin-left: 8px;
             vertical-align: middle;
         }
-        .refresh-spinner.active {
-            opacity: 1;
-        }
+        
+        .refresh-spinner.active { opacity: 1; }
+        
         .refresh-slot {
             position: relative;
             display: inline-flex;
@@ -474,6 +599,7 @@ HTML_TEMPLATE = """
             margin: 0 8px;
             flex-shrink: 0;
         }
+        
         .progress-container {
             width: 100%;
             height: 4px;
@@ -482,26 +608,28 @@ HTML_TEMPLATE = """
             overflow: hidden;
             transition: opacity 0.2s ease;
         }
+        
         .progress-bar {
             height: 100%;
             width: 0%;
             background-color: var(--rust-orange);
         }
+        
         .refresh-slot .refresh-spinner {
             position: absolute;
             opacity: 0;
             transition: opacity 0.2s ease;
             pointer-events: none;
         }
-        .refresh-slot .refresh-spinner.active {
-            opacity: 1;
-        }
-        .refresh-slot:has(.refresh-spinner.active) .progress-container {
-            opacity: 0;
-        }
+        
+        .refresh-slot .refresh-spinner.active { opacity: 1; }
+        
+        .refresh-slot:has(.refresh-spinner.active) .progress-container { opacity: 0; }
+        
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
+        
         .collapsible-header {
             cursor: pointer;
             user-select: none;
@@ -509,6 +637,7 @@ HTML_TEMPLATE = """
             justify-content: space-between;
             align-items: center;
         }
+        
         .collapse-icon {
             display: inline-block;
             transition: transform 0.2s ease;
@@ -516,32 +645,37 @@ HTML_TEMPLATE = """
             font-size: 0.8em;
             color: var(--rust-orange);
         }
-        .panel.collapsed .collapse-content {
-            display: none !important;
-        }
+        
+        .panel.collapsed .collapse-content { display: none !important; }
+        
         .lang-container {
             display: inline-flex;
             align-items: center;
             margin-right: 15px;
         }
+        
         .lang-select {
-            background: #181818;
+            background: var(--input-bg);
             color: #fff;
             border: 1px solid var(--border-color);
             border-radius: 6px;
-            padding: 5px 10px;
+            padding: 6px 12px;
             font-size: 12px;
             font-weight: 600;
             cursor: pointer;
             outline: none;
             transition: all 0.2s ease;
         }
+        
         .lang-select:hover {
-            background: #252525;
-            border-color: var(--rust-orange);
+            background: var(--input-bg-hover);
+            border-color: var(--border-hover);
+            box-shadow: 0 0 8px rgba(255, 255, 255, 0.1);
         }
+        
         .lang-select:focus {
-            border-color: var(--rust-orange);
+            border-color: var(--rust-orange-hover);
+            box-shadow: var(--glow-shadow);
         }
     </style>
 </head>
@@ -2229,8 +2363,11 @@ class RustatioManager:
                         state["announcing_time"] = now
                         log(f"Announce detected for '{tag}', marking announce as active.", "trace")
                     elif "error" in level:
+                        rust_log_level = get_global_rust_log_level(os.getenv("RUST_LOG", "info"))
+                        has_info_log = rust_log_level <= logging.INFO
+
                         announce_ts = state.get("announcing_time", 0)
-                        is_announcing_active = (announce_ts > 0) and ((now - announce_ts) <= WATCHER_ANNOUNCE_TIMEOUT)
+                        is_announcing_active = (not has_info_log) or ((announce_ts > 0) and ((now - announce_ts) <= WATCHER_ANNOUNCE_TIMEOUT))
 
                         if is_announcing_active:
                             counts = state.setdefault("counts", {})
@@ -2292,7 +2429,6 @@ class RustatioManager:
         active_names = {self.get_val(inst, "torrent.name") for inst in instances_snapshot}
 
         for tag, state in list(self.logs_state.items()):
-            # Supprimer l'état si le torrent n'existe plus
             if tag not in active_names:
                 expired_tags.append(tag)
                 continue
