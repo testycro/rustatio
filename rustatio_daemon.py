@@ -31,19 +31,19 @@ DEFAULT_CONFIG = {
     'RUSTATIO_API': "http://127.0.0.1",           # Rustatio's ip
     'ADMIN_PORT': "",                             # Daemon admin port (blank to use Rustatio)
     'AUTH_TOKEN': "",                             # If you want another token for admin panel (blank to use Rustatio)
-    'REFRESH_INTERVAL': 0,                        # 0 to use scrape interval from Rustatio (min 5s)
+    'REFRESH_INTERVAL': 0,                        # 0 to use scrape interval from Rustatio (hardcoded 5s min to avoid self spam)
     'ARCHIVE_FOLDER': "/data/archived",           # (blank to disable)
     'RULES_FILE': "/data/rules.txt",              # Important !
     'DEFAULTS_FILE': "/data/state.json",          # Important !
     'DRY_RUN': False,                             # Maybe i forgot to push this everywhere
     'LOGFILE': "/data/rustatio_daemon.log",       # Important !
     'CHECK_LOGS_FILE': "/data/check_logs.json",   # Important !
-    'LOGS_WATCHER': 1,                            # 0/1 Set log level in Rustatio to INFO
+    'LOGS_WATCHER': 1,                            # 0/1 Watch Rustatio's log for errors and pause a torrent !!!Set log level in Rustatio to INFO!!!
     'RUST_DAEMON_LOG': "",                        # If you want another log level in admin panel only
-    'WATCHER_MAX_STRIKE': 3,                      # 0-50 torrents -> 3, increase by 1 for 100+ torrent
-    'WATCHER_STRIKE_TIME': 3600,                  # 30min (1800s) is enough
-    'WATCHER_PAUSE_TIME': 3600,                   # How much time you will be flagged as a spammer ? -> 3600s (1h) for most
-    'WATCHER_ANNOUNCE_TIMEOUT': 130,              # Used to filter (tcp timeout) warn and error in BUGGED Rustatio's logs (only with Rustatio's logs on INFO)
+    'WATCHER_MAX_STRIKE': 3,                      # 0-50 torrents -> 3, increase by 2 for 100+ torrent to avoid false positives
+    'WATCHER_STRIKE_TIME': 3600,                  # 30min (1800s) is close
+    'WATCHER_PAUSE_TIME': 3600,                   # How much time you will be flagged as a spammer ? -> 3600s (1h) for most trackers
+    'WATCHER_ANNOUNCE_TIMEOUT': 130,              # Used to filter (tcp timeout) warns and errors in BUGGED Rustatio's logs (only with Rustatio's logs on INFO)
     'TOR_KEEP_LAST': 1                            # 0/1 keep alive last torrent for a tracker
 }
 
