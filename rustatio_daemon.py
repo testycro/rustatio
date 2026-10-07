@@ -27,32 +27,34 @@ app = Flask(__name__)
 # CONFIGURATION
 # ==========================================
 DEFAULT_CONFIG = {
-    'PORT': 8080,
-    'RUSTATIO_API': "http://127.0.0.1",
-    'ADMIN_PORT': "",
-    'AUTH_TOKEN': "",
-    'REFRESH_INTERVAL': 0,
-    'ARCHIVE_FOLDER': "/data/archived",
-    'RULES_FILE': "/data/rules.txt",
-    'DEFAULTS_FILE': "/data/state.json",
-    'DRY_RUN': False,
-    'LOGFILE': "/data/rustatio_daemon.log",
-    'CHECK_LOGS_FILE': "/data/check_logs.json",
-    'LOGS_WATCHER': 1,
-    'RUST_DAEMON_LOG': "",
-    'WATCHER_MAX_STRIKE': 3,
-    'WATCHER_STRIKE_TIME': 3600,
-    'WATCHER_PAUSE_TIME': 3600,
-    'WATCHER_ANNOUNCE_TIMEOUT': 130,
-    'TOR_KEEP_LAST': 1
+    'PORT': 8080,                                 # Rustatio's port
+    'RUSTATIO_API': "http://127.0.0.1",           # Rustatio's ip
+    'ADMIN_PORT': "",                             # Daemon admin port (blank to use Rustatio)
+    'AUTH_TOKEN': "",                             # If you want another token for admin panel (blank to use Rustatio)
+    'REFRESH_INTERVAL': 0,                        # 0 to use scrape interval from Rustatio (min 5s)
+    'ARCHIVE_FOLDER': "/data/archived",           # (blank to disable)
+    'RULES_FILE': "/data/rules.txt",              # Important !
+    'DEFAULTS_FILE': "/data/state.json",          # Important !
+    'DRY_RUN': False,                             # Maybe i forgot to push this everywhere
+    'LOGFILE': "/data/rustatio_daemon.log",       # Important !
+    'CHECK_LOGS_FILE': "/data/check_logs.json",   # Important !
+    'LOGS_WATCHER': 1,                            # 0/1 Set log level in Rustatio to INFO
+    'RUST_DAEMON_LOG': "",                        # If you want another log level in admin panel only
+    'WATCHER_MAX_STRIKE': 3,                      # 0-50 torrents -> 3, increase by 1 for 100+ torrent
+    'WATCHER_STRIKE_TIME': 3600,                  # 30min (1800s) is enough
+    'WATCHER_PAUSE_TIME': 3600,                   # How much time you will be flagged as a spammer ? -> 3600s (1h) for most
+    'WATCHER_ANNOUNCE_TIMEOUT': 130,              # Used to filter (tcp timeout) warn and error in BUGGED Rustatio's logs (only with Rustatio's logs on INFO)
+    'TOR_KEEP_LAST': 1                            # 0/1 keep alive last torrent for a tracker
 }
 
+# Config's key locked
 READONLY_KEYS = {
     'PORT', 'ADMIN_PORT', 'RUSTATIO_API',
     'ARCHIVE_FOLDER', 'RULES_FILE', 'DEFAULTS_FILE', 
     'LOGFILE', 'CHECK_LOGS_FILE'
 }
 
+# Something weird but cool
 FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
     <circle cx="32" cy="32" r="30" fill="#121212" stroke="#ce412b" stroke-width="3"/>
     <path d="M32 10 a22 22 0 1 0 0.001 0" fill="none" stroke="#ce412b" stroke-width="4" stroke-dasharray="6,6"/>
