@@ -1,4 +1,5 @@
-<h1>This is a python script that allows you to modify the behavior of Rustatio (Docker) with custom rules and admin panel.</h1>
+<h1>This is a python script for advanced automation in Rustatio (Docker)
+<i>Be careful, it's really powerful</i></h1>
 
 - Work with rustatio 2.x.x in the same container
 - Work better with https://github.com/takitsu21/rustatio/releases/tag/v2.6.0 (less bugs)
@@ -39,8 +40,6 @@ services:
 - You can add or remove many tags at a time
 - Delete can accept 3 params comma separated, instance,watchfile,archive
 - Delete's watchfile param will delete file AND instance (internal API feature), can't delete file without instance
-- It'not perfect but can do all the things i need
-- There is a full data sample at the end of the script
 
 Rules sample
 
