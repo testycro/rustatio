@@ -2411,6 +2411,7 @@ class RustatioManager:
             if DRY_RUN: log(f"Would pause '{tag}' and addtags '{err_tag}'", "f_recycle")
             else:
                 if self.api.request("POST", "grid/pause", {"ids": [id_]}):
+                    inst.setdefault("stats", {})["state"] = "Paused"
                     existing_tags = inst.get("tags") or []
                     if err_tag not in existing_tags:
                         self.api.request("POST", "grid/tag", {"ids": [id_], "add_tags": [err_tag], "remove_tags": []})
@@ -2479,6 +2480,7 @@ class RustatioManager:
             if DRY_RUN: log(f"Would resume '{tag}' and removetags '{err_tag}'", "f_recycle")
             else:
                 if self.api.request("POST", "grid/resume", {"ids": [id_]}):
+                    inst.setdefault("stats", {})["state"] = "Running"
                     log("Resume succeeded", "f_succes")
                     existing_tags = inst.get("tags") or []
                     if err_tag in existing_tags:
@@ -2495,6 +2497,7 @@ class RustatioManager:
         inst = self._find_instance_by_name(tag)
         if inst:
             id_ = inst.get("id")
+            state = self.get_val(inst, "stats.state")
             
             current_tags = inst.get("tags", [])
             if isinstance(current_tags, str):
@@ -2507,9 +2510,14 @@ class RustatioManager:
                     inst["tags"] = [t for t in current_tags if t not in err_tags_to_remove]
                     log(f"Tags deleted ({', '.join(err_tags_to_remove)}) for instance ID : {id_}", "f_succes")
             
-            result = self.api.request("POST", "grid/resume", {"ids": [id_]})
-            if result:
-                log(f"Resume sent for instance ID : {id_}", "f_succes")
+            if self.is_action_valid("resume", state):
+                result = self.api.request("POST", "grid/resume", {"ids": [id_]})
+                if result:
+                    inst.setdefault("stats", {})["state"] = "Running"
+                    log(f"Resume sent for instance ID : {id_}", "f_succes")
+                    return True
+            else:
+                log(f"Resume skipped for instance ID : {id_} (state: {state})", "trace")
                 return True
         return False
 
