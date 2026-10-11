@@ -1347,7 +1347,7 @@ HTML_TEMPLATE = """
                             <span style="color: var(--rust-orange); font-weight: bold;">${t('strikes')} ${info.total_strikes}</span>
                             ${errDetails}
                         </td>
-                        <td style="padding: 10px; color: #64b5f6; font-weight: bold;">${formatTimeLeft(info.time_left > 0 ? info.time_left : info.announce_ts)}</td>
+                        <td style="padding: 10px; color: #64b5f6; font-weight: bold;">${formatTimeLeft(info.time_left)}</td>
                         <td style="padding: 10px;">
                             <button class="small start" style="background-color: #2e7d32;" onclick="clearAndResume(this.dataset.tag)" data-tag="${tag.replace(/"/g, '&quot;')}">${t('clearnresume')}</button>
                         </td>
@@ -2343,50 +2343,59 @@ class RustatioManager:
             if "[" in msg:
                 tag, rest = self._extract_bracket(msg)
                 if tag:
-                    state = self.logs_state.get(tag, {})
-
-                    if state.get("action", 0) > 0:
-                        log(f"Log ignored for '{tag}': watcher pause is currently active.", "trace")
-                        return
-
                     inst = self._find_instance_by_name(tag)
                     if inst and self.get_val(inst, "stats.state") in ["Paused", "Stopped"]:
                         log(f"Log ignored for '{tag}': torrent status is {self.get_val(inst, 'stats.state')}.", "trace")
                         return
 
-                    state = self.logs_state.setdefault(tag, {
-                        "counts": {}, 
-                        "action": 0, 
-                        "last_count_time": 0,
-                        "announcing_time": 0
-                    })
+                    should_pause = False
+                    
+                    with self.strike_lock:
+                        state = self.logs_state.get(tag, {})
 
-                    if "info" in level and "announcing" in msg.lower():
-                        state["announcing_time"] = now
-                        log(f"Announce detected for '{tag}', marking announce as active.", "trace")
-                    elif "error" in level:
-                        rust_log_level = get_global_rust_log_level(os.getenv("RUST_LOG", "info"))
-                        has_info_log = rust_log_level <= logging.INFO
+                        if state.get("action", 0) > 0:
+                            log(f"Log ignored for '{tag}': watcher pause is currently active.", "trace")
+                            return
 
-                        announce_ts = state.get("announcing_time", 0)
-                        is_announcing_active = (not has_info_log) or ((announce_ts > 0) and ((now - announce_ts) <= WATCHER_ANNOUNCE_TIMEOUT))
+                        state = self.logs_state.setdefault(tag, {
+                            "counts": {}, 
+                            "action": 0, 
+                            "last_count_time": 0,
+                            "announcing_time": 0
+                        })
 
-                        if is_announcing_active:
-                            counts = state.setdefault("counts", {})
-                            counts[rest] = counts.get(rest, 0) + 1
-                            current_count = counts[rest]
-                            state["last_count_time"] = now
+                        if "info" in level and "announcing" in msg.lower():
+                            state["announcing_time"] = now
+                            log(f"Announce detected for '{tag}', marking announce as active.", "trace")
+                        elif "info" in level and "complete" in msg.lower():
                             state["announcing_time"] = 0
+                            log(f"Complete detected for '{tag}', marking announcing_time as 0 for cleanup.", "trace")
+                        elif "error" in level:
+                            rust_log_level = get_global_rust_log_level(os.getenv("RUST_LOG", "info"))
+                            has_info_log = rust_log_level <= logging.INFO
 
-                            log(f"Error during active announce for '{tag}' (strike {current_count}/{WATCHER_MAX_STRIKE})", "trace")
+                            announce_ts = state.get("announcing_time", 0)
+                            is_announcing_active = (not has_info_log) or ((announce_ts > 0) and ((now - announce_ts) <= WATCHER_ANNOUNCE_TIMEOUT))
 
-                            if state["action"] == 0 and current_count >= WATCHER_MAX_STRIKE:
-                                self._trigger_watcher_pause(tag, rest, now)
-                                state["action"] = now
+                            if is_announcing_active:
+                                counts = state.setdefault("counts", {})
+                                counts[rest] = counts.get(rest, 0) + 1
+                                current_count = counts[rest]
+                                state["last_count_time"] = now
+                                state["announcing_time"] = 0
 
-                            self.save_logs_state()
-                        else:
-                            log(f"Error ignored for '{tag}' because no active announce in progress.", "trace")
+                                log(f"Error during active announce for '{tag}' (strike {current_count}/{WATCHER_MAX_STRIKE})", "trace")
+
+                                if state["action"] == 0 and current_count >= WATCHER_MAX_STRIKE:
+                                    state["action"] = now
+                                    should_pause = True
+
+                                self.save_logs_state()
+                            else:
+                                log(f"Error ignored for '{tag}' because no active announce in progress.", "trace")
+
+                    if should_pause:
+                        self._trigger_watcher_pause(tag, rest, now)
 
         except Exception as e:
             log(f"Error: {str(e)}", "error")
@@ -2420,52 +2429,57 @@ class RustatioManager:
     def _check_expirations(self):
         log("Checking log expirations and purges", "trace")
         
+        actions_to_resume = []
+        
         with self.strike_lock:
             if not self.current_instances:
                 log("Skip _check_expirations: current_instances is empty", "trace")
                 return
             instances_snapshot = list(self.current_instances)
 
-        now = time.time()
-        dirty = False
-        expired_tags = []
-        active_names = {self.get_val(inst, "torrent.name") for inst in instances_snapshot}
+            now = time.time()
+            dirty = False
+            expired_tags = []
+            active_names = {self.get_val(inst, "torrent.name") for inst in instances_snapshot}
 
-        for tag, state in list(self.logs_state.items()):
-            if tag not in active_names:
-                expired_tags.append(tag)
-                continue
+            for tag, state in list(self.logs_state.items()):
+                if tag not in active_names:
+                    expired_tags.append(tag)
+                    continue
 
-            announce_ts = state.get("announcing_time", 0)
-            if announce_ts > 0 and (now - announce_ts) > WATCHER_ANNOUNCE_TIMEOUT:
-                state["announcing_time"] = 0
-                dirty = True
-                log(f"Announce status expired for '{tag}'", "trace")
-
-            if state.get("last_count_time", 0) > 0 and (now - state["last_count_time"]) > WATCHER_STRIKE_TIME:
-                if state.get("action", 0) == 0: 
-                    state["counts"] = {}
-                    state["last_count_time"] = 0
+                announce_ts = state.get("announcing_time", 0)
+                if announce_ts > 0 and (now - announce_ts) > WATCHER_ANNOUNCE_TIMEOUT:
+                    state["announcing_time"] = 0
                     dirty = True
+                    log(f"Announce status expired for '{tag}'", "trace")
 
-            if state.get("action", 0) > 0 and (now - state["action"]) > WATCHER_PAUSE_TIME:
-                self._trigger_watcher_resume(tag, state["action"])
-                expired_tags.append(tag)
+                if state.get("last_count_time", 0) > 0 and (now - state["last_count_time"]) > WATCHER_STRIKE_TIME:
+                    if state.get("action", 0) == 0: 
+                        state["counts"] = {}
+                        state["last_count_time"] = 0
+                        dirty = True
 
-            has_counts = any(c > 0 for c in state.get("counts", {}).values())
-            has_action = state.get("action", 0) > 0
-            has_announce = state.get("announcing_time", 0) > 0
+                if state.get("action", 0) > 0 and (now - state["action"]) > WATCHER_PAUSE_TIME:
+                    actions_to_resume.append((tag, state["action"]))
+                    expired_tags.append(tag)
 
-            if not has_counts and not has_action and not has_announce:
-                expired_tags.append(tag)
+                has_counts = any(c > 0 for c in state.get("counts", {}).values())
+                has_action = state.get("action", 0) > 0
+                has_announce = state.get("announcing_time", 0) > 0
 
-        for tag in set(expired_tags):
-            if tag in self.logs_state:
-                del self.logs_state[tag]
-                dirty = True
+                if not has_counts and not has_action and not has_announce:
+                    expired_tags.append(tag)
+
+            for tag in set(expired_tags):
+                if tag in self.logs_state:
+                    del self.logs_state[tag]
+                    dirty = True
 
         if dirty: 
             self.save_logs_state()
+
+        for tag, action_ts in actions_to_resume:
+            self._trigger_watcher_resume(tag, action_ts)
 
     def _trigger_watcher_resume(self, tag, action_ts):
         inst = self._find_instance_by_name(tag)
