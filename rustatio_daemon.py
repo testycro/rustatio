@@ -2048,8 +2048,12 @@ class RustatioManager:
     def save_logs_state(self):
         log(f"Saving logs state to {CHECK_LOGS_FILE}", "trace")
         try:
+            persisted_state = {
+                tag: state for tag, state in self.logs_state.items()
+                if state.get("action", 0) > 0 or bool(state.get("counts"))
+            }
             with open(CHECK_LOGS_FILE, 'w') as f:
-                json.dump(self.logs_state, f)
+                json.dump(persisted_state, f)
         except Exception as e:
             log(f"Error: {str(e)}", "error")
 
@@ -2303,6 +2307,60 @@ class RustatioManager:
                                     else:
                                         log("Failed to delete file", "f_error")
 
+    # ------------------------------------------------------------------
+    # Helpers partagés
+    # ------------------------------------------------------------------
+    def _find_instance_by_name(self, name):
+        with self.strike_lock:
+            for inst in self.current_instances:
+                if self.get_val(inst, "torrent.name") == name: return inst
+        return None
+
+    def _should_stop(self):
+        return self.stop_event.is_set() or self.watcher_stop_event.is_set()
+
+    def _auth_headers(self):
+        return {"Authorization": f"Bearer {AUTH_TOKEN}"} if AUTH_TOKEN else {}
+
+    def _err_tag(self, ts):
+        return f"Err {self.get_elapsed_since_midnight_tag(ts)}"
+
+    @staticmethod
+    def _new_tag_state():
+        return {"counts": {}, "action": 0, "last_count_time": 0, "announcing_time": 0}
+
+    def _inst_tags(self, inst):
+        """Tags d'une instance sous forme de liste (gère None et chaîne 'a, b')."""
+        tags = inst.get("tags") or []
+        if isinstance(tags, str):
+            tags = [t.strip() for t in tags.split(',') if t.strip()]
+        return tags
+
+    def _update_tags(self, inst, add=(), remove=()):
+        """Ajoute/retire des tags via l'API et met à jour l'instance locale.
+        Retourne True uniquement si des tags ont réellement été modifiés."""
+        existing = self._inst_tags(inst)
+        add = [t for t in add if t not in existing]
+        remove = [t for t in remove if t in existing]
+        if not add and not remove:
+            return False
+        payload = {"ids": [inst.get("id")], "add_tags": add, "remove_tags": remove}
+        if not self.api.request("POST", "grid/tag", payload):
+            return False
+        inst["tags"] = [t for t in existing if t not in remove] + add
+        return True
+
+    def _grid_action(self, inst, action):
+        """pause / resume via l'API + mise à jour de l'état local."""
+        new_state = {"pause": "Paused", "resume": "Running"}[action]
+        if not self.api.request("POST", f"grid/{action}", {"ids": [inst.get("id")]}):
+            return False
+        inst.setdefault("stats", {})["state"] = new_state
+        return True
+
+    # ------------------------------------------------------------------
+    # Thread SSE
+    # ------------------------------------------------------------------
     def logs_watcher_thread(self):
         url = f"{self.api.base_url}/api/logs"
         log(f"Starting logs_watcher_thread targeting SSE URL: {url}", "trace")
@@ -2310,229 +2368,237 @@ class RustatioManager:
             "Accept": "text/event-stream",
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"
+            "X-Accel-Buffering": "no",
+            **self._auth_headers(),
         }
-        if AUTH_TOKEN:
-            headers["Authorization"] = f"Bearer {AUTH_TOKEN}"
 
-        while not self.stop_event.is_set() and not self.watcher_stop_event.is_set():
+        while not self._should_stop():
             try:
                 with requests.get(url, stream=True, headers=headers, timeout=60) as r:
                     for line in r.iter_lines(decode_unicode=True):
-                        if self.stop_event.is_set() or self.watcher_stop_event.is_set(): return
+                        if self._should_stop():
+                            return
                         self._check_expirations()
                         if line and line.startswith("data:"):
                             self._handle_log_event(line[5:].strip())
             except requests.exceptions.Timeout:
                 self._check_expirations()
             except Exception as e:
-                if self.stop_event.is_set() or self.watcher_stop_event.is_set():
-                    log(f"logs_watcher_thread stopping", "trace")
+                if self._should_stop():
+                    log("logs_watcher_thread stopping", "trace")
                     return
                 log(f"logs_watcher_thread exception encountered: {e}", "trace")
                 self.stop_event.wait(5)
 
+    # ------------------------------------------------------------------
+    # Traitement d'un évènement de log
+    # ------------------------------------------------------------------
     def _handle_log_event(self, json_str):
         log(f"Handling log event payload: {json_str}", "trace")
         try:
             event = json.loads(json_str)
-            level = event.get("level", "").lower()
             msg = event.get("message", "")
+            if "[" not in msg:
+                return
+            tag, rest = self._extract_bracket(msg)
+            if not tag:
+                return
+
+            level = event.get("level", "").lower()
             now = time.time()
 
-            if "[" in msg:
-                tag, rest = self._extract_bracket(msg)
-                if tag:
-                    inst = self._find_instance_by_name(tag)
-                    if inst and self.get_val(inst, "stats.state") in ["Paused", "Stopped"]:
-                        log(f"Log ignored for '{tag}': torrent status is {self.get_val(inst, 'stats.state')}.", "trace")
-                        return
+            inst = self._find_instance_by_name(tag)
+            if inst:
+                inst_state = self.get_val(inst, "stats.state")
+                if inst_state in ("Paused", "Stopped"):
+                    log(f"Log ignored for '{tag}': torrent status is {inst_state}.", "trace")
+                    return
 
-                    should_pause = False
-                    
-                    with self.strike_lock:
-                        state = self.logs_state.get(tag, {})
+            with self.strike_lock:
+                state = self.logs_state.get(tag, {})
+                if state and state.get("action", 0) > 0:
+                    log(f"Log ignored for '{tag}': watcher pause is currently active.", "trace")
+                    return
+                state = self.logs_state.setdefault(tag, self._new_tag_state())
+                should_pause = self._register_event(tag, state, level, msg, rest, now)
 
-                        if state.get("action", 0) > 0:
-                            log(f"Log ignored for '{tag}': watcher pause is currently active.", "trace")
-                            return
-
-                        state = self.logs_state.setdefault(tag, {
-                            "counts": {}, 
-                            "action": 0, 
-                            "last_count_time": 0,
-                            "announcing_time": 0
-                        })
-
-                        if "info" in level and "announcing" in msg.lower():
-                            state["announcing_time"] = now
-                            log(f"Announce detected for '{tag}', marking announce as active.", "trace")
-                        elif "info" in level and "complete" in msg.lower():
-                            state["announcing_time"] = 0
-                            log(f"Complete detected for '{tag}', marking announcing_time as 0 for cleanup.", "trace")
-                        elif "error" in level:
-                            rust_log_level = get_global_rust_log_level(os.getenv("RUST_LOG", "info"))
-                            has_info_log = rust_log_level <= logging.INFO
-
-                            announce_ts = state.get("announcing_time", 0)
-                            is_announcing_active = (not has_info_log) or ((announce_ts > 0) and ((now - announce_ts) <= WATCHER_ANNOUNCE_TIMEOUT))
-
-                            if is_announcing_active:
-                                counts = state.setdefault("counts", {})
-                                counts[rest] = counts.get(rest, 0) + 1
-                                current_count = counts[rest]
-                                state["last_count_time"] = now
-                                state["announcing_time"] = 0
-
-                                log(f"Error during active announce for '{tag}' (strike {current_count}/{WATCHER_MAX_STRIKE})", "trace")
-
-                                if state["action"] == 0 and current_count >= WATCHER_MAX_STRIKE:
-                                    state["action"] = now
-                                    should_pause = True
-
-                                self.save_logs_state()
-                            else:
-                                log(f"Error ignored for '{tag}' because no active announce in progress.", "trace")
-
-                    if should_pause:
-                        self._trigger_watcher_pause(tag, rest, now)
+            if should_pause:
+                self._watcher_apply(tag, "pause", now, detail=rest)
 
         except Exception as e:
             log(f"Error: {str(e)}", "error")
 
-    def _find_instance_by_name(self, name):
-        with self.strike_lock:
-            for inst in self.current_instances:
-                if self.get_val(inst, "torrent.name") == name: return inst
-        return None
+    def _is_announce_active(self, state, now):
+        has_info_log = get_global_rust_log_level(os.getenv("RUST_LOG", "info")) <= logging.INFO
+        if not has_info_log:
+            return True
+        announce_ts = state.get("announcing_time", 0)
+        return announce_ts > 0 and (now - announce_ts) <= WATCHER_ANNOUNCE_TIMEOUT
 
-    def _trigger_watcher_pause(self, tag, rest, action_ts):
+    def _register_event(self, tag, state, level, msg, rest, now):
+        """Met à jour l'état d'un tag. À appeler sous strike_lock.
+        Retourne True si une pause doit être déclenchée."""
+        low = msg.lower()
+        is_info = "info" in level
+
+        if is_info and "announcing" in low:
+            state["announcing_time"] = now
+            log(f"Announce detected for '{tag}', marking announce as active.", "trace")
+            return False
+
+        if is_info and "complete" in low:
+            del self.logs_state[tag]
+            log(f"Complete detected for '{tag}', cleanup.", "trace")
+            return False
+
+        if "error" not in level:
+            return False
+
+        if not self._is_announce_active(state, now):
+            log(f"Error ignored for '{tag}' because no active announce in progress.", "trace")
+            return False
+
+        counts = state.setdefault("counts", {})
+        counts[rest] = counts.get(rest, 0) + 1
+        count = counts[rest]
+        state["last_count_time"] = now
+        state["announcing_time"] = 0
+        log(f"Error during active announce for '{tag}' (strike {count}/{WATCHER_MAX_STRIKE})", "trace")
+
+        should_pause = state["action"] == 0 and count >= WATCHER_MAX_STRIKE
+        if should_pause:
+            state["action"] = now
+        self.save_logs_state()
+        return should_pause
+
+    # ------------------------------------------------------------------
+    # Pause / reprise
+    # ------------------------------------------------------------------
+    def _watcher_apply(self, tag, action, action_ts, detail=None):
+        """action = 'pause' (+ ajout du tag Err) ou 'resume' (- retrait du tag Err)."""
         inst = self._find_instance_by_name(tag)
-        if not inst: return
-        state = self.get_val(inst, "stats.state")
-        if self.is_action_valid("pause", state):
-            log(f"Repeated error detected (x{WATCHER_MAX_STRIKE}). Try to pause for {self.format_time_bash_style(WATCHER_PAUSE_TIME)} and add tag", "watcher")
-            log(f"Torrent name : {tag}", "f_marked")
-            log(f"{rest}", "f_data")
-            id_ = inst.get("id")
-            err_tag = f"Err {self.get_elapsed_since_midnight_tag(action_ts)}"
+        if not inst:
+            return
+        if not self.is_action_valid(action, self.get_val(inst, "stats.state")):
+            return
 
-            if DRY_RUN: log(f"Would pause '{tag}' and addtags '{err_tag}'", "f_recycle")
-            else:
-                if self.api.request("POST", "grid/pause", {"ids": [id_]}):
-                    inst.setdefault("stats", {})["state"] = "Paused"
-                    existing_tags = inst.get("tags") or []
-                    if err_tag not in existing_tags:
-                        self.api.request("POST", "grid/tag", {"ids": [id_], "add_tags": [err_tag], "remove_tags": []})
-                        log(f"Tags applied ({err_tag})", "f_succes")
+        pausing = action == "pause"
+        err_tag = self._err_tag(action_ts)
+
+        if pausing:
+            log(f"Repeated error detected (x{WATCHER_MAX_STRIKE}). Try to pause for "
+                f"{self.format_time_bash_style(WATCHER_PAUSE_TIME)} and add tag", "watcher")
+        else:
+            log("Pause ended. Try to resume and remove tag", "watcher")
+        log(f"Torrent name : {tag}", "f_marked")
+        if detail:
+            log(f"{detail}", "f_data")
+
+        if DRY_RUN:
+            tag_op = "addtags" if pausing else "removetags"
+            log(f"Would {action} '{tag}' and {tag_op} '{err_tag}'", "f_recycle")
+            return
+
+        if not self._grid_action(inst, action):
+            return
+        log(f"{action.capitalize()} succeeded", "f_succes")
+
+        if pausing:
+            changed = self._update_tags(inst, add=[err_tag])
+        else:
+            changed = self._update_tags(inst, remove=[err_tag])
+        if changed:
+            log(f"Tags {'applied' if pausing else 'removed'} ({err_tag})", "f_succes")
+
+    # ------------------------------------------------------------------
+    # Expirations
+    # ------------------------------------------------------------------
+    def _expire_state(self, tag, state, now, is_active):
+        """Applique les expirations sur l'état d'un tag. À appeler sous strike_lock.
+        Retourne (modifié, action_ts_à_reprendre_ou_None, à_supprimer)."""
+        if not is_active:
+            return False, None, True
+
+        changed = False
+
+        announce_ts = state.get("announcing_time", 0)
+        if announce_ts > 0 and (now - announce_ts) > WATCHER_ANNOUNCE_TIMEOUT:
+            state["announcing_time"] = 0
+            changed = False
+            log(f"Announce status expired for '{tag}'", "trace")
+
+        action_ts = state.get("action", 0)
+        last_count = state.get("last_count_time", 0)
+
+        if action_ts == 0 and last_count > 0 and (now - last_count) > WATCHER_STRIKE_TIME:
+            state["counts"] = {}
+            state["last_count_time"] = 0
+            changed = True
+
+        if action_ts > 0 and (now - action_ts) > WATCHER_PAUSE_TIME:
+            return changed, action_ts, True
+
+        is_empty = (
+            action_ts == 0
+            and not state.get("announcing_time", 0)
+            and not any(c > 0 for c in state.get("counts", {}).values())
+        )
+        return changed, None, is_empty
 
     def _check_expirations(self):
         log("Checking log expirations and purges", "trace")
-        
-        actions_to_resume = []
-        
+        to_resume = []
+        dirty = False
+
         with self.strike_lock:
             if not self.current_instances:
                 log("Skip _check_expirations: current_instances is empty", "trace")
                 return
-            instances_snapshot = list(self.current_instances)
 
             now = time.time()
-            dirty = False
-            expired_tags = []
-            active_names = {self.get_val(inst, "torrent.name") for inst in instances_snapshot}
+            active_names = {self.get_val(i, "torrent.name") for i in self.current_instances}
 
             for tag, state in list(self.logs_state.items()):
-                if tag not in active_names:
-                    expired_tags.append(tag)
-                    continue
-
-                announce_ts = state.get("announcing_time", 0)
-                if announce_ts > 0 and (now - announce_ts) > WATCHER_ANNOUNCE_TIMEOUT:
-                    state["announcing_time"] = 0
-                    dirty = True
-                    log(f"Announce status expired for '{tag}'", "trace")
-
-                if state.get("last_count_time", 0) > 0 and (now - state["last_count_time"]) > WATCHER_STRIKE_TIME:
-                    if state.get("action", 0) == 0: 
-                        state["counts"] = {}
-                        state["last_count_time"] = 0
-                        dirty = True
-
-                if state.get("action", 0) > 0 and (now - state["action"]) > WATCHER_PAUSE_TIME:
-                    actions_to_resume.append((tag, state["action"]))
-                    expired_tags.append(tag)
-
-                has_counts = any(c > 0 for c in state.get("counts", {}).values())
-                has_action = state.get("action", 0) > 0
-                has_announce = state.get("announcing_time", 0) > 0
-
-                if not has_counts and not has_action and not has_announce:
-                    expired_tags.append(tag)
-
-            for tag in set(expired_tags):
-                if tag in self.logs_state:
+                changed, resume_ts, remove = self._expire_state(tag, state, now, tag in active_names)
+                dirty |= changed
+                if resume_ts:
+                    to_resume.append((tag, resume_ts))
+                if remove:
                     del self.logs_state[tag]
                     dirty = True
 
-        if dirty: 
+        if dirty:
             self.save_logs_state()
 
-        for tag, action_ts in actions_to_resume:
-            self._trigger_watcher_resume(tag, action_ts)
+        for tag, action_ts in to_resume:
+            self._watcher_apply(tag, "resume", action_ts)
 
-    def _trigger_watcher_resume(self, tag, action_ts):
-        inst = self._find_instance_by_name(tag)
-        if not inst: return
-        state = self.get_val(inst, "stats.state")
-        if self.is_action_valid("resume", state):
-            log("Pause ended. Try to resume and remove tag", "watcher")
-            log(f"Torrent name : {tag}", "f_marked")
-            id_ = inst.get("id")
-            err_tag = f"Err {self.get_elapsed_since_midnight_tag(action_ts)}"
-
-            if DRY_RUN: log(f"Would resume '{tag}' and removetags '{err_tag}'", "f_recycle")
-            else:
-                if self.api.request("POST", "grid/resume", {"ids": [id_]}):
-                    inst.setdefault("stats", {})["state"] = "Running"
-                    log("Resume succeeded", "f_succes")
-                    existing_tags = inst.get("tags") or []
-                    if err_tag in existing_tags:
-                        self.api.request("POST", "grid/tag", {"ids": [id_], "add_tags": [], "remove_tags": [err_tag]})
-                        log(f"Tags removed ({err_tag})", "f_succes")
-
+    # ------------------------------------------------------------------
+    # Reset manuel
+    # ------------------------------------------------------------------
     def clear_strike_and_resume(self, tag):
         with self.strike_lock:
-            if tag in self.logs_state:
-                del self.logs_state[tag]
+            if self.logs_state.pop(tag, None) is not None:
                 self.save_logs_state()
                 log(f"Strikes manually cleared for tag : {tag}", "warn")
-        
+
         inst = self._find_instance_by_name(tag)
-        if inst:
-            id_ = inst.get("id")
-            state = self.get_val(inst, "stats.state")
-            
-            current_tags = inst.get("tags", [])
-            if isinstance(current_tags, str):
-                current_tags = [t.strip() for t in current_tags.split(',') if t.strip()]
-                
-            err_tags_to_remove = [t for t in current_tags if t.startswith("Err ")]
-            
-            if err_tags_to_remove:
-                if self.api.request("POST", "grid/tag", {"ids": [id_], "add_tags": [], "remove_tags": err_tags_to_remove}):
-                    inst["tags"] = [t for t in current_tags if t not in err_tags_to_remove]
-                    log(f"Tags deleted ({', '.join(err_tags_to_remove)}) for instance ID : {id_}", "f_succes")
-            
-            if self.is_action_valid("resume", state):
-                result = self.api.request("POST", "grid/resume", {"ids": [id_]})
-                if result:
-                    inst.setdefault("stats", {})["state"] = "Running"
-                    log(f"Resume sent for instance ID : {id_}", "f_succes")
-                    return True
-            else:
-                log(f"Resume skipped for instance ID : {id_} (state: {state})", "trace")
-                return True
+        if not inst:
+            return False
+        id_ = inst.get("id")
+
+        err_tags = [t for t in self._inst_tags(inst) if t.startswith("Err ")]
+        if err_tags and self._update_tags(inst, remove=err_tags):
+            log(f"Tags deleted ({', '.join(err_tags)}) for instance ID : {id_}", "f_succes")
+
+        state = self.get_val(inst, "stats.state")
+        if not self.is_action_valid("resume", state):
+            log(f"Resume skipped for instance ID : {id_} (state: {state})", "trace")
+            return True
+
+        if self._grid_action(inst, "resume"):
+            log(f"Resume sent for instance ID : {id_}", "f_succes")
+            return True
         return False
 
     def run(self):
@@ -2551,9 +2617,7 @@ class RustatioManager:
         if LOGS_WATCHER:
             self.start_watcher()
 
-        headers = {}
-        if AUTH_TOKEN:
-            headers["Authorization"] = f"Bearer {AUTH_TOKEN}"
+        headers = self._auth_headers()
 
         while not self.stop_event.is_set():
             try:
