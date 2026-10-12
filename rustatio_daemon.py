@@ -2049,8 +2049,9 @@ class RustatioManager:
         log(f"Saving logs state to {CHECK_LOGS_FILE}", "trace")
         try:
             persisted_state = {
-                tag: state for tag, state in self.logs_state.items()
-                if state.get("action", 0) > 0 or bool(state.get("counts"))
+                tag: {k: v for k, v in state.items() if k != "announcing_time"}
+                for tag, state in self.logs_state.items()
+                if self._has_persistent_data(state)
             }
             with open(CHECK_LOGS_FILE, 'w') as f:
                 json.dump(persisted_state, f)
@@ -2141,7 +2142,7 @@ class RustatioManager:
         try:
             evaluator = ASTEvaluator(eval_context)
             result = evaluator.eval(ast_tree)
-            log(f"Evaluated rule for instance ID {inst.get('id')}: result = {result}", "trace")
+#            log(f"Evaluated rule for instance ID {inst.get('id')}: result = {result}", "trace")
             return bool(result), eval_rand_keys
         except Exception as e:
             log(f"Evaluation error for instance ID {inst.get('id')}: {e}", "trace")
@@ -2328,6 +2329,11 @@ class RustatioManager:
     @staticmethod
     def _new_tag_state():
         return {"counts": {}, "action": 0, "last_count_time": 0, "announcing_time": 0}
+
+    @staticmethod
+    def _has_persistent_data(state):
+        """True si l'état serait écrit par save_logs_state (donc si sa suppression change le fichier)."""
+        return state.get("action", 0) > 0 or bool(state.get("counts"))
 
     def _inst_tags(self, inst):
         """Tags d'une instance sous forme de liste (gère None et chaîne 'a, b')."""
@@ -2546,7 +2552,7 @@ class RustatioManager:
         return changed, None, is_empty
 
     def _check_expirations(self):
-        log("Checking log expirations and purges", "trace")
+#        log("Checking log expirations and purges", "trace")
         to_resume = []
         dirty = False
 
@@ -2559,13 +2565,14 @@ class RustatioManager:
             active_names = {self.get_val(i, "torrent.name") for i in self.current_instances}
 
             for tag, state in list(self.logs_state.items()):
+                had_data = self._has_persistent_data(state)
                 changed, resume_ts, remove = self._expire_state(tag, state, now, tag in active_names)
                 dirty |= changed
                 if resume_ts:
                     to_resume.append((tag, resume_ts))
                 if remove:
                     del self.logs_state[tag]
-                    dirty = True
+                    dirty |= had_data
 
         if dirty:
             self.save_logs_state()
