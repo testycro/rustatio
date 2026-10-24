@@ -1,13 +1,13 @@
 <script>
   import { onDestroy, onMount } from 'svelte';
   import { api, getRunMode } from '$lib/api.js';
-  import { instanceActions } from '$lib/core/instanceStore.js';
+  import { instanceActions } from '$lib/instanceStore.js';
   import {
     DEFAULT_PRESET_CHANGED_EVENT,
     getDefaultPreset,
     refreshDefaultPreset,
-  } from '$lib/presets/defaultPreset.js';
-  import { watchFocusQuery } from '$lib/watch/watchViewState.js';
+  } from '$lib/defaultPreset.js';
+  import { watchFocusQuery } from '$lib/watchViewState.js';
   import {
     buildWatchTree,
     collectFolderIds,
@@ -16,10 +16,8 @@
     folderId,
     isWithinPath,
     normalizePath,
-  } from '$lib/watch/watchTree.js';
-  import { findDuplicateFiles } from '$lib/watch/watchDuplicates.js';
-  import { formatBytes } from '$lib/core/format.js';
-  import { cn } from '$lib/core/utils.js';
+  } from '$lib/watchTree.js';
+  import { cn } from '$lib/utils.js';
   import Button from '$lib/components/ui/button.svelte';
   import ConfirmDialog from '../common/ConfirmDialog.svelte';
   import {
@@ -627,6 +625,18 @@
     isEmptyExpanded = expandedIds.size === 0;
   }
 
+  function formatSize(bytes) {
+    if (!bytes) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let size = Number(bytes);
+    let idx = 0;
+    while (size >= 1024 && idx < units.length - 1) {
+      size /= 1024;
+      idx += 1;
+    }
+    return `${size.toFixed(idx === 0 ? 0 : 1)} ${units[idx]}`;
+  }
+
   let filteredFiles = $derived.by(() => filterWatchFiles(watchFiles, searchQuery, statusFilter));
   let watchTree = $derived.by(() => buildWatchTree(filteredFiles));
   let watchRows = $derived.by(() => flattenTree(watchTree, expandedIds));
@@ -645,7 +655,6 @@
     () => watchFiles.filter(file => String(file?.status || '').toLowerCase() === 'invalid').length
   );
   let totalOnDiskCount = $derived.by(() => watchFiles.length);
-  let duplicateFiles = $derived(findDuplicateFiles(watchFiles));
   let visibleFilePaths = $derived.by(() =>
     displayRows.filter(row => row.type === 'file').map(row => String(row.path))
   );
@@ -787,45 +796,36 @@
 </script>
 
 <div class="flex flex-col gap-2 h-full w-full max-w-none">
-  <div class="border border-border bg-card">
+  <div class="rounded-xl border border-border bg-card">
     <div
-      class="flex min-h-9 flex-wrap items-center justify-between gap-2 border-b border-border px-2.5 py-1"
+      class="px-3 py-2.5 md:px-3.5 md:py-3 border-b border-border flex flex-wrap items-center gap-2 justify-between"
     >
-      <div class="flex min-w-0 items-center gap-2">
-        <HardDrive size={13} class="text-muted-foreground" />
-        <span
-          class="truncate text-[0.625rem] font-semibold uppercase tracking-[0.16em] text-muted-foreground"
-          >Watch explorer</span
-        >
+      <div class="flex items-center gap-2 min-w-0">
+        <HardDrive size={16} class="text-primary" />
+        <h2 class="text-base font-semibold truncate">Watch Explorer</h2>
       </div>
       <div class="flex items-center gap-2 flex-wrap justify-end">
         <div class="hidden lg:flex items-center gap-1.5">
           <span
-            class="inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-2 py-0.5 text-[0.625rem] font-medium text-primary"
-            title="Unique torrents with a loaded instance — duplicate files share one instance"
-          >
-            Instances <span class="font-semibold">{watchStatus?.loaded_count ?? 0}</span>
-          </span>
-          <span
-            class="inline-flex items-center gap-1 rounded-md border border-stat-upload/30 bg-stat-upload/10 px-2 py-0.5 text-[0.625rem] font-medium text-stat-upload"
-            title="Loaded files (duplicate files share their instance)"
+            class="inline-flex items-center gap-1 rounded-md border border-stat-upload/30 bg-stat-upload/10 px-2 py-0.5 text-[10px] font-medium text-stat-upload"
+            title="Loaded files"
           >
             Loaded <span class="font-semibold">{loadedCount}</span>
           </span>
           <span
-            class="inline-flex items-center gap-1 rounded-md border border-stat-ratio/30 bg-stat-ratio/10 px-2 py-0.5 text-[0.625rem] font-medium text-stat-ratio"
+            class="inline-flex items-center gap-1 rounded-md border border-stat-ratio/30 bg-stat-ratio/10 px-2 py-0.5 text-[10px] font-medium text-stat-ratio"
             title="Pending files"
           >
             Pending <span class="font-semibold">{pendingCount}</span>
           </span>
           <span
-            class="inline-flex items-center gap-1 rounded-md border border-stat-leecher/30 bg-stat-leecher/10 px-2 py-0.5 text-[0.625rem] font-medium text-stat-leecher"
+            class="inline-flex items-center gap-1 rounded-md border border-stat-leecher/30 bg-stat-leecher/10 px-2 py-0.5 text-[10px] font-medium text-stat-leecher"
             title="Invalid files"
           >
             Invalid <span class="font-semibold">{invalidCount}</span>
           </span>
           <span
-            class="inline-flex items-center gap-1 rounded-md border border-border bg-muted/30 px-2 py-0.5 text-[0.625rem] font-medium text-muted-foreground"
+            class="inline-flex items-center gap-1 rounded-md border border-border bg-muted/30 px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
             title="Total files on disk"
           >
             Total <span class="font-semibold text-foreground">{totalOnDiskCount}</span>
@@ -934,29 +934,27 @@
             Clear
           {/snippet}
         </Button>
-        <div class="text-[0.625rem] text-muted-foreground hidden xl:block">
-          Visible selection only
-        </div>
+        <div class="text-[10px] text-muted-foreground hidden xl:block">Visible selection only</div>
       </div>
     </div>
 
     {#if !isWatchMode}
-      <div class="p-3 text-xs text-muted-foreground">
+      <div class="p-4 text-sm text-muted-foreground">
         Watch folder is available in server and desktop modes.
       </div>
     {:else}
-      <div class="grid w-full grid-cols-1 gap-2 p-2.5 xl:grid-cols-[300px_minmax(0,1fr)]">
+      <div
+        class="px-2.5 pb-2.5 pt-2.5 md:px-3 md:pb-3 md:pt-3 grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)] gap-3 w-full"
+      >
         <section class="space-y-2">
-          <div class="space-y-1.5 border border-border bg-background p-2">
-            <div class="text-[0.625rem] uppercase tracking-wider text-muted-foreground">
-              Watch directory
-            </div>
+          <div class="rounded-lg border border-border px-2.5 py-2 space-y-1.5 bg-muted/20">
+            <div class="text-xs uppercase tracking-wide text-muted-foreground">Watch Directory</div>
             <div class="flex items-start gap-2">
               <input
                 bind:value={watchConfig.watch_dir}
                 onchange={handleWatchDirCommit}
                 onkeydown={event => event.key === 'Enter' && event.currentTarget.blur()}
-                class="h-8 flex-1 border border-input bg-background px-2.5 text-xs text-foreground"
+                class="flex-1 px-2.5 py-2 text-sm rounded-md border border-border bg-background"
                 placeholder="/path/to/watch"
                 disabled={saveConfigBusy}
               />
@@ -969,31 +967,29 @@
                   title="Choose folder"
                 >
                   {#snippet children()}
-                    <FolderUp size={14} class={cn(pickingFolder && 'opacity-60')} />
+                    <FolderUp size={14} class={cn(pickingFolder && 'animate-pulse')} />
                   {/snippet}
                 </Button>
               {/if}
             </div>
             <div class="flex items-center gap-2">
-              <label class="text-[0.6875rem] text-muted-foreground" for="watchDepth"
-                >Max depth</label
-              >
+              <label class="text-[11px] text-muted-foreground" for="watchDepth">Max depth</label>
               <input
                 id="watchDepth"
                 type="number"
                 min="0"
                 step="1"
-                class="h-7 w-16 border border-input bg-background px-2 text-xs tabular-nums text-foreground"
+                class="w-18 px-2 py-1 text-xs rounded-md border border-border bg-background"
                 bind:value={watchConfig.max_depth}
                 onchange={handleMaxDepthCommit}
                 disabled={saveConfigBusy}
               />
             </div>
-            <div class="text-[0.625rem] text-muted-foreground/80 leading-tight">
+            <div class="text-[10px] text-muted-foreground/80 leading-tight">
               Use <strong>0</strong> for unlimited depth.
             </div>
             <label
-              class="flex items-start gap-2 text-[0.6875rem] leading-tight text-muted-foreground cursor-pointer"
+              class="flex items-start gap-2 text-[11px] leading-tight text-muted-foreground cursor-pointer"
             >
               <input
                 type="checkbox"
@@ -1004,32 +1000,32 @@
               />
               <span>
                 Auto start on application startup and torrent load
-                <span class="block text-[0.6875rem] text-muted-foreground/80">
+                <span class="block text-[11px] text-muted-foreground/80">
                   Watch-folder torrents will automatically start when Rustatio starts.
                 </span>
               </span>
             </label>
             {#if watchStatus}
-              <div class="text-[0.6875rem] text-muted-foreground pt-0.5 leading-tight">
+              <div class="text-[11px] text-muted-foreground pt-0.5 leading-tight">
                 Active path: <span class="text-foreground">{watchStatus.watch_dir}</span>
               </div>
             {/if}
-            <div class="text-[0.6875rem] text-muted-foreground leading-tight">
+            <div class="text-[11px] text-muted-foreground leading-tight">
               Preset selected:
               <span class="text-foreground">{watchDefaultPresetName}</span>
             </div>
           </div>
 
-          <div class="space-y-1.5 border border-border bg-background p-2">
+          <div class="rounded-lg border border-border px-2.5 py-2 space-y-1.5 bg-muted/20">
             <div
-              class="flex items-center gap-2 text-[0.625rem] uppercase tracking-wider text-muted-foreground"
+              class="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground"
             >
-              <Search size={11} />
+              <Search size={12} />
               Filter
             </div>
             <input
               type="text"
-              class="h-8 w-full border border-input bg-background px-2.5 text-xs text-foreground"
+              class="w-full px-2.5 py-2 text-sm rounded-md border border-border bg-background"
               placeholder="Name or path"
               bind:value={searchQuery}
             />
@@ -1038,10 +1034,10 @@
                 <button
                   onclick={() => (statusFilter = tab.key)}
                   class={cn(
-                    'h-6 border px-2 text-[0.625rem] transition-colors cursor-pointer',
+                    'px-2 py-0.5 rounded-md text-[11px] border',
                     statusFilter === tab.key
-                      ? 'border-primary/40 bg-primary/15 text-primary'
-                      : 'border-border bg-background text-muted-foreground hover:text-foreground'
+                      ? 'bg-primary/15 text-primary border-primary/40'
+                      : 'bg-background text-muted-foreground border-border hover:text-foreground'
                   )}
                 >
                   {tab.label}
@@ -1050,47 +1046,41 @@
             </div>
           </div>
 
-          <div class="border border-border bg-background/60 p-2">
-            <div class="mb-1.5 text-[0.625rem] uppercase tracking-wider text-muted-foreground">
-              Overview
-            </div>
-            <div class="grid grid-cols-2 gap-x-2 gap-y-1 text-[0.625rem] leading-tight">
+          <div class="rounded-lg border border-border px-2.5 py-2 bg-muted/20">
+            <div class="text-xs uppercase tracking-wide text-muted-foreground mb-2">Overview</div>
+            <div class="grid grid-cols-2 gap-x-2 gap-y-1 text-[11px] leading-tight">
               <div
-                class="flex items-center justify-between border border-border bg-card px-1.5 py-0.5"
+                class="flex items-center justify-between rounded border border-border/60 bg-background/40 px-2 py-1"
               >
-                <span>Folders</span><span class="tabular-nums font-semibold">{folderCount}</span>
+                <span>Folders</span><span class="font-semibold">{folderCount}</span>
               </div>
               <div
-                class="flex items-center justify-between border border-border bg-card px-1.5 py-0.5"
+                class="flex items-center justify-between rounded border border-border/60 bg-background/40 px-2 py-1"
               >
-                <span>Files</span><span class="tabular-nums font-semibold">{fileCount}</span>
+                <span>Files</span><span class="font-semibold">{fileCount}</span>
               </div>
               <div
-                class="flex items-center justify-between border border-stat-upload/40 bg-stat-upload/10 px-1.5 py-0.5"
+                class="flex items-center justify-between rounded border border-stat-upload/40 bg-stat-upload/10 px-2 py-1"
               >
-                <span>Loaded</span><span class="tabular-nums font-semibold text-stat-upload"
-                  >{loadedCount}</span
-                >
+                <span>Loaded</span><span class="font-semibold text-stat-upload">{loadedCount}</span>
               </div>
               <div
-                class="flex items-center justify-between border border-border bg-card px-1.5 py-0.5"
+                class="flex items-center justify-between rounded border border-border/60 bg-background/40 px-2 py-1"
               >
-                <span>On disk</span><span class="tabular-nums font-semibold"
-                  >{totalOnDiskCount}</span
-                >
+                <span>Total on disk</span><span class="font-semibold">{totalOnDiskCount}</span>
               </div>
             </div>
-            <div class="mt-1.5 grid grid-cols-2 gap-1">
-              <Button onclick={expandAll} size="sm" variant="outline" class="h-7">Expand</Button>
-              <Button onclick={collapseAll} size="sm" variant="outline" class="h-7">Collapse</Button
+            <div class="grid grid-cols-2 gap-1.5 mt-2">
+              <Button onclick={expandAll} size="sm" variant="outline" class="h-8">Expand</Button>
+              <Button onclick={collapseAll} size="sm" variant="outline" class="h-8">Collapse</Button
               >
             </div>
           </div>
         </section>
 
-        <section class="min-w-0 overflow-hidden border border-border bg-card">
+        <section class="rounded-lg border border-border overflow-hidden bg-background/60 min-w-0">
           <div
-            class="sticky top-0 z-10 grid grid-cols-[minmax(0,1fr)_96px_78px_84px] gap-2 border-b border-border bg-muted px-2 py-1 text-[0.625rem] uppercase tracking-wider text-muted-foreground"
+            class="sticky top-0 z-10 grid grid-cols-[minmax(0,1fr)_96px_78px_84px] gap-2 px-2.5 py-1.5 text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/60 border-b border-border backdrop-blur-sm"
           >
             <div class="flex items-center gap-2">
               <input
@@ -1113,14 +1103,14 @@
           <div class="max-h-[74vh] overflow-y-auto">
             {#if error}
               <div
-                class="m-2 border border-stat-leecher/40 bg-stat-leecher/10 px-2.5 py-1.5 text-xs text-stat-leecher"
+                class="m-3 px-3 py-2 rounded-md border border-stat-leecher/30 bg-stat-leecher/10 text-sm text-stat-leecher"
               >
                 {error}
               </div>
             {/if}
 
             {#if filteredFiles.length === 0 && !isLoading}
-              <div class="py-8 text-center text-xs text-muted-foreground">
+              <div class="py-10 text-center text-sm text-muted-foreground">
                 No files match current filters.
               </div>
             {:else}
@@ -1132,14 +1122,14 @@
                   {@const select = folderSelectionState.get(folderPath)}
                   <div
                     class={cn(
-                      'group grid grid-cols-[minmax(0,1fr)_96px_78px_84px] gap-2 px-2 py-1 border-b border-border/60 items-center',
+                      'group grid grid-cols-[minmax(0,1fr)_96px_78px_84px] gap-2 px-2.5 py-1.5 border-b border-border/60 items-center',
                       row.depth === 0 ? 'bg-muted/30' : 'bg-muted/10 hover:bg-muted/20'
                     )}
                   >
                     <button
                       onclick={() => toggleFolder(folderPath)}
                       class="flex items-center gap-1.5 min-w-0 text-left"
-                      style="padding-left: {row.depth * 0.625}rem"
+                      style="padding-left: {row.depth * 10}px"
                     >
                       <input
                         use:indeterminate={Boolean(select?.some)}
@@ -1168,14 +1158,14 @@
                       {:else}
                         <Folder size={13} class="text-primary" />
                       {/if}
-                      <span class="truncate text-xs font-medium">{row.name}</span>
+                      <span class="truncate text-[13px] font-medium">{row.name}</span>
                       <span
-                        class="inline-flex items-center border border-border bg-muted px-1.5 py-px text-[0.5625rem] tabular-nums text-muted-foreground"
+                        class="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] border border-border bg-background/50 text-muted-foreground"
                         >{count}</span
                       >
                     </button>
-                    <div class="text-[0.6875rem] text-muted-foreground">Folder</div>
-                    <div class="text-[0.6875rem] text-muted-foreground">-</div>
+                    <div class="text-[11px] text-muted-foreground">Folder</div>
+                    <div class="text-[11px] text-muted-foreground">-</div>
                     <div class="flex items-center justify-end">
                       <Button
                         onclick={event => {
@@ -1204,8 +1194,8 @@
                   {@const isSelected = selectedPaths.has(String(row.path))}
                   <div
                     class={cn(
-                      'group grid grid-cols-[minmax(0,1fr)_96px_78px_84px] gap-2 px-2 py-1 border-b border-border/60 items-center hover:bg-muted/15',
-                      isSelected && 'bg-primary/10'
+                      'group grid grid-cols-[minmax(0,1fr)_96px_78px_84px] gap-2 px-2.5 py-1.5 border-b border-border/60 items-center hover:bg-muted/15',
+                      isSelected && 'bg-primary/8'
                     )}
                     onclick={event => handleFileRowClick(event, row.path)}
                     onkeydown={event => handleFileRowKeydown(event, row.path)}
@@ -1215,7 +1205,7 @@
                   >
                     <div
                       class="flex items-center gap-1.5 min-w-0"
-                      style="padding-left: {0.625 + row.depth * 0.625}rem"
+                      style="padding-left: {10 + row.depth * 10}px"
                     >
                       <input
                         type="checkbox"
@@ -1237,29 +1227,19 @@
                       />
                       <File size={12} class="text-muted-foreground" />
                       <div class="min-w-0">
-                        <div class="truncate text-xs font-medium">{file?.name || row.name}</div>
+                        <div class="truncate text-[13px] font-medium">{file?.name || row.name}</div>
                         <div
-                          class="truncate text-[0.625rem] leading-tight text-muted-foreground/70 group-hover:text-muted-foreground"
+                          class="truncate text-[11px] text-muted-foreground/85 leading-tight opacity-70 group-hover:opacity-100"
                           title={row.path}
                         >
                           {row.path}
                         </div>
                       </div>
                     </div>
-                    <div class="flex items-center justify-end gap-1">
-                      {#if duplicateFiles.has(row.path)}
-                        <span
-                          class="inline-flex items-center border border-border bg-muted/40 px-1.5 py-px text-[0.5625rem] uppercase tracking-wider text-muted-foreground"
-                          title="Same torrent as {duplicateFiles.get(
-                            row.path
-                          )} — shares its instance"
-                        >
-                          duplicate
-                        </span>
-                      {/if}
+                    <div>
                       <span
                         class={cn(
-                          'inline-flex items-center gap-1 border px-1.5 py-px text-[0.5625rem] uppercase tracking-wider',
+                          'inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border',
                           getStatusBadge(file?.status)
                         )}
                       >
@@ -1267,8 +1247,8 @@
                         {file?.status || 'unknown'}
                       </span>
                     </div>
-                    <div class="text-[0.6875rem] text-muted-foreground">
-                      {formatBytes(file?.size || 0)}
+                    <div class="text-[11px] text-muted-foreground">
+                      {formatSize(file?.size || 0)}
                     </div>
                     <div class="flex items-center justify-end gap-1">
                       <Button
@@ -1302,7 +1282,7 @@
                       >
                         {#snippet children()}
                           {#if deletingFile === row.path}
-                            <X size={11} />
+                            <X size={11} class="animate-pulse" />
                           {:else}
                             <Trash2 size={11} />
                           {/if}

@@ -1,6 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
+  import { ChevronDown, Check } from '@lucide/svelte';
   import { FolderOpen } from '@lucide/svelte';
   import {
     initWasm,
@@ -21,15 +22,13 @@
     instanceActions,
     saveSession,
     computeEffectiveRatio,
-  } from './lib/core/instanceStore.js';
-  import { getPausedStatus, getRunningStatus, getStatusFromStats } from './lib/core/status.js';
+    getStatsSeedSeconds,
+  } from './lib/instanceStore.js';
+  import { getPausedStatus, getRunningStatus, getStatusFromStats } from './lib/status.js';
 
   // Import components
   import Header from './components/layout/Header.svelte';
   import Sidebar from './components/layout/Sidebar.svelte';
-  import DetailHeader from './components/layout/DetailHeader.svelte';
-  import TransferRail from './components/layout/TransferRail.svelte';
-  import SettingsDialog from './components/layout/SettingsDialog.svelte';
   import TorrentSelector from './components/common/TorrentSelector.svelte';
   import ConfigurationForm from './components/config/ConfigurationForm.svelte';
   import StopConditions from './components/config/StopConditions.svelte';
@@ -40,31 +39,36 @@
   import Logs from './components/common/Logs.svelte';
   import ProxySettings from './components/common/ProxySettings.svelte';
   import UpdateChecker from './components/common/UpdateChecker.svelte';
+  import ThemeIcon from './components/common/ThemeIcon.svelte';
+  import DownloadButton from './components/common/DownloadButton.svelte';
   import AuthPage from './components/common/AuthPage.svelte';
   import BaseModal from './components/common/BaseModal.svelte';
   import Button from './lib/components/ui/button.svelte';
   import ConfirmDialog from './components/common/ConfirmDialog.svelte';
   import GridView from './components/grid/GridView.svelte';
   import WatchView from './components/watch/WatchView.svelte';
-  import { buildFakerConfig, getCalculatedInitialDownloaded } from './lib/core/fakerConfig.js';
+  import { buildFakerConfig, getCalculatedInitialDownloaded } from './lib/fakerConfig.js';
 
   // Import grid store
-  import { viewMode, gridInstances } from './lib/grid/gridStore.js';
-  import { focusWatchQuery } from './lib/watch/watchViewState.js';
-  import { aggregateInstances, aggregateSummaries } from './lib/core/aggregate.js';
-  import { resetZoom, zoomIn, zoomOut } from './lib/core/zoomStore.svelte.js';
+  import { viewMode } from './lib/gridStore.js';
+  import { focusWatchQuery } from './lib/watchViewState.js';
 
   // Import theme store
-  import { initializeTheme, handleClickOutside } from './lib/themes/themeStore.svelte.js';
+  import {
+    THEMES,
+    THEME_CATEGORIES,
+    getTheme,
+    getShowThemeDropdown,
+    toggleThemeDropdown,
+    selectTheme,
+    initializeTheme,
+    handleClickOutside,
+    getThemeName,
+  } from './lib/themeStore.svelte.js';
 
   // Check if running in Tauri
   const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
   let isServerMode = $derived(getRunMode() === 'server');
-
-  // Global transfer totals for the bottom rail (grid summaries in grid mode, stores elsewhere)
-  let railTotals = $derived(
-    $viewMode === 'grid' ? aggregateSummaries($gridInstances) : aggregateInstances($instances)
-  );
 
   // Loading state to prevent UI flash during initialization
   let isInitialized = $state(false);
@@ -102,9 +106,6 @@
   let sidebarOpen = $state(false);
   let sidebarCollapsed = $state(false);
 
-  // Settings dialog
-  let showSettings = $state(false);
-
   // Development logging helper - only logs in development mode
   function devLog(level, ...args) {
     if (import.meta.env.DEV) {
@@ -131,6 +132,7 @@
   let unsubActiveInstanceId = null;
   let instanceEventsCleanup = null;
   let closeRequestedCleanup = null;
+  let periodicSaveId = null;
   let desktopReconcileIntervalId = null;
   let trackerRetryIntervalId = null;
   let networkStatusIntervalId = null;
@@ -168,7 +170,7 @@
       const result = await api.getNetworkStatus();
       if (result) {
         networkStatus = result;
-        if (isNetworkConfigured(result) === false && !result.proxy_enabled) {
+        if (isNetworkConfigured(result) === false) {
           stopNetworkStatusPolling();
         }
       } else {
@@ -198,60 +200,6 @@
     errorDialogTitle = title;
     errorDialogMessage = message;
     errorDialogOpen = true;
-  }
-
-  // =============================================================================
-  // Interface zoom: Ctrl/Cmd +, -, 0 and Ctrl/Cmd + wheel
-  // =============================================================================
-
-  let zoomWheelAccumulator = 0;
-  let zoomWheelLockedUntil = 0;
-
-  function handleZoomKeydown(event) {
-    if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
-
-    const { key, code } = event;
-
-    if (key === '+' || key === '=' || code === 'NumpadAdd') {
-      event.preventDefault();
-      event.stopPropagation();
-      zoomIn();
-      return;
-    }
-
-    if (key === '-' || key === '_' || code === 'NumpadSubtract') {
-      event.preventDefault();
-      event.stopPropagation();
-      zoomOut();
-      return;
-    }
-
-    if (key === '0' || code === 'Numpad0') {
-      event.preventDefault();
-      event.stopPropagation();
-      resetZoom();
-    }
-  }
-
-  function handleZoomWheel(event) {
-    if (!(event.ctrlKey || event.metaKey)) return;
-
-    event.preventDefault();
-
-    const now = Date.now();
-    if (now < zoomWheelLockedUntil) return;
-
-    zoomWheelAccumulator += event.deltaY;
-    if (Math.abs(zoomWheelAccumulator) < 24) return;
-
-    zoomWheelAccumulator = 0;
-    zoomWheelLockedUntil = now + 120;
-
-    if (event.deltaY < 0) {
-      zoomIn();
-    } else {
-      zoomOut();
-    }
   }
 
   // Load configuration on mount
@@ -298,10 +246,6 @@
 
     // Close dropdown when clicking outside
     document.addEventListener('click', handleClickOutside);
-
-    // Interface zoom shortcuts
-    window.addEventListener('keydown', handleZoomKeydown, true);
-    window.addEventListener('wheel', handleZoomWheel, { passive: false, capture: true });
 
     // Set up reactive subscriptions using store.subscribe instead of $effect
     // This avoids the orphan effect error in Svelte 5
@@ -420,6 +364,21 @@
     // Server mode persists state, so no warning needed there
     const runMode = getRunMode();
     if (runMode === 'wasm') {
+      const flush = () => {
+        const insts = get(instances);
+        const active = get(activeInstance);
+        if (insts.length > 0 && active) saveSession(insts, active.id);
+      };
+
+      periodicSaveId = setInterval(() => {
+        if (get(instances).some(i => i.isRunning)) flush();
+      }, 10_000);
+
+      window.addEventListener('pagehide', flush);
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) flush();
+      });
+
       beforeUnloadHandler = event => {
         const currentInstances = get(instances);
         const hasRunning = currentInstances.some(inst => inst.isRunning);
@@ -516,11 +475,7 @@
     // Initialize instance store (will restore session from localStorage)
     await instanceActions.initialize();
     startNetworkStatusPolling();
-    window.addEventListener('rustatio:refresh-network-status', refreshNetworkStatus);
-    // Server mode receives tracker retry state through pushed summaries.
-    if (getRunMode() !== 'server') {
-      startTrackerRetryPolling();
-    }
+    startTrackerRetryPolling();
 
     // Start polling for any instances that were restored in a running state (server mode)
     // This ensures UI updates after page refresh when instances are still running on server
@@ -560,18 +515,6 @@
         } else if (event.type === 'deleted') {
           // Remove instance from frontend store
           instanceActions.removeInstanceFromStore(event.id);
-        } else if (event.type === 'summaries') {
-          // Push update: merge all summaries, then run stop-condition handling
-          // only for instances that actually changed.
-          const changed = instanceActions.applySummaries(event.instances);
-          for (const summary of changed) {
-            const instance = getInstance(summary.id);
-            if (!instance) continue;
-            if (await handlePostStopDelete(instance.id, instance.stats)) continue;
-            if (shouldAutoStop(instance.stats)) {
-              await handleAutoStop(instance.id, instance.stats);
-            }
-          }
         }
       });
     }
@@ -632,6 +575,11 @@
       closeRequestedCleanup = null;
     }
 
+    if (periodicSaveId) {
+      clearInterval(periodicSaveId);
+      periodicSaveId = null;
+    }
+
     if (desktopReconcileIntervalId) {
       clearInterval(desktopReconcileIntervalId);
       desktopReconcileIntervalId = null;
@@ -639,9 +587,6 @@
 
     // Clean up event listeners
     document.removeEventListener('click', handleClickOutside);
-    window.removeEventListener('keydown', handleZoomKeydown, true);
-    window.removeEventListener('wheel', handleZoomWheel, true);
-    window.removeEventListener('rustatio:refresh-network-status', refreshNetworkStatus);
 
     // Clean up beforeunload handler
     if (beforeUnloadHandler) {
@@ -784,6 +729,9 @@
     // Save cumulative stats (convert bytes to MB)
     const cumulativeUploaded = Math.round(stats.uploaded / (1024 * 1024));
     const cumulativeDownloaded = Math.round(stats.downloaded / (1024 * 1024));
+    const seedSecs = getStatsSeedSeconds(stats);
+    const currentSeed = $instances.find(i => i.id === instanceId)?.cumulativeSeedTime || 0;
+    const cumulativeSeedTime = seedSecs !== null ? Math.max(seedSecs, currentSeed) : currentSeed;
 
     instanceActions.updateInstance(instanceId, {
       isRunning: false,
@@ -793,7 +741,12 @@
       statusIcon: null,
       cumulativeUploaded,
       cumulativeDownloaded,
+      cumulativeSeedTime,
     });
+
+    if (getRunMode() === 'wasm') {
+      await saveSession(get(instances), instanceId);
+    }
   }
 
   // Handle post-stop delete action (delete_instance)
@@ -951,54 +904,51 @@
   }
 
   // Create live stats interval (updates UI every second for the active instance)
-  // In server mode, just reads stats (scheduler advances them) at the scheduler tick.
+  // In server mode, just reads stats (scheduler advances them).
   // In desktop/WASM, calls updateStatsOnly to advance stats locally.
   function createLiveStatsInterval(instanceId) {
     const isServer = getRunMode() === 'server';
 
-    return setInterval(
-      async () => {
-        const instance = getInstance(instanceId);
+    return setInterval(async () => {
+      const instance = getInstance(instanceId);
 
-        if (!instance || !instance.isRunning || instance.isPaused) {
-          return;
-        }
+      if (!instance || !instance.isRunning || instance.isPaused) {
+        return;
+      }
 
-        try {
-          const stats = isServer
-            ? await api.getStats(instanceId)
-            : await api.updateStatsOnly(instanceId);
+      try {
+        const stats = isServer
+          ? await api.getStats(instanceId)
+          : await api.updateStatsOnly(instanceId);
 
-          if (stats && instance.isRunning) {
-            const updates = {
-              stats,
-              ...getStatusFromStats(stats),
-            };
+        if (stats && instance.isRunning) {
+          const updates = {
+            stats,
+            ...getStatusFromStats(stats),
+          };
 
-            if (stats.torrent_completion !== undefined) {
-              updates.completionPercent = stats.torrent_completion;
-            }
-
-            // Sync backend's effective ratio to frontend
-            if (stats.effective_stop_at_ratio != null) {
-              updates.effectiveStopAtRatio = stats.effective_stop_at_ratio;
-            }
-
-            instanceActions.updateInstance(instanceId, updates);
-
-            if (await handlePostStopDelete(instanceId, stats)) {
-              return;
-            }
-            if (shouldAutoStop(stats)) {
-              await handleAutoStop(instanceId, stats);
-            }
+          if (stats.torrent_completion !== undefined) {
+            updates.completionPercent = stats.torrent_completion;
           }
-        } catch (error) {
-          console.debug('Live stats fetch error:', error);
+
+          // Sync backend's effective ratio to frontend
+          if (stats.effective_stop_at_ratio != null) {
+            updates.effectiveStopAtRatio = stats.effective_stop_at_ratio;
+          }
+
+          instanceActions.updateInstance(instanceId, updates);
+
+          if (await handlePostStopDelete(instanceId, stats)) {
+            return;
+          }
+          if (shouldAutoStop(stats)) {
+            await handleAutoStop(instanceId, stats);
+          }
         }
-      },
-      isServer ? 5000 : 1000
-    );
+      } catch (error) {
+        console.debug('Live stats fetch error:', error);
+      }
+    }, 1000);
   }
 
   // =============================================================================
@@ -1043,18 +993,14 @@
   // Start tracker announce polling for an instance (created for ALL running instances)
   // Live stats polling is managed separately — only for the active instance
   function startPollingForInstance(instanceId, intervalSeconds = 5) {
-    let updateIntervalId = null;
+    const intervalMs = intervalSeconds * 1000;
 
-    // Server mode gets stats through pushed SSE summaries, so no per-instance interval.
-    if (getRunMode() !== 'server') {
-      const intervalMs = intervalSeconds * 1000;
-      updateIntervalId = createTrackerAnnounceInterval(instanceId, intervalMs);
+    const updateIntervalId = createTrackerAnnounceInterval(instanceId, intervalMs);
 
-      // Store interval ID in instance for cleanup
-      instanceActions.updateInstance(instanceId, {
-        updateInterval: updateIntervalId,
-      });
-    }
+    // Store interval ID in instance for cleanup
+    instanceActions.updateInstance(instanceId, {
+      updateInterval: updateIntervalId,
+    });
 
     // Start live stats only if this is the currently active instance
     const currentActiveId = get(activeInstanceId);
@@ -1236,6 +1182,13 @@
       if (finalStats) {
         updates.cumulativeUploaded = Math.round(finalStats.uploaded / (1024 * 1024));
         updates.cumulativeDownloaded = Math.round(finalStats.downloaded / (1024 * 1024));
+        const finalSeedSecs = getStatsSeedSeconds(finalStats);
+        if (finalSeedSecs !== null) {
+          updates.cumulativeSeedTime = Math.max(
+            finalSeedSecs,
+            $activeInstance.cumulativeSeedTime || 0
+          );
+        }
       }
 
       // Update instance - keep stats visible for review
@@ -1600,51 +1553,118 @@
       onStopAll={stopAllInstances}
       onPauseAll={pauseAllInstances}
       onResumeAll={resumeAllInstances}
-      onOpenSettings={() => (showSettings = true)}
+      {networkStatus}
+      {networkStatusLoading}
+      {networkStatusError}
+      onRefreshNetworkStatus={refreshNetworkStatus}
     />
 
     <!-- Main Content -->
-    <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
-      <!-- Top bar -->
+    <div class="flex-1 flex flex-col overflow-hidden">
+      <!-- Theme Toggle (Absolute Top-Right) -->
+      <div class="fixed top-4 right-4 z-30 flex items-center gap-3">
+        {#if !isTauri}
+          <div class="hidden sm:block">
+            <DownloadButton />
+          </div>
+        {/if}
+        <div class="relative theme-selector">
+          <button
+            onclick={toggleThemeDropdown}
+            class="group bg-secondary text-secondary-foreground border-2 border-border rounded-lg p-2 flex items-center gap-2 cursor-pointer transition-all hover:bg-primary hover:border-primary hover:text-primary-foreground hover:[&_svg]:!text-current active:scale-[0.98] shadow-lg"
+            title="Theme: {getThemeName(getTheme())}"
+            aria-label="Toggle theme menu"
+          >
+            <ThemeIcon theme={getTheme()} />
+            <ChevronDown
+              size={14}
+              class="transition-transform {getShowThemeDropdown() ? 'rotate-180' : ''}"
+            />
+          </button>
+          {#if getShowThemeDropdown()}
+            <div
+              class="absolute top-[calc(100%+0.5rem)] right-0 bg-card text-card-foreground border border-border/50 rounded-xl shadow-2xl p-1.5 min-w-[200px] max-h-[400px] overflow-y-auto z-50 backdrop-blur-xl animate-in fade-in slide-in-from-top-2 duration-200"
+            >
+              {#each Object.entries(THEME_CATEGORIES) as [categoryId, category] (categoryId)}
+                <!-- Category Header -->
+                <div
+                  class="px-3 py-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider {categoryId !==
+                  'default'
+                    ? 'mt-2 border-t border-border pt-2'
+                    : ''}"
+                >
+                  {category.name}
+                </div>
+
+                {#each category.themes as themeId (themeId)}
+                  {@const themeOption = THEMES[themeId]}
+                  <button
+                    class="w-full flex items-center gap-3 px-3 py-2 border-none cursor-pointer rounded-lg transition-all {getTheme() ===
+                    themeOption.id
+                      ? 'bg-primary text-primary-foreground shadow-sm [&_svg]:!text-current'
+                      : 'bg-transparent text-card-foreground hover:bg-secondary/80'}"
+                    onclick={() => selectTheme(themeOption.id)}
+                  >
+                    <ThemeIcon theme={themeOption.id} />
+                    <div class="flex-1 text-left">
+                      <span class="text-sm font-medium">{themeOption.name}</span>
+                      {#if themeOption.description}
+                        <span class="block text-xs opacity-70">{themeOption.description}</span>
+                      {/if}
+                    </div>
+                    {#if getTheme() === themeOption.id}
+                      <Check size={16} strokeWidth={2.5} />
+                    {/if}
+                  </button>
+                {/each}
+              {/each}
+            </div>
+          {/if}
+        </div>
+      </div>
+
+      <!-- Header -->
       <Header
         onToggleSidebar={() => (sidebarOpen = !sidebarOpen)}
-        onOpenSettings={() => (showSettings = true)}
+        showStatus={$viewMode === 'standard'}
+        statusMessage={$activeInstance?.statusMessage || 'Select a torrent file to begin'}
+        statusType={$activeInstance?.statusType || 'warning'}
+        statusIcon={$activeInstance?.statusIcon || null}
+        isRunning={$activeInstance?.isRunning || false}
+        isPaused={$activeInstance?.isPaused || false}
+        {startFaking}
+        {stopFaking}
+        {pauseFaking}
+        {resumeFaking}
+        {manualUpdate}
       />
 
-      <!-- View content -->
+      <!-- Scrollable Content Area -->
       {#if $viewMode === 'grid'}
-        <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div class="flex-1 overflow-y-auto p-3">
           <GridView />
         </div>
       {:else if $viewMode === 'watch'}
-        <div class="min-h-0 flex-1 overflow-y-auto p-3">
+        <div class="flex-1 overflow-y-auto p-3">
           <WatchView />
         </div>
       {:else}
-        <DetailHeader
-          instance={$activeInstance}
-          {startFaking}
-          {stopFaking}
-          {pauseFaking}
-          {resumeFaking}
-          {manualUpdate}
-        />
-        <div class="min-h-0 flex-1 overflow-y-auto p-3">
+        <div class="flex-1 overflow-y-auto p-3">
           <div class="max-w-7xl mx-auto">
             <!-- CORS Proxy Settings -->
             <ProxySettings />
 
             {#if $activeInstance?.source === 'watch_folder'}
-              <div class="mb-2 flex flex-wrap items-center gap-2">
+              <div class="mb-3 flex items-center gap-2 flex-wrap">
                 <span
-                  class="inline-flex items-center gap-1 border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[0.625rem] text-primary"
+                  class="inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-2 py-1 text-xs text-primary"
                   title="This instance is managed by watch folder"
                 >
-                  <FolderOpen size={11} />
+                  <FolderOpen size={12} />
                   Watch folder instance
                 </span>
                 <button
-                  class="inline-flex cursor-pointer items-center gap-1 border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[0.625rem] text-primary transition-colors hover:bg-primary/20"
+                  class="inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-2 py-1 text-xs text-primary hover:bg-primary/20 transition-colors"
                   onclick={() => {
                     const name =
                       $activeInstance?.torrent?.name || $activeInstance?.torrentPath || '';
@@ -1653,13 +1673,13 @@
                   }}
                   title="Open this torrent in watch explorer"
                 >
-                  <FolderOpen size={11} />
+                  <FolderOpen size={12} />
                   Open in Watch
                 </button>
               </div>
             {/if}
             <!-- Torrent Selection & Configuration -->
-            <div class="mb-2 grid grid-cols-1 gap-2 md:grid-cols-2">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
               <TorrentSelector torrent={$activeInstance?.torrent} {selectTorrent} {formatBytes} />
 
               {#if $activeInstance}
@@ -1716,7 +1736,7 @@
               {@const showProgressBars =
                 (hasActiveStopCondition || isLeeching) && $activeInstance?.stats}
 
-              <div class="grid grid-cols-1 {showProgressBars ? 'md:grid-cols-2' : ''} gap-2 mb-2">
+              <div class="grid grid-cols-1 {showProgressBars ? 'md:grid-cols-2' : ''} gap-3 mb-3">
                 <StopConditions
                   stopAtRatioEnabled={$activeInstance.stopAtRatioEnabled}
                   stopAtRatio={$activeInstance.stopAtRatio}
@@ -1785,7 +1805,7 @@
             <!-- Stats -->
             {#if $activeInstance?.stats}
               <!-- Session & Total Stats -->
-              <div class="mb-2 grid grid-cols-1 gap-2 md:grid-cols-2">
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
                 <SessionStats stats={$activeInstance.stats} {formatBytes} {formatDuration} />
                 <TotalStats
                   stats={$activeInstance.stats}
@@ -1795,7 +1815,7 @@
               </div>
 
               <!-- Performance & Peer Analytics (merged) -->
-              <div class="mb-2">
+              <div class="mb-3">
                 <RateGraph stats={$activeInstance.stats} {formatDuration} />
               </div>
             {/if}
@@ -1814,19 +1834,9 @@
           </div>
         </div>
       {/if}
-
-      <TransferRail
-        totals={railTotals}
-        {networkStatus}
-        {networkStatusLoading}
-        {networkStatusError}
-        onRefreshNetworkStatus={refreshNetworkStatus}
-      />
     </div>
   </div>
 {/if}
-
-<SettingsDialog bind:isOpen={showSettings} />
 
 <BaseModal
   open={errorDialogOpen}
@@ -1835,15 +1845,15 @@
   }}
   titleId="app-error-dialog-title"
   maxWidthClass="max-w-md"
-  panelClass="overflow-hidden"
+  panelClass="animate-in fade-in zoom-in-95 duration-200 overflow-hidden"
 >
-  <div class="border-b border-border p-4">
-    <h2 id="app-error-dialog-title" class="text-sm font-semibold text-foreground">
+  <div class="p-6 border-b border-border/70">
+    <h2 id="app-error-dialog-title" class="text-lg font-semibold text-foreground">
       {errorDialogTitle}
     </h2>
   </div>
-  <div class="space-y-4 p-4">
-    <p class="whitespace-pre-line text-xs leading-5 text-muted-foreground">
+  <div class="p-6 space-y-6">
+    <p class="text-sm leading-6 text-muted-foreground whitespace-pre-line">
       {errorDialogMessage}
     </p>
     <div class="flex justify-end">

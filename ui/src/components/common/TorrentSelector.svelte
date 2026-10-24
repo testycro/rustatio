@@ -92,27 +92,10 @@
   let trackers = $derived(getAllTrackers(torrent));
 </script>
 
-<Card>
-  <div class="flex h-8 items-center gap-2 border-b border-border px-2.5">
-    <FileText size={13} class="text-muted-foreground" />
-    <span
-      class="flex-1 text-[0.625rem] font-semibold uppercase tracking-[0.16em] text-muted-foreground"
-    >
-      Torrent
-    </span>
-    {#if torrent}
-      <Button
-        onclick={handleFileSelect}
-        variant="outline"
-        size="sm"
-        class="h-6 px-2 text-[0.625rem]"
-      >
-        {#snippet children()}
-          <FolderOpen size={11} /> Change
-        {/snippet}
-      </Button>
-    {/if}
-  </div>
+<Card class="p-3">
+  <h2 class="mb-3 text-primary text-lg font-semibold flex items-center gap-2">
+    <FileText size={20} /> Torrent File
+  </h2>
 
   <input
     type="file"
@@ -124,20 +107,21 @@
 
   {#if torrent}
     <!-- Torrent loaded state -->
-    <div class="p-2.5">
-      <div class="flex items-center gap-2.5">
+    <div class="bg-muted/50 rounded-lg border border-border overflow-hidden">
+      <!-- Main info row -->
+      <div class="p-3 flex items-center gap-3">
         <div
-          class="flex h-8 w-8 flex-shrink-0 items-center justify-center border border-border bg-muted"
+          class="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0"
         >
-          <File size={14} class="text-muted-foreground" />
+          <File size={20} class="text-primary" />
         </div>
-        <div class="min-w-0 flex-1">
-          <div class="truncate text-xs font-medium text-foreground" title={torrent.name}>
+        <div class="flex-1 min-w-0">
+          <div class="font-medium text-sm truncate" title={torrent.name}>
             {torrent.name}
           </div>
-          <div class="mt-0.5 flex items-center gap-2 text-[0.625rem] text-muted-foreground">
-            <span class="tabular-nums">{formatBytes(torrent.total_size)}</span>
-            <span>·</span>
+          <div class="text-xs text-muted-foreground flex items-center gap-2 mt-0.5">
+            <span>{formatBytes(torrent.total_size)}</span>
+            <span class="text-border">•</span>
             <span>
               {torrent.file_count || torrent.files?.length || 1} file{(torrent.file_count ||
                 torrent.files?.length ||
@@ -145,37 +129,38 @@
                 ? 's'
                 : ''}
             </span>
-            <span>·</span>
+            <span class="text-border">•</span>
             <span>{trackers.length} tracker{trackers.length !== 1 ? 's' : ''}</span>
           </div>
         </div>
+        <Button onclick={handleFileSelect} variant="outline" class="h-8 px-3 text-xs">
+          {#snippet children()}
+            <span class="flex items-center gap-1.5">
+              <FolderOpen size={14} /> Change
+            </span>
+          {/snippet}
+        </Button>
       </div>
 
       <!-- Quick stats -->
-      <div class="mt-2.5 grid grid-cols-4 border border-border">
-        <div class="border-r border-border p-1.5">
-          <div class="text-[0.5625rem] uppercase tracking-wider text-muted-foreground">Size</div>
-          <div class="mt-0.5 text-[0.6875rem] tabular-nums text-foreground">
-            {formatBytes(torrent.total_size)}
-          </div>
+      <div class="grid grid-cols-4 border-t border-border">
+        <div class="p-2 text-center border-r border-border">
+          <div class="text-xs text-muted-foreground mb-0.5">Size</div>
+          <div class="text-sm font-medium">{formatBytes(torrent.total_size)}</div>
         </div>
-        <div class="border-r border-border p-1.5">
-          <div class="text-[0.5625rem] uppercase tracking-wider text-muted-foreground">Pieces</div>
-          <div class="mt-0.5 text-[0.6875rem] tabular-nums text-foreground">
-            {torrent.num_pieces?.toLocaleString() || 'N/A'}
-          </div>
+        <div class="p-2 text-center border-r border-border">
+          <div class="text-xs text-muted-foreground mb-0.5">Pieces</div>
+          <div class="text-sm font-medium">{torrent.num_pieces?.toLocaleString() || 'N/A'}</div>
         </div>
-        <div class="border-r border-border p-1.5">
-          <div class="text-[0.5625rem] uppercase tracking-wider text-muted-foreground">
-            Piece size
-          </div>
-          <div class="mt-0.5 text-[0.6875rem] tabular-nums text-foreground">
+        <div class="p-2 text-center border-r border-border">
+          <div class="text-xs text-muted-foreground mb-0.5">Piece Size</div>
+          <div class="text-sm font-medium">
             {torrent.piece_length ? formatBytes(torrent.piece_length) : 'N/A'}
           </div>
         </div>
-        <div class="p-1.5">
-          <div class="text-[0.5625rem] uppercase tracking-wider text-muted-foreground">Files</div>
-          <div class="mt-0.5 text-[0.6875rem] tabular-nums text-foreground">
+        <div class="p-2 text-center">
+          <div class="text-xs text-muted-foreground mb-0.5">Files</div>
+          <div class="text-sm font-medium">
             {torrent.file_count || torrent.files?.length || 1}
           </div>
         </div>
@@ -183,29 +168,27 @@
 
       <!-- Details toggle -->
       <button
-        class="mt-2 flex w-full items-center justify-center gap-1.5 border border-border py-1 text-[0.625rem] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground cursor-pointer"
+        class="w-full p-2 flex items-center justify-center gap-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors border-t border-border cursor-pointer bg-transparent"
         onclick={() => (showDetails = !showDetails)}
       >
         {#if showDetails}
-          <ChevronDown size={12} />
+          <ChevronDown size={14} />
         {:else}
-          <ChevronRight size={12} />
+          <ChevronRight size={14} />
         {/if}
-        {showDetails ? 'Hide' : 'Show'} details
+        {showDetails ? 'Hide' : 'Show'} Details
       </button>
 
       <!-- Expanded details -->
       {#if showDetails}
-        <div class="mt-2 flex flex-col gap-2.5 border border-border p-2">
+        <div class="border-t border-border p-3 flex flex-col gap-3 bg-background/50">
           <!-- Info Hash -->
           <div>
-            <div
-              class="mb-1 flex items-center gap-1.5 text-[0.625rem] uppercase tracking-wider text-muted-foreground"
-            >
-              <Key size={11} /> Info hash
+            <div class="text-xs text-muted-foreground mb-1.5 flex items-center gap-1.5">
+              <Key size={12} /> Info Hash
             </div>
             <code
-              class="block break-all border border-border bg-muted px-1.5 py-1 text-[0.625rem] text-foreground"
+              class="bg-muted text-primary px-2 py-1.5 rounded text-xs break-all font-mono block"
             >
               {torrent.info_hash
                 ? Array.from(torrent.info_hash)
@@ -218,26 +201,24 @@
           <!-- Trackers -->
           {#if trackers.length > 0}
             <div>
-              <div
-                class="mb-1 flex items-center gap-1.5 text-[0.625rem] uppercase tracking-wider text-muted-foreground"
-              >
-                <Globe size={11} /> Trackers ({trackers.length})
+              <div class="text-xs text-muted-foreground mb-1.5 flex items-center gap-1.5">
+                <Globe size={12} /> Trackers ({trackers.length})
               </div>
-              <div class="flex max-h-[6.875rem] flex-col gap-1 overflow-y-auto">
+              <div class="flex flex-col gap-1 max-h-[100px] overflow-y-auto">
                 {#each trackers as tracker, index (tracker)}
-                  <div class="flex items-center gap-2 text-[0.625rem]">
+                  <div class="flex items-center gap-2 text-xs">
                     {#if index === 0}
                       <span
-                        class="flex-shrink-0 border border-primary/40 bg-primary/10 px-1 py-px text-[0.5625rem] font-semibold uppercase text-primary"
+                        class="px-1.5 py-0.5 rounded text-[0.6rem] font-medium uppercase bg-primary text-primary-foreground flex-shrink-0"
                       >
                         Primary
                       </span>
                     {:else}
-                      <span class="w-8 flex-shrink-0 text-right tabular-nums text-muted-foreground"
+                      <span class="text-muted-foreground w-12 flex-shrink-0 text-right"
                         >#{index + 1}</span
                       >
                     {/if}
-                    <code class="min-w-0 flex-1 break-all text-stat-upload">
+                    <code class="text-stat-upload break-all font-mono flex-1 min-w-0">
                       {tracker}
                     </code>
                   </div>
@@ -249,28 +230,26 @@
           <!-- File List -->
           {#if torrent.files && torrent.files.length > 0}
             <div>
-              <div
-                class="mb-1 flex items-center gap-1.5 text-[0.625rem] uppercase tracking-wider text-muted-foreground"
-              >
-                <Files size={11} /> Files ({torrent.files.length})
+              <div class="text-xs text-muted-foreground mb-1.5 flex items-center gap-1.5">
+                <Files size={12} /> Files ({torrent.files.length})
               </div>
               {#if torrent.files.length <= 10}
-                <div class="flex max-h-[9.375rem] flex-col gap-1 overflow-y-auto">
+                <div class="flex flex-col gap-1 max-h-[150px] overflow-y-auto">
                   {#each torrent.files as file (file.path)}
                     <div
-                      class="flex items-center justify-between gap-2 bg-muted p-1 text-[0.625rem]"
+                      class="flex items-center justify-between gap-2 p-1.5 bg-muted rounded text-xs"
                     >
-                      <span class="min-w-0 flex-1 truncate">
+                      <span class="font-mono truncate flex-1 min-w-0">
                         {file.path?.join('/') || 'Unknown'}
                       </span>
-                      <span class="flex-shrink-0 tabular-nums text-muted-foreground">
+                      <span class="text-muted-foreground flex-shrink-0">
                         {formatBytes(file.length)}
                       </span>
                     </div>
                   {/each}
                 </div>
               {:else}
-                <div class="text-[0.625rem] italic text-muted-foreground">
+                <div class="text-xs text-muted-foreground italic">
                   {torrent.files.length} files (too many to display)
                 </div>
               {/if}
@@ -281,23 +260,35 @@
     </div>
   {:else}
     <!-- Empty state with drag and drop -->
-    <div class="p-2.5">
-      <button
-        onclick={handleFileSelect}
-        ondragover={handleDragOver}
-        ondragleave={handleDragLeave}
-        ondrop={handleDrop}
-        class="flex w-full flex-col items-center gap-2 border border-dashed p-5 transition-colors cursor-pointer
-          {isDragging ? 'border-primary bg-primary/10' : 'border-border hover:bg-muted/50'}"
+    <button
+      onclick={handleFileSelect}
+      ondragover={handleDragOver}
+      ondragleave={handleDragLeave}
+      ondrop={handleDrop}
+      class="w-full p-6 border-2 border-dashed rounded-lg flex flex-col items-center gap-3 cursor-pointer transition-all group
+        {isDragging
+        ? 'border-primary bg-primary/10'
+        : 'border-border bg-muted/30 hover:bg-muted/50 hover:border-primary/50'}"
+    >
+      <div
+        class="w-12 h-12 rounded-full flex items-center justify-center transition-colors
+        {isDragging ? 'bg-primary/20' : 'bg-muted group-hover:bg-primary/10'}"
       >
-        <Upload size={18} class={isDragging ? 'text-primary' : 'text-muted-foreground'} />
-        <span class="text-xs font-medium">
-          {isDragging ? 'Drop torrent file here' : 'Select torrent file'}
-        </span>
-        <span class="text-[0.625rem] text-muted-foreground">
+        <Upload
+          size={24}
+          class="transition-colors {isDragging
+            ? 'text-primary'
+            : 'text-muted-foreground group-hover:text-primary'}"
+        />
+      </div>
+      <div class="text-center">
+        <div class="font-medium text-sm mb-1">
+          {isDragging ? 'Drop torrent file here' : 'Select Torrent File'}
+        </div>
+        <div class="text-xs text-muted-foreground">
           {isDragging ? 'Release to load' : 'Click to browse or drag and drop'}
-        </span>
-      </button>
-    </div>
+        </div>
+      </div>
+    </button>
   {/if}
 </Card>

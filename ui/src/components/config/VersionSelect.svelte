@@ -88,7 +88,9 @@
 
   <!-- Dropdown menu -->
   {#if isOpen}
-    <div class="absolute z-50 mt-1 max-h-48 w-full overflow-y-auto border border-border bg-popover">
+    <div
+      class="absolute z-50 mt-1 w-full rounded-md border border-border bg-popover shadow-md max-h-48 overflow-y-auto"
+    >
       {#each versions as version (version)}
         <button
           type="button"

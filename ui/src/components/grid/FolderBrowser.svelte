@@ -2,7 +2,6 @@
   import Button from '$lib/components/ui/button.svelte';
   import Input from '$lib/components/ui/input.svelte';
   import { api } from '$lib/api.js';
-  import { formatBytes } from '$lib/core/format.js';
   import BaseModal from '../common/BaseModal.svelte';
   import { Folder, FileText, ArrowUp, ChevronRight, X } from '@lucide/svelte';
 
@@ -62,6 +61,14 @@
 
   function close() {
     isOpen = false;
+  }
+
+  function formatSize(bytes) {
+    if (bytes == null) return '';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
   }
 </script>
 
@@ -131,7 +138,7 @@
                 <span class="truncate text-muted-foreground">{entry.name}</span>
                 {#if entry.size != null}
                   <span class="text-xs text-muted-foreground ml-auto shrink-0"
-                    >{formatBytes(entry.size)}</span
+                    >{formatSize(entry.size)}</span
                   >
                 {/if}
               </div>

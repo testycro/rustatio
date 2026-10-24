@@ -2,10 +2,8 @@
   import Button from '$lib/components/ui/button.svelte';
   import Input from '$lib/components/ui/input.svelte';
   import TagBadge from './TagBadge.svelte';
-  import { selectedIds, gridInstances, gridActions } from '$lib/grid/gridStore.js';
+  import { selectedIds, gridInstances, gridActions } from '$lib/gridStore.js';
   import { Tag } from '@lucide/svelte';
-
-  let { disabled = false } = $props();
 
   let open = $state(false);
   let newTag = $state('');
@@ -62,21 +60,20 @@
 <div class="relative" bind:this={popoverEl}>
   <Button
     onclick={toggle}
-    {disabled}
     size="icon"
-    variant="outline"
-    class="h-7 w-7"
+    variant="secondary"
+    class="h-9 w-9"
     title="Manage tags"
     aria-label="Manage tags"
   >
     {#snippet children()}
-      <Tag size={12} />
+      <Tag size={14} />
     {/snippet}
   </Button>
 
   {#if open}
     <div
-      class="absolute left-0 top-full z-50 mt-1 w-64 border border-border bg-popover p-2.5"
+      class="absolute top-full left-0 mt-1 z-50 w-64 bg-popover border border-border rounded-lg shadow-xl shadow-black/20 p-3"
       onclick={e => e.stopPropagation()}
       onkeydown={e => e.key === 'Escape' && (open = false)}
       role="dialog"
@@ -85,12 +82,8 @@
     >
       <!-- Current tags on selected instances -->
       {#if selectedTags.length > 0}
-        <div class="mb-2.5">
-          <div
-            class="mb-1.5 text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground"
-          >
-            Current tags
-          </div>
+        <div class="mb-3">
+          <div class="text-xs font-medium text-muted-foreground mb-1.5">Current tags</div>
           <div class="flex flex-wrap gap-1">
             {#each selectedTags as { tag, count: _count } (tag)}
               <TagBadge {tag} removable onRemove={removeTag} />
@@ -103,11 +96,11 @@
       <div class="flex items-center gap-1">
         <Input
           bind:value={newTag}
-          placeholder="Add tag…"
-          class="h-7 flex-1 text-[0.6875rem]"
+          placeholder="Add tag..."
+          class="h-7 text-xs flex-1"
           onkeydown={e => e.key === 'Enter' && addTag()}
         />
-        <Button onclick={addTag} size="sm" variant="secondary" class="h-7 px-2 text-[0.6875rem]">
+        <Button onclick={addTag} size="sm" variant="secondary" class="h-7 px-2 text-xs">
           {#snippet children()}
             Add
           {/snippet}

@@ -1,26 +1,24 @@
 <script>
-  import { cn } from '$lib/core/utils.js';
-  import { getGridLivePeers, getGridLiveRate } from '$lib/grid/gridMetrics.js';
-  import { getTrackerIssue } from '$lib/core/status.js';
-  import { formatBytes, formatRate } from '$lib/core/format.js';
-  import { getZoom } from '$lib/core/zoomStore.svelte.js';
-  import { getWindow } from '$lib/core/virtual.js';
+  import { cn } from '$lib/utils.js';
+  import { getGridLivePeers, getGridLiveRate } from '$lib/gridMetrics.js';
+  import { getTrackerIssue } from '$lib/status.js';
   import ConfirmDialog from '../common/ConfirmDialog.svelte';
-  import StatusBadge from '../common/StatusBadge.svelte';
-  import { selectedIds, gridActions, gridSort } from '$lib/grid/gridStore.js';
+  import { selectedIds, gridActions, gridSort } from '$lib/gridStore.js';
   import TagBadge from './TagBadge.svelte';
   import {
     ArrowUp,
     ArrowDown,
     ArrowUpDown,
-    Play,
+    Circle,
     Pause,
+    Moon,
+    Square,
+    LoaderCircle,
+    Play,
     Trash2,
     Copy,
     Pencil,
     AlertTriangle,
-    Maximize2,
-    Square,
   } from '@lucide/svelte';
 
   let { data = [], oncontextaction = () => {} } = $props();
@@ -97,13 +95,13 @@
     items.push(null); // separator
     items.push({
       id: 'edit',
-      label: 'Open detail',
+      label: 'Edit in Standard View',
       icon: Pencil,
       color: 'text-foreground',
     });
     items.push({
       id: 'copy_hash',
-      label: 'Copy info hash',
+      label: 'Copy Info Hash',
       icon: Copy,
       color: 'text-muted-foreground',
     });
@@ -138,18 +136,8 @@
     }
   }
 
-  const ROW_HEIGHT_REM = 1.75;
+  const ROW_HEIGHT = 28;
   const BUFFER_ROWS = 10;
-
-  // Rows and columns are defined in rem so the interface zoom scales them with the text.
-  // Virtualization math needs the rendered pixel height, re-measured when zoom changes.
-  let rootFontPx = $derived.by(() => {
-    getZoom();
-    if (typeof document === 'undefined') return 16;
-    const value = parseFloat(getComputedStyle(document.documentElement).fontSize);
-    return Number.isFinite(value) ? value : 16;
-  });
-  let rowHeight = $derived(ROW_HEIGHT_REM * rootFontPx);
 
   let scrollContainer = $state(null);
   let scrollTop = $state(0);
@@ -159,53 +147,86 @@
     scrollTop = e.target.scrollTop;
   }
 
-  let view = $derived(
-    getWindow({
-      total: data.length,
-      scrollTop,
-      viewportHeight: containerHeight,
-      rowHeight,
-      buffer: BUFFER_ROWS,
-    })
-  );
-  let visibleData = $derived(data.slice(view.startIndex, view.endIndex));
-  let offsetY = $derived(view.offsetY);
-  let totalHeight = $derived(view.totalHeight);
+  let totalHeight = $derived(data.length * ROW_HEIGHT);
+  let startIndex = $derived(Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - BUFFER_ROWS));
+  let visibleCount = $derived(Math.ceil(containerHeight / ROW_HEIGHT) + BUFFER_ROWS * 2);
+  let endIndex = $derived(Math.min(data.length, startIndex + visibleCount));
+  let visibleData = $derived(data.slice(startIndex, endIndex));
+  let offsetY = $derived(startIndex * ROW_HEIGHT);
+
+  function formatBytes(bytes) {
+    if (!bytes || bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+  }
+
+  function formatRate(rate) {
+    if (!rate || rate === 0) return '-';
+    if (rate >= 1000) return (rate / 1024).toFixed(1) + ' MB/s';
+    return rate.toFixed(1) + ' KB/s';
+  }
+
+  function getStateIcon(state) {
+    switch (state?.toLowerCase()) {
+      case 'starting':
+      case 'stopping':
+        return LoaderCircle;
+      case 'running':
+        return Circle;
+      case 'paused':
+        return Pause;
+      case 'idle':
+        return Moon;
+      case 'stopped':
+        return Square;
+      default:
+        return Circle;
+    }
+  }
+
+  function getStateColor(state) {
+    switch (state?.toLowerCase()) {
+      case 'starting':
+        return 'text-primary';
+      case 'stopping':
+        return 'text-stat-danger';
+      case 'running':
+        return 'text-stat-upload';
+      case 'paused':
+        return 'text-stat-ratio';
+      case 'idle':
+        return 'text-violet-500';
+      case 'stopped':
+        return 'text-muted-foreground';
+      default:
+        return 'text-muted-foreground';
+    }
+  }
+
+  function isAnimatedState(state) {
+    const value = state?.toLowerCase();
+    return value === 'starting' || value === 'stopping';
+  }
 
   function getIssueMessage(instance) {
     return getTrackerIssue(instance)?.statusMessage || null;
   }
 
-  function getPrimaryAction(state) {
-    switch (state?.toLowerCase()) {
-      case 'stopped':
-        return { id: 'start', icon: Play, title: 'Start', color: 'text-stat-upload' };
-      case 'running':
-      case 'idle':
-        return { id: 'pause', icon: Pause, title: 'Pause', color: 'text-stat-ratio' };
-      case 'paused':
-        return { id: 'resume', icon: Play, title: 'Resume', color: 'text-stat-upload' };
-      case 'starting':
-        return { id: 'stop', icon: Square, title: 'Stop', color: 'text-stat-danger' };
-      default:
-        return null;
-    }
-  }
-
   const columns = [
-    { id: 'select', header: '', width: 1.5, sortable: false },
-    { id: 'name', header: 'Name', width: 14, sortable: true },
-    { id: 'state', header: 'State', width: 5, sortable: true },
-    { id: 'progress', header: 'Progress', width: 5.75, sortable: true },
-    { id: 'totalSize', header: 'Size', width: 4.25, sortable: true },
-    { id: 'uploaded', header: 'UL', width: 4.25, sortable: true },
-    { id: 'downloaded', header: 'DL', width: 4.25, sortable: true },
-    { id: 'ratio', header: 'Ratio', width: 3, sortable: true },
-    { id: 'currentUploadRate', header: 'UL Rate', width: 4.75, sortable: true },
-    { id: 'currentDownloadRate', header: 'DL Rate', width: 4.75, sortable: true },
-    { id: 'seeders', header: 'S/L', width: 3.5, sortable: true },
-    { id: 'tags', header: 'Tags', width: 4.75, sortable: false },
-    { id: 'actions', header: '', width: 3, sortable: false },
+    { id: 'select', header: '', width: 32, sortable: false },
+    { id: 'name', header: 'Name', width: 300, sortable: true },
+    { id: 'totalSize', header: 'Size', width: 80, sortable: true },
+    { id: 'progress', header: 'Progress', width: 110, sortable: true },
+    { id: 'state', header: 'State', width: 70, sortable: true },
+    { id: 'tags', header: 'Tags', width: 120, sortable: false },
+    { id: 'uploaded', header: 'UL', width: 80, sortable: true },
+    { id: 'downloaded', header: 'DL', width: 80, sortable: true },
+    { id: 'ratio', header: 'Ratio', width: 55, sortable: true },
+    { id: 'currentUploadRate', header: 'UL Rate', width: 90, sortable: true },
+    { id: 'currentDownloadRate', header: 'DL Rate', width: 90, sortable: true },
+    { id: 'seeders', header: 'S/L', width: 65, sortable: true },
   ];
 
   function setItemSelected(id, shouldSelect) {
@@ -301,21 +322,19 @@
 <div
   bind:this={scrollContainer}
   bind:clientHeight={containerHeight}
-  class="min-h-0 min-w-0 flex-1 overflow-auto"
+  class="overflow-auto flex-1 border border-border rounded-lg"
   onscroll={onScroll}
 >
-  <table class="w-full table-fixed border-separate border-spacing-0 text-xs">
+  <table class="w-full text-xs table-fixed">
     <thead class="sticky top-0 z-20">
-      <tr>
+      <tr class="border-b border-border bg-card">
         {#each columns as col (col.id)}
           <th
             class={cn(
-              'whitespace-nowrap border-b border-border bg-card px-2 py-1 text-left text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground',
-              col.sortable && 'cursor-pointer select-none hover:text-foreground',
-              col.id === 'select' && 'sticky left-0 z-30',
-              col.id === 'name' && 'sticky left-[1.5rem] z-30 border-r'
+              'bg-card px-2 py-1 text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap',
+              col.sortable && 'cursor-pointer select-none hover:text-foreground'
             )}
-            style="width: {col.width}rem"
+            style="width: {col.width}px"
             onclick={() => handleSort(col)}
           >
             {#if col.id === 'select'}
@@ -324,17 +343,17 @@
                 checked={allSelected}
                 indeterminate={someSelected}
                 onchange={handleSelectAll}
-                class="h-3.5 w-3.5 cursor-pointer rounded-none border-input accent-primary"
+                class="h-3.5 w-3.5 rounded border-input accent-primary cursor-pointer"
               />
-            {:else if col.header}
+            {:else}
               <div class="flex items-center gap-1">
                 <span>{col.header}</span>
                 {#if $gridSort.column === col.id && $gridSort.direction === 'asc'}
-                  <ArrowUp size={11} />
+                  <ArrowUp size={12} />
                 {:else if $gridSort.column === col.id && $gridSort.direction === 'desc'}
-                  <ArrowDown size={11} />
+                  <ArrowDown size={12} />
                 {:else if col.sortable}
-                  <ArrowUpDown size={11} class="opacity-30" />
+                  <ArrowUpDown size={12} class="opacity-30" />
                 {/if}
               </div>
             {/if}
@@ -357,37 +376,35 @@
 
         {#each visibleData as instance (instance.id)}
           {@const isSelected = $selectedIds.has(instance.id)}
+          {@const StateIcon = getStateIcon(instance.state)}
           {@const completionPct = instance.torrentCompletion ?? 100}
           {@const issueMessage = getIssueMessage(instance)}
           {@const liveRateUp = getGridLiveRate(instance.state, instance.currentUploadRate)}
           {@const liveRateDown = getGridLiveRate(instance.state, instance.currentDownloadRate)}
           {@const livePeers = getGridLivePeers(instance.state, instance.seeders, instance.leechers)}
-          {@const primary = getPrimaryAction(instance.state)}
           <tr
             class={cn(
-              'group cursor-pointer bg-card transition-colors hover:bg-muted',
-              isSelected && 'bg-selected'
+              'border-t border-border/50 transition-colors cursor-pointer',
+              isSelected ? 'bg-primary/10' : 'hover:bg-muted/30'
             )}
-            style="height: {ROW_HEIGHT_REM}rem"
+            style="height: {ROW_HEIGHT}px"
             onclick={e => handleRowClick(e, instance)}
             oncontextmenu={e => openContextMenu(e, instance)}
           >
             <!-- Select -->
-            <td
-              class="sticky left-0 z-10 border-b border-border/60 bg-inherit whitespace-nowrap px-2 py-1"
-            >
+            <td class="px-2 py-1 whitespace-nowrap">
               <input
                 type="checkbox"
                 checked={isSelected}
                 onclick={e => e.stopPropagation()}
                 onchange={e => handleCheckboxChange(e, instance)}
-                class="h-3.5 w-3.5 cursor-pointer rounded-none border-input accent-primary"
+                class="h-3.5 w-3.5 rounded border-input accent-primary cursor-pointer"
               />
             </td>
 
             <!-- Name -->
             <td
-              class="sticky left-[1.5rem] z-10 select-none overflow-hidden whitespace-nowrap border-b border-r border-border/60 bg-inherit px-2 py-1"
+              class="px-2 py-1 whitespace-nowrap overflow-hidden select-none"
               ondblclick={e => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -395,12 +412,12 @@
               }}
             >
               <span class="inline-flex max-w-full items-center gap-1.5">
-                <span class="truncate font-medium text-foreground" title={instance.name}>
+                <span class="text-foreground font-medium truncate" title={instance.name}>
                   {instance.name}
                 </span>
                 {#if issueMessage}
                   <span
-                    class="flex-shrink-0 text-stat-ratio"
+                    class="flex-shrink-0 text-amber-400"
                     title={issueMessage}
                     aria-label={issueMessage}
                   >
@@ -410,57 +427,75 @@
               </span>
             </td>
 
-            <!-- State -->
-            <td class="whitespace-nowrap border-b border-border/60 px-2 py-1">
-              <StatusBadge state={instance.state} size="xs" />
+            <!-- Size -->
+            <td class="px-2 py-1 whitespace-nowrap">
+              <span class="text-muted-foreground">{formatBytes(instance.totalSize)}</span>
             </td>
 
             <!-- Progress -->
-            <td class="whitespace-nowrap border-b border-border/60 px-2 py-1">
-              <div class="flex items-center gap-1.5" title="{completionPct.toFixed(1)}%">
-                <div class="h-1.5 min-w-0 flex-1 bg-muted">
-                  <div
-                    class={cn(
-                      'h-full',
-                      completionPct >= 100 ? 'bg-stat-upload' : 'bg-stat-leecher'
-                    )}
-                    style="width: {Math.min(completionPct, 100)}%"
-                  ></div>
-                </div>
+            <td class="px-0.5 py-1 whitespace-nowrap">
+              <div
+                class="relative h-4 bg-muted rounded overflow-hidden"
+                title="{completionPct.toFixed(1)}%"
+              >
+                <div
+                  class={cn(
+                    'absolute inset-y-0 left-0 rounded transition-all',
+                    completionPct >= 100 ? 'bg-stat-upload/60' : 'bg-stat-leecher/60'
+                  )}
+                  style="width: {Math.min(completionPct, 100)}%"
+                ></div>
                 <span
-                  class="w-8 shrink-0 text-right tabular-nums text-[0.625rem] text-muted-foreground"
+                  class="absolute inset-0 flex items-center justify-center text-[10px] font-semibold text-foreground"
                 >
-                  {completionPct.toFixed(0)}%
+                  {completionPct.toFixed(1)}%
                 </span>
               </div>
             </td>
 
-            <!-- Size -->
-            <td
-              class="whitespace-nowrap border-b border-border/60 px-2 py-1 tabular-nums text-muted-foreground"
-            >
-              {formatBytes(instance.totalSize)}
+            <!-- State -->
+            <td class="px-2 py-1 whitespace-nowrap">
+              <span class={cn('flex items-center gap-1', getStateColor(instance.state))}>
+                <span class={cn('inline-flex', isAnimatedState(instance.state) && 'animate-spin')}>
+                  <StateIcon
+                    size={11}
+                    fill={instance.state?.toLowerCase() === 'running' ||
+                    instance.state?.toLowerCase() === 'idle'
+                      ? 'currentColor'
+                      : 'none'}
+                  />
+                </span>
+                <span class="capitalize">{instance.state}</span>
+              </span>
+            </td>
+
+            <!-- Tags -->
+            <td class="px-2 py-1 whitespace-nowrap">
+              <div class="flex items-center gap-0.5 overflow-hidden max-w-[110px]">
+                {#each (instance.tags || []).slice(0, 2) as tag (tag)}
+                  <TagBadge {tag} compact />
+                {/each}
+                {#if (instance.tags || []).length > 2}
+                  <span class="text-[10px] text-muted-foreground">+{instance.tags.length - 2}</span>
+                {/if}
+              </div>
             </td>
 
             <!-- Uploaded -->
-            <td
-              class="whitespace-nowrap border-b border-border/60 px-2 py-1 tabular-nums text-stat-upload"
-            >
-              {formatBytes(instance.uploaded)}
+            <td class="px-2 py-1 whitespace-nowrap">
+              <span class="text-stat-upload">{formatBytes(instance.uploaded)}</span>
             </td>
 
             <!-- Downloaded -->
-            <td
-              class="whitespace-nowrap border-b border-border/60 px-2 py-1 tabular-nums text-stat-leecher"
-            >
-              {formatBytes(instance.downloaded)}
+            <td class="px-2 py-1 whitespace-nowrap">
+              <span class="text-stat-leecher">{formatBytes(instance.downloaded)}</span>
             </td>
 
             <!-- Ratio -->
-            <td class="whitespace-nowrap border-b border-border/60 px-2 py-1">
+            <td class="px-2 py-1 whitespace-nowrap">
               <span
                 class={cn(
-                  'tabular-nums font-semibold',
+                  'font-semibold',
                   (instance.ratio || 0) >= 1 ? 'text-stat-upload' : 'text-stat-ratio'
                 )}
               >
@@ -469,80 +504,27 @@
             </td>
 
             <!-- UL Rate -->
-            <td
-              class="overflow-hidden whitespace-nowrap border-b border-border/60 px-2 py-1 tabular-nums text-stat-upload"
-            >
-              {formatRate(liveRateUp)}
+            <td class="px-2 py-1 whitespace-nowrap overflow-hidden">
+              <span class="text-stat-upload">{formatRate(liveRateUp)}</span>
             </td>
 
             <!-- DL Rate -->
-            <td
-              class="overflow-hidden whitespace-nowrap border-b border-border/60 px-2 py-1 tabular-nums text-stat-leecher"
-            >
-              {formatRate(liveRateDown)}
+            <td class="px-2 py-1 whitespace-nowrap overflow-hidden">
+              <span class="text-stat-leecher">{formatRate(liveRateDown)}</span>
             </td>
 
             <!-- Seeders / Leechers -->
-            <td class="whitespace-nowrap border-b border-border/60 px-2 py-1 tabular-nums">
+            <td class="px-2 py-1 whitespace-nowrap">
               <span class="text-stat-upload">{livePeers.seeders ?? '-'}</span>
               <span class="text-muted-foreground">/</span>
               <span class="text-stat-leecher">{livePeers.leechers ?? '-'}</span>
-            </td>
-
-            <!-- Tags -->
-            <td class="whitespace-nowrap border-b border-border/60 px-2 py-1">
-              <div class="flex max-w-[4.25rem] items-center gap-0.5 overflow-hidden">
-                {#each (instance.tags || []).slice(0, 2) as tag (tag)}
-                  <TagBadge {tag} compact />
-                {/each}
-                {#if (instance.tags || []).length > 2}
-                  <span class="text-[0.625rem] text-muted-foreground"
-                    >+{instance.tags.length - 2}</span
-                  >
-                {/if}
-              </div>
-            </td>
-
-            <!-- Actions -->
-            <td class="whitespace-nowrap border-b border-border/60 px-1 py-1">
-              <div
-                class="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100"
-              >
-                {#if primary}
-                  <button
-                    class={cn(
-                      'inline-flex h-5 w-5 items-center justify-center transition-colors hover:bg-muted cursor-pointer',
-                      primary.color
-                    )}
-                    title={primary.title}
-                    aria-label={primary.title}
-                    onclick={e => {
-                      e.stopPropagation();
-                      oncontextaction(primary.id, instance);
-                    }}
-                  >
-                    <primary.icon size={11} fill="currentColor" />
-                  </button>
-                {/if}
-                <button
-                  class="inline-flex h-5 w-5 items-center justify-center text-muted-foreground transition-colors hover:bg-muted hover:text-foreground cursor-pointer"
-                  title="Open detail"
-                  aria-label="Open detail"
-                  onclick={e => {
-                    e.stopPropagation();
-                    oncontextaction('edit', instance);
-                  }}
-                >
-                  <Maximize2 size={11} />
-                </button>
-              </div>
             </td>
           </tr>
         {/each}
 
         <!-- Bottom spacer for remaining rows -->
         <tr
-          style="height: {totalHeight - offsetY - visibleData.length * rowHeight}px"
+          style="height: {totalHeight - offsetY - visibleData.length * ROW_HEIGHT}px"
           aria-hidden="true"
         >
           <td colspan={columns.length}></td>
@@ -556,15 +538,15 @@
 {#if ctxVisible && ctxInstance}
   <div
     bind:this={menuEl}
-    class="fixed z-50 min-w-[11.25rem] border border-border bg-popover py-1"
+    class="fixed z-50 min-w-[180px] rounded-lg border border-border bg-popover shadow-xl shadow-black/20 py-1"
     style={ctxStyle}
     role="menu"
     tabindex="-1"
     onmousedown={e => e.stopPropagation()}
   >
-    <div class="mb-1 border-b border-border px-2.5 py-1">
+    <div class="px-3 py-1.5 border-b border-border/50 mb-1">
       <span
-        class="block max-w-[10rem] truncate text-[0.625rem] text-muted-foreground"
+        class="text-xs text-muted-foreground font-medium truncate block max-w-[160px]"
         title={ctxInstance.name}
       >
         {ctxInstance.name}
@@ -573,18 +555,19 @@
 
     {#each ctxActions as action, i (i)}
       {#if action === null}
-        <div class="mx-2 my-1 h-px bg-border"></div>
+        <div class="h-px bg-border/50 my-1 mx-2"></div>
       {:else}
         {@const Icon = action.icon}
         <button
           class={cn(
-            'flex w-full items-center gap-2.5 px-2.5 py-1 text-[0.6875rem] text-foreground transition-colors',
-            'hover:bg-muted focus:bg-muted focus:outline-none cursor-pointer'
+            'w-full flex items-center gap-2.5 px-3 py-1.5 text-xs text-foreground',
+            'hover:bg-accent/80 transition-colors cursor-pointer',
+            'focus:outline-none focus:bg-accent/80'
           )}
           role="menuitem"
           onclick={() => handleCtxAction(action.id)}
         >
-          <Icon size={13} class={action.color} />
+          <Icon size={14} class={action.color} />
           <span class={action.id === 'delete' ? 'text-stat-danger' : ''}>{action.label}</span>
         </button>
       {/if}

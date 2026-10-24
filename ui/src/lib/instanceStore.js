@@ -1,18 +1,16 @@
 import { writable, get } from 'svelte/store';
 import { api } from '$lib/api';
-import { getDefaultPreset } from '$lib/presets/defaultPreset.js';
-import { normalizePreset } from '$lib/presets/customPreset.js';
+import { getDefaultPreset } from '$lib/defaultPreset.js';
+import { normalizePreset } from '$lib/customPreset.js';
 import { getRunMode } from '$lib/api.js';
-import { getIdlingStatus, getStatusFromStats, getTrackerIssue } from '$lib/core/status.js';
-import { mergeSummary } from '$lib/core/instanceSync.js';
-import { hydrateInstances } from '$lib/core/instanceHydration.js';
+import { getIdlingStatus, getStatusFromStats, getTrackerIssue } from '$lib/status.js';
 import {
   getActiveInstanceIndex,
   getBackendInstanceStateFlags,
   selectActiveInstanceId,
   serializeSessionInstances,
   shouldRetryDesktopRestore,
-} from '$lib/core/utils.js';
+} from '$lib/utils.js';
 
 // Check if running in Tauri
 const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -23,6 +21,14 @@ function isServerMode() {
 
 // Helper to convert bytes to MB (rounded to integer)
 const bytesToMB = bytes => Math.round((bytes || 0) / (1024 * 1024));
+
+// Seed time (seconds) from backend stats; a Duration is serialized as { secs, nanos }
+export const getStatsSeedSeconds = stats => {
+  const t = stats?.elapsed_time;
+  if (typeof t === 'number') return Math.floor(t);
+  if (typeof t?.secs === 'number') return t.secs;
+  return null;
+};
 
 // Compute the effective (randomized) stop ratio
 export function computeEffectiveRatio(stopAtRatio, randomizeRatio, randomRatioRangePercent) {
@@ -57,6 +63,7 @@ function createDefaultInstance(id, defaults = {}) {
     cumulativeUploaded: defaults.cumulativeUploaded !== undefined ? defaults.cumulativeUploaded : 0,
     cumulativeDownloaded:
       defaults.cumulativeDownloaded !== undefined ? defaults.cumulativeDownloaded : 0,
+    cumulativeSeedTime: defaults.cumulativeSeedTime !== undefined ? defaults.cumulativeSeedTime : 0,
 
     // Form values
     selectedClient: defaults.selectedClient || 'qbittorrent',
@@ -231,6 +238,7 @@ function loadSessionFromStorage(config = null) {
         initialDownloaded: bytesToMB(inst.initial_downloaded),
         cumulativeUploaded: bytesToMB(inst.cumulative_uploaded),
         cumulativeDownloaded: bytesToMB(inst.cumulative_downloaded),
+        cumulativeSeedTime: inst.cumulative_seed_time ?? 0,
         randomizeRates: inst.randomize_rates,
         randomRangePercent: inst.random_range_percent,
         updateIntervalSeconds: inst.update_interval_seconds,
@@ -309,6 +317,10 @@ function buildInstanceDefaultsFromServer(serverInst) {
     initialDownloaded: bytesToMB(config.initial_downloaded),
     cumulativeUploaded: bytesToMB(serverInst.stats.uploaded),
     cumulativeDownloaded: bytesToMB(serverInst.stats.downloaded),
+    cumulativeSeedTime: Math.max(
+      getStatsSeedSeconds(serverInst.stats) ?? 0,
+      Math.floor(Number(config.initial_elapsed_secs) || 0)
+    ),
     randomizeRates: config.randomize_rates,
     randomRangePercent: config.random_range_percent,
     stopAtRatioEnabled: config.stop_at_ratio !== null,
@@ -553,8 +565,7 @@ export const instanceActions = {
 
       const newInstance = createDefaultInstance(instanceId, effectiveDefaults);
 
-      // Newest first so freshly created instances stay visible at the top
-      instances.update(insts => [newInstance, ...insts]);
+      instances.update(insts => [...insts, newInstance]);
       activeInstanceId.set(instanceId);
       updateActiveInstanceStore();
 
@@ -617,7 +628,7 @@ export const instanceActions = {
 
         // Add new instance in the same update to avoid flicker
         if (newInstance) {
-          return [newInstance, ...filtered];
+          return [...filtered, newInstance];
         }
         return filtered;
       });
@@ -644,6 +655,14 @@ export const instanceActions = {
     const currentInstances = get(instances);
     const currentInst = currentInstances.find(i => i.id === id);
     if (!currentInst) return;
+
+    // Keep the cumulative seed time in sync with backend stats (never decreases)
+    if (updates.stats) {
+      const secs = getStatsSeedSeconds(updates.stats);
+      if (secs !== null && secs > (currentInst.cumulativeSeedTime || 0)) {
+        updates = { ...updates, cumulativeSeedTime: secs };
+      }
+    }
 
     // Check if updates are actually different
     let hasChanges = false;
@@ -737,8 +756,8 @@ export const instanceActions = {
       instance.statusIcon = null;
     }
 
-    // Add to instances store (newest first)
-    instances.update(insts => [instance, ...insts]);
+    // Add to instances store
+    instances.update(insts => [...insts, instance]);
     updateActiveInstanceStore();
 
     return true;
@@ -799,14 +818,11 @@ export const instanceActions = {
       }
 
       // Ensure all backend instances exist in the standard store.
-      // Build the missing list first so a single backend read hydrates all of them.
-      const knownIds = new Set(get(instances).map(inst => String(inst.id)));
-      const missing = summaries.filter(summary => !knownIds.has(String(summary.id)));
-      if (missing.length > 0) {
-        await instanceActions.ensureInstances(
-          missing.map(summary => summary.id),
-          missing
-        );
+      for (const summary of summaries) {
+        const exists = get(instances).some(inst => String(inst.id) === String(summary.id));
+        if (!exists) {
+          await instanceActions.ensureInstance(summary.id, summary);
+        }
       }
 
       // Defensive dedupe in case overlapping UI actions inserted same id twice.
@@ -851,74 +867,69 @@ export const instanceActions = {
 
   // Ensure an instance exists in the standard store (used when switching from grid to standard view)
   // If the instance doesn't exist, fetch it from the server or create a default entry.
-  // Pass a pre-fetched serverInstance to avoid one backend read per instance.
   // Returns the instance ID if successfully ensured.
-  ensureInstance: async (id, gridSummary = null, serverInstance) => {
+  ensureInstance: async (id, gridSummary = null) => {
     const normalizedId = String(id);
     const currentInstances = get(instances);
     const existing = currentInstances.find(inst => String(inst.id) === normalizedId);
 
-    // Use the caller-provided server instance when available (bulk paths read once).
-    // undefined means "read the backend once"; null means "known absent".
-    let serverInst = serverInstance;
-    if (serverInst === undefined) {
-      try {
-        const serverInstances = await api.listInstances();
-        serverInst = (serverInstances || []).find(inst => String(inst.id) === normalizedId) ?? null;
-      } catch {
-        // listInstances may not be available or may return [] (Tauri/WASM)
-        serverInst = null;
-      }
-    }
-
-    if (serverInst) {
-      if (existing) {
-        // Update existing instance with actual backend config
-        const serverDefaults = buildInstanceDefaultsFromServer(serverInst);
-        instanceActions.updateInstance(normalizedId, {
-          selectedClient: serverDefaults.selectedClient,
-          selectedClientVersion: serverDefaults.selectedClientVersion,
-          uploadRate: serverDefaults.uploadRate,
-          downloadRate: serverDefaults.downloadRate,
-          port: serverDefaults.port,
-          vpnPortSync: serverDefaults.vpnPortSync,
-          completionPercent: serverDefaults.completionPercent,
-          initialUploaded: serverDefaults.initialUploaded,
-          initialDownloaded: serverDefaults.initialDownloaded,
-          randomizeRates: serverDefaults.randomizeRates,
-          randomRangePercent: serverDefaults.randomRangePercent,
-          progressiveRatesEnabled: serverDefaults.progressiveRatesEnabled,
-          targetUploadRate: serverDefaults.targetUploadRate,
-          targetDownloadRate: serverDefaults.targetDownloadRate,
-          progressiveDurationHours: serverDefaults.progressiveDurationHours,
-          stopAtRatioEnabled: serverDefaults.stopAtRatioEnabled,
-          stopAtRatio: serverDefaults.stopAtRatio,
-          randomizeRatio: serverDefaults.randomizeRatio,
-          randomRatioRangePercent: serverDefaults.randomRatioRangePercent,
-          effectiveStopAtRatio: serverDefaults.effectiveStopAtRatio,
-          stopAtUploadedEnabled: serverDefaults.stopAtUploadedEnabled,
-          stopAtUploadedGB: serverDefaults.stopAtUploadedGB,
-          stopAtDownloadedEnabled: serverDefaults.stopAtDownloadedEnabled,
-          stopAtDownloadedGB: serverDefaults.stopAtDownloadedGB,
-          stopAtSeedTimeEnabled: serverDefaults.stopAtSeedTimeEnabled,
-          stopAtSeedTimeHours: serverDefaults.stopAtSeedTimeHours,
-          idleWhenNoLeechers: serverDefaults.idleWhenNoLeechers,
-          idleWhenNoSeeders: serverDefaults.idleWhenNoSeeders,
-          postStopAction: serverDefaults.postStopAction,
-          scrapeInterval: serverDefaults.scrapeInterval,
-        });
-        if (
-          gridSummary?.source &&
-          (gridSummary.source === 'watch_folder' || gridSummary.source === 'manual')
-        ) {
-          instanceActions.updateInstance(existing.id, {
-            source: gridSummary.source,
-          });
+    // Try to fetch actual config from backend and update or create the instance
+    try {
+      const serverInstances = await api.listInstances();
+      if (serverInstances && serverInstances.length > 0) {
+        const serverInst = serverInstances.find(inst => String(inst.id) === normalizedId);
+        if (serverInst) {
+          if (existing) {
+            // Update existing instance with actual backend config
+            const serverDefaults = buildInstanceDefaultsFromServer(serverInst);
+            instanceActions.updateInstance(normalizedId, {
+              selectedClient: serverDefaults.selectedClient,
+              selectedClientVersion: serverDefaults.selectedClientVersion,
+              uploadRate: serverDefaults.uploadRate,
+              downloadRate: serverDefaults.downloadRate,
+              port: serverDefaults.port,
+              vpnPortSync: serverDefaults.vpnPortSync,
+              completionPercent: serverDefaults.completionPercent,
+              initialUploaded: serverDefaults.initialUploaded,
+              initialDownloaded: serverDefaults.initialDownloaded,
+              randomizeRates: serverDefaults.randomizeRates,
+              randomRangePercent: serverDefaults.randomRangePercent,
+              progressiveRatesEnabled: serverDefaults.progressiveRatesEnabled,
+              targetUploadRate: serverDefaults.targetUploadRate,
+              targetDownloadRate: serverDefaults.targetDownloadRate,
+              progressiveDurationHours: serverDefaults.progressiveDurationHours,
+              stopAtRatioEnabled: serverDefaults.stopAtRatioEnabled,
+              stopAtRatio: serverDefaults.stopAtRatio,
+              randomizeRatio: serverDefaults.randomizeRatio,
+              randomRatioRangePercent: serverDefaults.randomRatioRangePercent,
+              effectiveStopAtRatio: serverDefaults.effectiveStopAtRatio,
+              stopAtUploadedEnabled: serverDefaults.stopAtUploadedEnabled,
+              stopAtUploadedGB: serverDefaults.stopAtUploadedGB,
+              stopAtDownloadedEnabled: serverDefaults.stopAtDownloadedEnabled,
+              stopAtDownloadedGB: serverDefaults.stopAtDownloadedGB,
+              stopAtSeedTimeEnabled: serverDefaults.stopAtSeedTimeEnabled,
+              stopAtSeedTimeHours: serverDefaults.stopAtSeedTimeHours,
+              idleWhenNoLeechers: serverDefaults.idleWhenNoLeechers,
+              idleWhenNoSeeders: serverDefaults.idleWhenNoSeeders,
+              postStopAction: serverDefaults.postStopAction,
+              scrapeInterval: serverDefaults.scrapeInterval,
+            });
+            if (
+              gridSummary?.source &&
+              (gridSummary.source === 'watch_folder' || gridSummary.source === 'manual')
+            ) {
+              instanceActions.updateInstance(existing.id, {
+                source: gridSummary.source,
+              });
+            }
+            return String(existing.id);
+          }
+          instanceActions.mergeServerInstance(serverInst);
+          return normalizedId;
         }
-        return String(existing.id);
       }
-      instanceActions.mergeServerInstance(serverInst);
-      return normalizedId;
+    } catch {
+      // listInstances may not be available or may return [] (Tauri/WASM)
     }
 
     if (existing) {
@@ -994,18 +1005,6 @@ export const instanceActions = {
     return null;
   },
 
-  // Ensure multiple instances exist in the standard store with a single backend read.
-  // Used by grid bulk edit and reconciliation so N instances don't trigger N list calls.
-  ensureInstances: async (ids, summaries = []) => {
-    return hydrateInstances(
-      ids,
-      summaries,
-      () => api.listInstances(),
-      (normalizedId, summary, serverInst) =>
-        instanceActions.ensureInstance(normalizedId, summary, serverInst)
-    );
-  },
-
   // Add an instance to the standard store from grid import data
   addInstanceToStore: async (id, name, importDefaults = {}) => {
     const currentInstances = get(instances);
@@ -1042,7 +1041,7 @@ export const instanceActions = {
       instance.statusType = 'running';
     }
 
-    instances.update(insts => [instance, ...insts]);
+    instances.update(insts => [...insts, instance]);
     updateActiveInstanceStore();
   },
 
@@ -1090,56 +1089,81 @@ export const instanceActions = {
       const summaryMap = new Map(summaries.map(s => [String(s.id), s]));
       const currentInstances = get(instances);
 
-      let changedAny = false;
+      let hasAnyChanges = false;
       const updatedInstances = currentInstances.map(inst => {
         const summary = summaryMap.get(String(inst.id));
         if (!summary) return inst;
 
-        const next = mergeSummary(inst, summary);
-        if (next !== inst) changedAny = true;
-        return next;
+        const state = summary.state?.toLowerCase();
+        const isRunning =
+          state === 'running' || state === 'starting' || state === 'paused' || state === 'idle';
+        const isPaused = state === 'paused';
+
+        const updates = { isRunning, isPaused };
+
+        const trackerIssue = getTrackerIssue(summary);
+        if (trackerIssue) {
+          updates.statusMessage = trackerIssue.statusMessage;
+          updates.statusType = trackerIssue.statusType;
+          updates.statusIcon = trackerIssue.statusIcon;
+        } else if (summary.source === 'watch_folder' || summary.source === 'manual') {
+          updates.source = summary.source;
+        }
+
+        if (trackerIssue) {
+          if (summary.source === 'watch_folder' || summary.source === 'manual') {
+            updates.source = summary.source;
+          }
+        } else if (isPaused) {
+          updates.statusMessage = 'Paused';
+          updates.statusType = 'paused';
+          updates.statusIcon = 'pause';
+        } else if (state === 'idle') {
+          const status = inst.stats?.is_idling ? getStatusFromStats(inst.stats) : getIdlingStatus();
+          updates.statusMessage = status.statusMessage;
+          updates.statusType = status.statusType;
+          updates.statusIcon = status.statusIcon;
+        } else if (isRunning) {
+          updates.statusMessage = 'Actively faking ratio...';
+          updates.statusType = 'running';
+          updates.statusIcon = 'rocket';
+        } else {
+          updates.statusMessage = 'Ready to start faking';
+          updates.statusType = 'idle';
+          updates.statusIcon = null;
+        }
+
+        if (summary.source === 'watch_folder' || summary.source === 'manual') {
+          updates.source = summary.source;
+        }
+
+        // Merge available stats from summary into the existing stats object
+        // Session-specific fields are preserved and refreshed by polling intervals
+        updates.stats = {
+          ...(inst.stats || {}),
+          uploaded: summary.uploaded,
+          downloaded: summary.downloaded,
+          ratio: summary.ratio,
+          current_upload_rate: summary.currentUploadRate,
+          current_download_rate: summary.currentDownloadRate,
+          seeders: summary.seeders,
+          leechers: summary.leechers,
+          left: summary.left,
+          torrent_completion: summary.torrentCompletion,
+        };
+        updates.completionPercent = summary.torrentCompletion;
+
+        hasAnyChanges = true;
+        return { ...inst, ...updates };
       });
 
-      // Only notify subscribers when at least one instance actually changed,
-      // so idle polls stay free for large instance lists.
-      if (changedAny) {
+      if (hasAnyChanges) {
         instances.set(updatedInstances);
         updateActiveInstanceStore();
       }
     } catch (error) {
       console.warn('Failed to sync instance states:', error);
     }
-  },
-
-  // Apply pushed summaries (SSE) to the standard store.
-  // Returns the summaries that actually changed their instance.
-  applySummaries: (summaries = []) => {
-    const currentInstances = get(instances);
-    if (currentInstances.length === 0 || !Array.isArray(summaries) || summaries.length === 0) {
-      return [];
-    }
-
-    const summaryMap = new Map(
-      summaries.filter(s => s && s.id != null).map(s => [String(s.id), s])
-    );
-    if (summaryMap.size === 0) return [];
-
-    const changed = [];
-    const updatedInstances = currentInstances.map(inst => {
-      const summary = summaryMap.get(String(inst.id));
-      if (!summary) return inst;
-
-      const next = mergeSummary(inst, summary);
-      if (next === inst) return inst;
-      changed.push(summary);
-      return next;
-    });
-
-    if (changed.length > 0) {
-      instances.set(updatedInstances);
-      updateActiveInstanceStore();
-    }
-    return changed;
   },
 
   // Remove instance from frontend (used when server sends delete event)

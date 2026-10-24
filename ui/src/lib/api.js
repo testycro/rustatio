@@ -4,7 +4,6 @@ const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 // Check if running in server mode (served by rustatio-server)
 // We detect this by checking if /api/health endpoint responds
 let isServerMode = false;
-let runModeDetected = false;
 let serverBaseUrl = '';
 
 let initialized = false;
@@ -35,15 +34,54 @@ function writeJsonStorage(key, value) {
 }
 
 async function getLocalDefaultPreset() {
-  return readJsonStorage(DEFAULT_PRESET_KEY, null);
+  const stored = readJsonStorage(DEFAULT_PRESET_KEY, null);
+  if (stored) {
+    return stored;
+  }
+
+  if (isTauri) {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const config = await invoke('get_default_config');
+      if (config && typeof config === 'object') {
+        return {
+          id: 'rustatio-default',
+          name: 'Rustatio defaults',
+          settings: config,
+        };
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return null;
 }
 
 async function setLocalDefaultPreset(preset) {
   writeJsonStorage(DEFAULT_PRESET_KEY, preset);
+
+  if (isTauri && preset?.settings) {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('set_default_config', { config: preset.settings });
+    } catch (error) {
+      console.warn('Failed to sync default preset to backend config:', error);
+    }
+  }
 }
 
 async function clearLocalDefaultPreset() {
   localStorage.removeItem(DEFAULT_PRESET_KEY);
+
+  if (isTauri) {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('clear_default_config');
+    } catch (error) {
+      console.warn('Failed to clear backend default config:', error);
+    }
+  }
 }
 
 async function listLocalCustomPresets() {
@@ -166,18 +204,6 @@ async function detectServerMode() {
   return false;
 }
 
-// Resolve the run mode before the app mounts so every component sees the
-// correct getRunMode() value from its first render. Returns true in server mode.
-export async function initRunMode() {
-  if (runModeDetected) return isServerMode;
-  runModeDetected = true;
-
-  if (isTauri) return false;
-
-  await detectServerMode();
-  return isServerMode;
-}
-
 // Only import WASM if not in Tauri
 if (!isTauri) {
   try {
@@ -195,13 +221,9 @@ export async function initWasm() {
     return;
   }
 
-  // The run mode is normally detected before the app mounts; detect it here
-  // as a fallback so a component can never see a stale 'wasm' mode.
-  if (!runModeDetected) {
-    await initRunMode();
-  }
-
-  if (isServerMode) {
+  // Try server mode first
+  const serverAvailable = await detectServerMode();
+  if (serverAvailable) {
     initialized = true;
     return;
   }
@@ -283,7 +305,7 @@ export async function listenToLogs(callback) {
 }
 
 // Instance events subscription (for real-time sync)
-// Server mode: SSE for watch folder events and pushed summaries
+// Server mode: SSE for watch folder events
 // Tauri mode: listens for instance-restored events during startup
 export function listenToInstanceEvents(callback) {
   if (isTauri) {
@@ -314,17 +336,14 @@ export function listenToInstanceEvents(callback) {
     const authQuery = token ? `?token=${encodeURIComponent(token)}` : '';
     const eventSource = new EventSource(`${serverBaseUrl}/api/events${authQuery}`);
 
-    const handleInstanceEvent = event => {
+    eventSource.addEventListener('instance', event => {
       try {
         const instanceEvent = JSON.parse(event.data);
         callback(instanceEvent);
       } catch (e) {
         console.error('Failed to parse instance event:', e);
       }
-    };
-
-    eventSource.addEventListener('instance', handleInstanceEvent);
-    eventSource.addEventListener('summaries', handleInstanceEvent);
+    });
 
     eventSource.onerror = error => {
       console.warn('Instance SSE connection error, will retry:', error);
@@ -551,22 +570,6 @@ const serverApi = {
   },
   getNetworkStatus: async () => {
     return serverFetch('/network/status', { method: 'GET' });
-  },
-  // Proxy settings for tracker traffic (server mode only)
-  getProxySettings: async () => {
-    return serverFetch('/network/proxy', { method: 'GET' });
-  },
-  setProxySettings: async settings => {
-    await serverFetch('/network/proxy', {
-      method: 'PUT',
-      body: JSON.stringify(settings),
-    });
-  },
-  testProxy: async settings => {
-    return serverFetch('/network/proxy/test', {
-      method: 'POST',
-      body: JSON.stringify(settings),
-    });
   },
   getConfig: () => {
     const stored = localStorage.getItem('rustatio-config');
@@ -966,19 +969,6 @@ const tauriApi = {
       return local;
     }
   },
-  // Proxy settings for tracker traffic (desktop mode)
-  getProxySettings: async () => {
-    const { invoke } = await import('@tauri-apps/api/core');
-    return invoke('get_proxy_settings');
-  },
-  setProxySettings: async settings => {
-    const { invoke } = await import('@tauri-apps/api/core');
-    return invoke('set_proxy_settings', { settings });
-  },
-  testProxy: async settings => {
-    const { invoke } = await import('@tauri-apps/api/core');
-    return invoke('test_proxy', { settings });
-  },
   getConfig: async () => {
     const { invoke } = await import('@tauri-apps/api/core');
     return invoke('get_config');
@@ -1197,10 +1187,6 @@ const wasmApi = {
       return null;
     }
   },
-  // Proxy settings are not available in WASM/browser mode
-  getProxySettings: async () => null,
-  setProxySettings: async () => {},
-  testProxy: async () => null,
   getConfig: () => {
     const stored = localStorage.getItem('rustatio-config');
     return stored ? JSON.parse(stored) : null;

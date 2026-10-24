@@ -1,5 +1,5 @@
 <script>
-  import { cn } from '$lib/core/utils.js';
+  import { cn } from '$lib/utils.js';
   import Input from '$lib/components/ui/input.svelte';
   import Label from '$lib/components/ui/label.svelte';
   import ClientSelect from '../config/ClientSelect.svelte';
@@ -29,7 +29,6 @@
     inputStep = '0.1',
     showUnit = false,
     unit = 'KB/s',
-    timeUnit = 'sec',
     onClientChange = () => {},
     onVersionChange = () => {},
     onPortInput = () => {},
@@ -145,7 +144,7 @@
             oninput={onRefreshInput}
             onblur={onRefreshBlur}
           />
-          <span class="text-sm text-muted-foreground">{timeUnit}</span>
+          <span class="text-sm text-muted-foreground">{unit}</span>
         </div>
       {:else}
         <Input
@@ -175,7 +174,7 @@
             oninput={onScrapeInput}
             onblur={onScrapeBlur}
           />
-          <span class="text-sm text-muted-foreground">{timeUnit}</span>
+          <span class="text-sm text-muted-foreground">{unit}</span>
         </div>
       {:else}
         <Input

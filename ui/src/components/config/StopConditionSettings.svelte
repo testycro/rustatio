@@ -39,11 +39,11 @@
   );
 </script>
 
-<div class="overflow-hidden border border-border bg-background">
+<div class="bg-muted/50 rounded-lg border border-border overflow-hidden">
   <!-- Ratio -->
   <div
-    class="flex items-center gap-2 border-b border-border px-2 py-1.5 {stopAtRatioEnabled
-      ? 'bg-primary/10'
+    class="flex items-center gap-3 p-3 border-b border-border {stopAtRatioEnabled
+      ? 'bg-primary/5'
       : ''}"
   >
     <Checkbox
@@ -55,10 +55,8 @@
         onchange?.({ stopAtRatioEnabled: checked });
       }}
     />
-    <Percent size={13} class={stopAtRatioEnabled ? 'text-primary' : 'text-muted-foreground'} />
-    <Label for="stop-ratio" class="flex-1 cursor-pointer text-[0.6875rem] font-medium"
-      >Target ratio</Label
-    >
+    <Percent size={16} class={stopAtRatioEnabled ? 'text-primary' : 'text-muted-foreground'} />
+    <Label for="stop-ratio" class="flex-1 cursor-pointer text-sm font-medium">Target Ratio</Label>
     {#if stopAtRatioEnabled}
       <div class="flex items-center gap-1">
         <Input
@@ -68,20 +66,20 @@
           min="0.1"
           max="100"
           step="0.1"
-          class="h-7 w-16 text-center tabular-nums"
+          class="w-20 h-8 text-center font-medium"
           placeholder="2.0"
           oninput={() => onchange?.({ stopAtRatio })}
         />
       </div>
     {:else}
-      <span class="text-[0.625rem] text-muted-foreground">disabled</span>
+      <span class="text-xs text-muted-foreground">disabled</span>
     {/if}
   </div>
 
   <!-- Randomize Ratio -->
   {#if stopAtRatioEnabled}
     <div class="border-b border-border bg-muted/30">
-      <div class="flex items-center gap-2 py-1.5 pl-8 pr-2">
+      <div class="flex items-center gap-3 px-3 py-2 pl-10">
         <Checkbox
           id="randomize-ratio"
           checked={randomizeRatio}
@@ -91,17 +89,14 @@
             onchange?.({ randomizeRatio: checked });
           }}
         />
-        <Shuffle size={12} class={randomizeRatio ? 'text-primary' : 'text-muted-foreground'} />
-        <Label for="randomize-ratio" class="flex-1 cursor-pointer text-[0.6875rem] font-medium">
+        <Shuffle size={14} class={randomizeRatio ? 'text-primary' : 'text-muted-foreground'} />
+        <Label for="randomize-ratio" class="flex-1 cursor-pointer text-xs font-medium">
           Randomize ratio for realistic behavior
         </Label>
       </div>
       {#if randomizeRatio}
-        <div class="flex items-center gap-3 px-2 pb-1.5 pl-8">
-          <span
-            class="whitespace-nowrap text-[0.625rem] uppercase tracking-wider text-muted-foreground"
-            >Variance</span
-          >
+        <div class="px-10 pb-2 flex items-center gap-3">
+          <span class="text-xs text-muted-foreground whitespace-nowrap">Variance</span>
           <input
             type="range"
             bind:value={randomRatioRangePercent}
@@ -109,30 +104,29 @@
             min="1"
             max="30"
             step="1"
-            class="h-1.5 flex-1 cursor-pointer appearance-none accent-primary"
-            style="background: linear-gradient(to right, var(--color-primary) {((randomRatioRangePercent -
+            class="flex-1 h-1.5 rounded-lg cursor-pointer accent-primary"
+            style="background: linear-gradient(to right, hsl(var(--primary)) {((randomRatioRangePercent -
               1) /
               29) *
-              100}%, var(--color-border) {((randomRatioRangePercent - 1) / 29) * 100}%);"
+              100}%, hsl(var(--muted)) {((randomRatioRangePercent - 1) / 29) * 100}%);"
             oninput={() => onchange?.({ randomRatioRangePercent })}
           />
-          <span
-            class="min-w-[4ch] text-right text-[0.6875rem] font-semibold tabular-nums text-foreground"
+          <span class="text-sm font-bold text-primary min-w-[4ch] text-right"
             >±{randomRatioRangePercent}%</span
           >
         </div>
-        <div class="px-2 pb-1.5 pl-8">
-          <div class="text-[0.625rem] text-muted-foreground">
+        <div class="px-10 pb-2">
+          <div class="text-xs text-muted-foreground">
             Range
-            <span class="font-medium tabular-nums text-stat-ratio"
+            <span class="font-medium text-primary"
               >{(stopAtRatio * (1 - randomRatioRangePercent / 100)).toFixed(2)}</span
             >
-            –
-            <span class="font-medium tabular-nums text-stat-ratio"
+            —
+            <span class="font-medium text-primary"
               >{(stopAtRatio * (1 + randomRatioRangePercent / 100)).toFixed(2)}</span
             >
             {#if effectiveStopAtRatio != null}
-              · Effective: <span class="font-semibold tabular-nums text-stat-ratio"
+              · Effective: <span class="font-semibold text-primary"
                 >{effectiveStopAtRatio.toFixed(4)}</span
               >
             {/if}
@@ -144,8 +138,8 @@
 
   <!-- Uploaded -->
   <div
-    class="flex items-center gap-2 border-b border-border px-2 py-1.5 {stopAtUploadedEnabled
-      ? 'bg-primary/10'
+    class="flex items-center gap-3 p-3 border-b border-border {stopAtUploadedEnabled
+      ? 'bg-primary/5'
       : ''}"
   >
     <Checkbox
@@ -158,12 +152,10 @@
       }}
     />
     <Upload
-      size={13}
+      size={16}
       class={stopAtUploadedEnabled ? 'text-stat-upload' : 'text-muted-foreground'}
     />
-    <Label for="stop-uploaded" class="flex-1 cursor-pointer text-[0.6875rem] font-medium"
-      >Max Upload</Label
-    >
+    <Label for="stop-uploaded" class="flex-1 cursor-pointer text-sm font-medium">Max Upload</Label>
     {#if stopAtUploadedEnabled}
       <div class="flex items-center gap-1">
         <Input
@@ -172,21 +164,21 @@
           {disabled}
           min="0.1"
           step="0.1"
-          class="h-7 w-16 text-center tabular-nums"
+          class="w-20 h-8 text-center font-medium"
           placeholder="10"
           oninput={() => onchange?.({ stopAtUploadedGB })}
         />
-        <span class="w-6 text-[0.625rem] text-muted-foreground">GB</span>
+        <span class="text-xs text-muted-foreground w-6">GB</span>
       </div>
     {:else}
-      <span class="text-[0.625rem] text-muted-foreground">disabled</span>
+      <span class="text-xs text-muted-foreground">disabled</span>
     {/if}
   </div>
 
   <!-- Downloaded -->
   <div
-    class="flex items-center gap-2 border-b border-border px-2 py-1.5 {stopAtDownloadedEnabled
-      ? 'bg-primary/10'
+    class="flex items-center gap-3 p-3 border-b border-border {stopAtDownloadedEnabled
+      ? 'bg-primary/5'
       : ''}"
   >
     <Checkbox
@@ -199,10 +191,10 @@
       }}
     />
     <Download
-      size={13}
+      size={16}
       class={stopAtDownloadedEnabled ? 'text-stat-download' : 'text-muted-foreground'}
     />
-    <Label for="stop-downloaded" class="flex-1 cursor-pointer text-[0.6875rem] font-medium"
+    <Label for="stop-downloaded" class="flex-1 cursor-pointer text-sm font-medium"
       >Max Download</Label
     >
     {#if stopAtDownloadedEnabled}
@@ -213,21 +205,21 @@
           {disabled}
           min="0.1"
           step="0.1"
-          class="h-7 w-16 text-center tabular-nums"
+          class="w-20 h-8 text-center font-medium"
           placeholder="10"
           oninput={() => onchange?.({ stopAtDownloadedGB })}
         />
-        <span class="w-6 text-[0.625rem] text-muted-foreground">GB</span>
+        <span class="text-xs text-muted-foreground w-6">GB</span>
       </div>
     {:else}
-      <span class="text-[0.625rem] text-muted-foreground">disabled</span>
+      <span class="text-xs text-muted-foreground">disabled</span>
     {/if}
   </div>
 
   <!-- Seed Time -->
   <div
-    class="flex items-center gap-2 border-b border-border px-2 py-1.5 {stopAtSeedTimeEnabled
-      ? 'bg-primary/10'
+    class="flex items-center gap-3 p-3 border-b border-border {stopAtSeedTimeEnabled
+      ? 'bg-primary/5'
       : ''}"
   >
     <Checkbox
@@ -239,10 +231,8 @@
         onchange?.({ stopAtSeedTimeEnabled: checked });
       }}
     />
-    <Clock size={13} class={stopAtSeedTimeEnabled ? 'text-stat-ratio' : 'text-muted-foreground'} />
-    <Label for="stop-seedtime" class="flex-1 cursor-pointer text-[0.6875rem] font-medium"
-      >Seed Time</Label
-    >
+    <Clock size={16} class={stopAtSeedTimeEnabled ? 'text-stat-ratio' : 'text-muted-foreground'} />
+    <Label for="stop-seedtime" class="flex-1 cursor-pointer text-sm font-medium">Seed Time</Label>
     {#if stopAtSeedTimeEnabled}
       <div class="flex items-center gap-1">
         <Input
@@ -251,21 +241,21 @@
           {disabled}
           min="0.1"
           step="0.1"
-          class="h-7 w-16 text-center tabular-nums"
+          class="w-20 h-8 text-center font-medium"
           placeholder="24"
           oninput={() => onchange?.({ stopAtSeedTimeHours })}
         />
-        <span class="w-6 text-[0.625rem] text-muted-foreground">hrs</span>
+        <span class="text-xs text-muted-foreground w-6">hrs</span>
       </div>
     {:else}
-      <span class="text-[0.625rem] text-muted-foreground">disabled</span>
+      <span class="text-xs text-muted-foreground">disabled</span>
     {/if}
   </div>
 
   <!-- Idle when No Leechers -->
   <div
-    class="flex items-center gap-2 border-b border-border px-2 py-1.5 {idleWhenNoLeechers
-      ? 'bg-primary/10'
+    class="flex items-center gap-3 p-3 border-b border-border {idleWhenNoLeechers
+      ? 'bg-primary/5'
       : ''}"
   >
     <Checkbox
@@ -277,19 +267,19 @@
         onchange?.({ idleWhenNoLeechers: checked });
       }}
     />
-    <Pause size={13} class={idleWhenNoLeechers ? 'text-violet-400' : 'text-muted-foreground'} />
-    <Label for="idle-no-leechers" class="flex-1 cursor-pointer text-[0.6875rem] font-medium">
+    <Pause size={16} class={idleWhenNoLeechers ? 'text-purple-500' : 'text-muted-foreground'} />
+    <Label for="idle-no-leechers" class="flex-1 cursor-pointer text-sm font-medium">
       Idle when no leechers
     </Label>
     {#if idleWhenNoLeechers}
-      <span class="text-xs text-violet-400 font-medium">0 KB/s</span>
+      <span class="text-xs text-purple-500 font-medium">0 KB/s</span>
     {:else}
-      <span class="text-[0.625rem] text-muted-foreground">disabled</span>
+      <span class="text-xs text-muted-foreground">disabled</span>
     {/if}
   </div>
 
   <!-- Idle when No Seeders -->
-  <div class="flex items-center gap-2 px-2 py-1.5 {idleWhenNoSeeders ? 'bg-primary/10' : ''}">
+  <div class="flex items-center gap-3 p-3 {idleWhenNoSeeders ? 'bg-primary/5' : ''}">
     <Checkbox
       id="idle-no-seeders"
       checked={idleWhenNoSeeders}
@@ -299,35 +289,35 @@
         onchange?.({ idleWhenNoSeeders: checked });
       }}
     />
-    <Users size={13} class={idleWhenNoSeeders ? 'text-stat-ratio' : 'text-muted-foreground'} />
-    <Label for="idle-no-seeders" class="flex-1 cursor-pointer text-[0.6875rem] font-medium">
+    <Users size={16} class={idleWhenNoSeeders ? 'text-orange-500' : 'text-muted-foreground'} />
+    <Label for="idle-no-seeders" class="flex-1 cursor-pointer text-sm font-medium">
       Idle when no seeders
     </Label>
     {#if idleWhenNoSeeders}
       {#if !isLeecherMode}
-        <span class="text-xs text-stat-ratio font-medium" title="Only works when completion < 100%"
+        <span class="text-xs text-orange-500 font-medium" title="Only works when completion < 100%"
           >0 KB/s</span
         >
       {:else}
-        <span class="text-xs text-stat-ratio font-medium">0 KB/s</span>
+        <span class="text-xs text-orange-500 font-medium">0 KB/s</span>
       {/if}
     {:else}
-      <span class="text-[0.625rem] text-muted-foreground">disabled</span>
+      <span class="text-xs text-muted-foreground">disabled</span>
     {/if}
   </div>
 
   <!-- Post-Stop Action -->
   {#if hasThresholdCondition}
-    <div class="flex items-center gap-2 border-t border-border bg-muted/30 px-2 py-1.5">
-      <Settings size={13} class="text-muted-foreground" />
-      <Label for="post-stop-action" class="flex-1 text-[0.6875rem] font-medium"
+    <div class="flex items-center gap-3 p-3 border-t border-border bg-muted/30">
+      <Settings size={16} class="text-muted-foreground" />
+      <Label for="post-stop-action" class="flex-1 text-sm font-medium"
         >When conditions are met</Label
       >
       <select
         id="post-stop-action"
         bind:value={postStopAction}
         {disabled}
-        class="h-7 border border-input bg-background px-2 text-[0.6875rem] text-foreground focus:border-ring focus:outline-none"
+        class="h-8 rounded-md border border-input bg-background px-2 text-xs font-medium focus:outline-none focus:ring-1 focus:ring-ring"
         onchange={() => onchange?.({ postStopAction })}
       >
         <option value="idle">Continue (idle)</option>

@@ -1,5 +1,5 @@
 <script>
-  import { cn } from '$lib/core/utils.js';
+  import { cn } from '$lib/utils.js';
   import Button from '$lib/components/ui/button.svelte';
   import Input from '$lib/components/ui/input.svelte';
   import Label from '$lib/components/ui/label.svelte';
@@ -7,12 +7,12 @@
   import Checkbox from '$lib/components/ui/checkbox.svelte';
   import InlineHelp from '$lib/components/common/InlineHelp.svelte';
   import BaseModal from '../common/BaseModal.svelte';
-  import { gridActions } from '$lib/grid/gridStore.js';
+  import { gridActions } from '$lib/gridStore.js';
   import { api, getRunMode } from '$lib/api.js';
   import FolderBrowser from './FolderBrowser.svelte';
   import { builtInPresets } from '$lib/presets/index.js';
-  import { getDefaultPreset, refreshDefaultPreset } from '$lib/presets/defaultPreset.js';
-  import { normalizePreset, normalizePresets } from '$lib/presets/customPreset.js';
+  import { getDefaultPreset, refreshDefaultPreset } from '$lib/defaultPreset.js';
+  import { normalizePreset, normalizePresets } from '$lib/customPreset.js';
   import { Upload, FolderOpen, X, FileText, ChevronDown, Settings } from '@lucide/svelte';
   import PresetIcon from '../config/PresetIcon.svelte';
   import ClientIcon from '../config/ClientIcon.svelte';
@@ -503,9 +503,7 @@
   >
     <!-- Header -->
     <div class="flex items-center justify-between p-4 border-b border-border">
-      <h2 class="text-xs font-semibold uppercase tracking-wider text-foreground">
-        Import torrents
-      </h2>
+      <h2 class="text-lg font-semibold text-foreground">Import Torrents</h2>
       <button
         onclick={close}
         class="p-1 rounded hover:bg-muted bg-transparent border-0 cursor-pointer"
@@ -550,7 +548,7 @@
         <div
           role="region"
           aria-label="Drop zone for torrent files"
-          class="border border-dashed border-border p-4 text-center transition-colors hover:border-primary/40"
+          class="border-2 border-dashed border-border rounded-lg p-6 text-center hover:border-primary/50 transition-colors"
           ondrop={handleDrop}
           ondragover={handleDragOver}
         >
@@ -637,7 +635,7 @@
           <div
             role="region"
             aria-label="Select a folder from your computer"
-            class="border border-dashed border-border p-4 text-center transition-colors hover:border-primary/40"
+            class="border-2 border-dashed border-border rounded-lg p-6 text-center hover:border-primary/50 transition-colors"
           >
             <FolderOpen size={24} class="mx-auto mb-2 text-muted-foreground" />
             <p class="text-sm text-muted-foreground mb-2">Select a folder from your computer</p>
@@ -726,7 +724,7 @@
 
             {#if presetDropdownOpen}
               <div
-                class="absolute z-50 mt-1 max-h-48 w-full overflow-y-auto border border-border bg-popover"
+                class="absolute z-50 mt-1 w-full rounded-md border border-border bg-popover shadow-md max-h-48 overflow-y-auto"
               >
                 <button
                   type="button"
@@ -815,7 +813,7 @@
             <Label>Client</Label>
           </div>
           {#if vpnPortSyncVisible}
-            <div class="flex items-center gap-1.5 text-[0.6875rem] text-muted-foreground">
+            <div class="flex items-center gap-1.5 text-[11px] text-muted-foreground">
               <Checkbox
                 checked={vpnPortSync}
                 disabled={disableVpnPortSyncToggle}
@@ -840,21 +838,21 @@
         >
           {#snippet portFooter()}
             {#if vpnPortSyncVisible && !networkStatusConfigured}
-              <p class="mt-1 text-[0.6875rem] text-amber-400">No VPN configured.</p>
+              <p class="mt-1 text-[11px] text-amber-400">No VPN configured.</p>
             {:else if vpnPortSyncVisible && !vpnPortSyncEnabled && vpnPortSync}
-              <p class="mt-1 text-[0.6875rem] text-amber-400">
+              <p class="mt-1 text-[11px] text-amber-400">
                 VPN sync is disabled on the server. Uncheck it or enable
                 <span class="font-mono">VPN_PORT_SYNC=on</span> and restart Rustatio.
               </p>
             {:else if vpnPortSyncVisible && !vpnPortSyncEnabled}
-              <p class="mt-1 text-[0.6875rem] text-amber-400">
+              <p class="mt-1 text-[11px] text-amber-400">
                 VPN sync is disabled on the server. Set <span class="font-mono"
                   >VPN_PORT_SYNC=on</span
                 >
                 and restart Rustatio.
               </p>
             {:else if vpnPortSyncVisible && networkStatusUnavailable}
-              <div class="mt-1 flex items-center gap-2 text-[0.6875rem] text-amber-400">
+              <div class="mt-1 flex items-center gap-2 text-[11px] text-amber-400">
                 <span>Gluetun status is unavailable.</span>
                 <button
                   type="button"
@@ -865,14 +863,14 @@
                 </button>
               </div>
             {:else if vpnPortSyncVisible && useSyncedPort && !currentForwardedPort}
-              <p class="mt-1 text-[0.6875rem] text-amber-400">
+              <p class="mt-1 text-[11px] text-amber-400">
                 Waiting for a forwarded port from Gluetun. Make sure <span class="font-mono"
                   >VPN_PORT_FORWARDING=on</span
                 >
                 is enabled and the VPN provider supports it.
               </p>
             {:else if vpnPortSyncVisible && useSyncedPort && currentForwardedPort}
-              <p class="mt-1 text-[0.6875rem] text-foreground/80">
+              <p class="mt-1 text-[11px] text-foreground/80">
                 Current forwarded port: <span class="font-mono">{currentForwardedPort}</span>
               </p>
             {/if}
