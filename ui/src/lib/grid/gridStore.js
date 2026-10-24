@@ -1,7 +1,8 @@
 import { writable, derived, get } from 'svelte/store';
 import { api, getRunMode } from '$lib/api';
-import { normalizeViewMode } from '$lib/viewMode.js';
-import { instanceActions } from '$lib/instanceStore.js';
+import { normalizeViewMode } from '$lib/core/viewMode.js';
+import { sameId } from '$lib/core/utils.js';
+import { instanceActions } from '$lib/core/instanceStore.js';
 import {
   applyAllGridFilters,
   applyBaseGridFilters,
@@ -10,7 +11,7 @@ import {
   buildStateFilterEntries,
   buildTagFilterEntries,
   buildTrackerFilterEntries,
-} from '$lib/gridFilters.js';
+} from '$lib/grid/gridFilters.js';
 
 const VIEW_MODE_KEY = 'rustatio-view-mode';
 
@@ -114,6 +115,29 @@ let isFetching = false;
 const PENDING_TTL_MS = 30000;
 const pendingStateIds = new Map();
 
+// Preserve optimistic start/stop states until the backend catches up or the TTL expires.
+function reconcileSummary(summary) {
+  const pending = pendingStateIds.get(summary.id);
+  if (!pending) return summary;
+
+  const backendState = summary.state?.toLowerCase();
+
+  // Backend caught up to target state — clear pending
+  if (backendState === pending.target) {
+    pendingStateIds.delete(summary.id);
+    return summary;
+  }
+
+  // TTL expired — clear pending, use backend state
+  if (Date.now() - pending.ts > PENDING_TTL_MS) {
+    pendingStateIds.delete(summary.id);
+    return summary;
+  }
+
+  // Still pending — preserve optimistic state
+  return { ...summary, state: pending.optimistic };
+}
+
 // After grid import, fetch actual backend configs so the standard view shows
 // the real per-instance rates (randomized from range) instead of default preset values.
 async function syncImportedInstances(imported, importConfig = {}) {
@@ -121,11 +145,10 @@ async function syncImportedInstances(imported, importConfig = {}) {
   try {
     const serverInstances = await api.listInstances();
     if (serverInstances?.length > 0) {
-      for (const serverInst of serverInstances) {
-        if (importedIds.has(String(serverInst.id))) {
-          instanceActions.mergeServerInstance(serverInst);
-          importedIds.delete(String(serverInst.id));
-        }
+      const matched = serverInstances.filter(inst => importedIds.has(String(inst.id)));
+      instanceActions.mergeServerInstances(matched);
+      for (const inst of matched) {
+        importedIds.delete(String(inst.id));
       }
     }
   } catch {
@@ -146,50 +169,43 @@ export const gridActions = {
     if (isFetching) return;
     isFetching = true;
     try {
-      // On desktop/WASM, stats only advance when update() or updateStatsOnly() is called.
-      // The server has a background scheduler, but desktop/WASM rely on the frontend.
-      // Advance stats for all running instances before reading the snapshot.
-      if (getRunMode() !== 'server') {
-        const current = get(gridInstances);
-        const running = current.filter(i => i.state === 'running');
-        if (running.length > 0) {
-          await Promise.allSettled(running.map(i => api.updateStatsOnly(i.id)));
-        }
+      // Desktop and server advance fakers in backend schedulers. WASM has no
+      // scheduler, so its grid still advances running fakers before reading.
+      if (getRunMode() === 'wasm') {
+        const running = get(gridInstances).filter(i => i.state === 'running');
+        await Promise.allSettled(running.map(i => api.updateStatsOnly(i.id)));
       }
-
       const summaries = await api.listSummaries();
       if (!summaries) return;
 
       // Reconcile pending optimistic states with backend reality
-      const now = Date.now();
-      const reconciled = summaries.map(s => {
-        const pending = pendingStateIds.get(s.id);
-        if (!pending) return s;
-
-        const backendState = s.state?.toLowerCase();
-
-        // Backend caught up to target state — clear pending
-        if (backendState === pending.target) {
-          pendingStateIds.delete(s.id);
-          return s;
-        }
-
-        // TTL expired — clear pending, use backend state
-        if (now - pending.ts > PENDING_TTL_MS) {
-          pendingStateIds.delete(s.id);
-          return s;
-        }
-
-        // Still pending — preserve optimistic state
-        return { ...s, state: pending.optimistic };
-      });
-
-      gridInstances.set(reconciled);
+      gridInstances.set(summaries.map(reconcileSummary));
     } catch (error) {
       console.error('Failed to fetch summaries:', error);
     } finally {
       isFetching = false;
     }
+  },
+
+  // Apply pushed summaries (SSE) to the grid without an extra fetch.
+  applySummaries: (summaries = []) => {
+    const current = get(gridInstances);
+    if (current.length === 0 || !Array.isArray(summaries) || summaries.length === 0) return;
+
+    const byId = new Map(
+      summaries.filter(s => s && s.id != null).map(s => [String(s.id), reconcileSummary(s)])
+    );
+    if (byId.size === 0) return;
+
+    let matched = false;
+    const next = current.map(inst => {
+      const summary = byId.get(String(inst.id));
+      if (!summary) return inst;
+      matched = true;
+      return { ...inst, ...summary };
+    });
+
+    if (matched) gridInstances.set(next);
   },
 
   startPolling: (intervalMs = 1000) => {
@@ -232,7 +248,7 @@ export const gridActions = {
     if (ids.length === 0) return;
     const instances = get(gridInstances);
     const startable = ids.filter(id => {
-      const inst = instances.find(i => i.id === id);
+      const inst = instances.find(i => sameId(i.id, id));
       return inst?.state?.toLowerCase() === 'stopped';
     });
     if (startable.length === 0) return;
@@ -257,7 +273,7 @@ export const gridActions = {
     if (ids.length === 0) return;
     const instances = get(gridInstances);
     const stoppable = ids.filter(id => {
-      const inst = instances.find(i => i.id === id);
+      const inst = instances.find(i => sameId(i.id, id));
       const s = inst?.state?.toLowerCase();
       return s === 'running' || s === 'idle' || s === 'paused' || s === 'starting';
     });
@@ -283,7 +299,7 @@ export const gridActions = {
     if (ids.length === 0) return;
     const instances = get(gridInstances);
     const pauseable = ids.filter(id => {
-      const inst = instances.find(i => i.id === id);
+      const inst = instances.find(i => sameId(i.id, id));
       const s = inst?.state?.toLowerCase();
       return s === 'running' || s === 'idle';
     });
@@ -301,7 +317,7 @@ export const gridActions = {
     if (ids.length === 0) return;
     const instances = get(gridInstances);
     const resumable = ids.filter(id => {
-      const inst = instances.find(i => i.id === id);
+      const inst = instances.find(i => sameId(i.id, id));
       return inst?.state?.toLowerCase() === 'paused';
     });
     if (resumable.length === 0) return;
@@ -359,7 +375,7 @@ export const gridActions = {
   startInstance: async id => {
     pendingStateIds.set(id, { optimistic: 'starting', target: 'running', ts: Date.now() });
     gridInstances.update(instances =>
-      instances.map(i => (i.id === id ? { ...i, state: 'starting' } : i))
+      instances.map(i => (sameId(i.id, id) ? { ...i, state: 'starting' } : i))
     );
     const result = await api.gridStart([id]);
     await gridActions.fetchSummaries();
@@ -370,7 +386,7 @@ export const gridActions = {
   stopInstance: async id => {
     pendingStateIds.set(id, { optimistic: 'stopping', target: 'stopped', ts: Date.now() });
     gridInstances.update(instances =>
-      instances.map(i => (i.id === id ? { ...i, state: 'stopping' } : i))
+      instances.map(i => (sameId(i.id, id) ? { ...i, state: 'stopping' } : i))
     );
     const result = await api.gridStop([id]);
     await gridActions.fetchSummaries();

@@ -4,6 +4,7 @@ const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 // Check if running in server mode (served by rustatio-server)
 // We detect this by checking if /api/health endpoint responds
 let isServerMode = false;
+let runModeDetected = false;
 let serverBaseUrl = '';
 
 let initialized = false;
@@ -204,6 +205,18 @@ async function detectServerMode() {
   return false;
 }
 
+// Resolve the run mode before the app mounts so every component sees the
+// correct getRunMode() value from its first render. Returns true in server mode.
+export async function initRunMode() {
+  if (runModeDetected) return isServerMode;
+  runModeDetected = true;
+
+  if (isTauri) return false;
+
+  await detectServerMode();
+  return isServerMode;
+}
+
 // Only import WASM if not in Tauri
 if (!isTauri) {
   try {
@@ -221,9 +234,13 @@ export async function initWasm() {
     return;
   }
 
-  // Try server mode first
-  const serverAvailable = await detectServerMode();
-  if (serverAvailable) {
+  // The run mode is normally detected before the app mounts; detect it here
+  // as a fallback so a component can never see a stale 'wasm' mode.
+  if (!runModeDetected) {
+    await initRunMode();
+  }
+
+  if (isServerMode) {
     initialized = true;
     return;
   }
@@ -305,24 +322,51 @@ export async function listenToLogs(callback) {
 }
 
 // Instance events subscription (for real-time sync)
-// Server mode: SSE for watch folder events
-// Tauri mode: listens for instance-restored events during startup
+// Server mode: SSE for watch folder events and pushed summaries
+// Tauri mode: listens for restored instances plus scheduler summaries/deletions.
 export function listenToInstanceEvents(callback) {
   if (isTauri) {
-    let unlisten = null;
+    let disposed = false;
+    const unlisteners = [];
+
     import('@tauri-apps/api/event')
       .then(({ listen }) => {
-        listen('instance-restored', () => {
-          callback({ type: 'created' });
-        }).then(fn => {
-          unlisten = fn;
+        if (disposed) return;
+
+        const register = (name, handler) => {
+          listen(name, event => {
+            if (!disposed) handler(event);
+          })
+            .then(unlisten => {
+              if (disposed) {
+                unlisten();
+              } else {
+                unlisteners.push(unlisten);
+              }
+            })
+            .catch(error => {
+              console.error(`Failed to listen for ${name}:`, error);
+            });
+        };
+
+        register('instance-restored', event => {
+          callback({ type: 'created', id: event.payload });
+        });
+        register('instance-summaries', event => {
+          callback({ type: 'summaries', instances: event.payload });
+        });
+        register('instance-deleted', event => {
+          callback({ type: 'deleted', id: event.payload });
         });
       })
       .catch(error => {
         console.error('Failed to set up Tauri instance event listener:', error);
       });
+
     return () => {
-      if (unlisten) unlisten();
+      disposed = true;
+      for (const unlisten of unlisteners) unlisten();
+      unlisteners.length = 0;
     };
   }
 
@@ -336,14 +380,17 @@ export function listenToInstanceEvents(callback) {
     const authQuery = token ? `?token=${encodeURIComponent(token)}` : '';
     const eventSource = new EventSource(`${serverBaseUrl}/api/events${authQuery}`);
 
-    eventSource.addEventListener('instance', event => {
+    const handleInstanceEvent = event => {
       try {
         const instanceEvent = JSON.parse(event.data);
         callback(instanceEvent);
       } catch (e) {
         console.error('Failed to parse instance event:', e);
       }
-    });
+    };
+
+    eventSource.addEventListener('instance', handleInstanceEvent);
+    eventSource.addEventListener('summaries', handleInstanceEvent);
 
     eventSource.onerror = error => {
       console.warn('Instance SSE connection error, will retry:', error);
@@ -570,6 +617,22 @@ const serverApi = {
   },
   getNetworkStatus: async () => {
     return serverFetch('/network/status', { method: 'GET' });
+  },
+  // Proxy settings for tracker traffic (server mode only)
+  getProxySettings: async () => {
+    return serverFetch('/network/proxy', { method: 'GET' });
+  },
+  setProxySettings: async settings => {
+    await serverFetch('/network/proxy', {
+      method: 'PUT',
+      body: JSON.stringify(settings),
+    });
+  },
+  testProxy: async settings => {
+    return serverFetch('/network/proxy/test', {
+      method: 'POST',
+      body: JSON.stringify(settings),
+    });
   },
   getConfig: () => {
     const stored = localStorage.getItem('rustatio-config');
@@ -969,6 +1032,19 @@ const tauriApi = {
       return local;
     }
   },
+  // Proxy settings for tracker traffic (desktop mode)
+  getProxySettings: async () => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('get_proxy_settings');
+  },
+  setProxySettings: async settings => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('set_proxy_settings', { settings });
+  },
+  testProxy: async settings => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('test_proxy', { settings });
+  },
   getConfig: async () => {
     const { invoke } = await import('@tauri-apps/api/core');
     return invoke('get_config');
@@ -1187,6 +1263,10 @@ const wasmApi = {
       return null;
     }
   },
+  // Proxy settings are not available in WASM/browser mode
+  getProxySettings: async () => null,
+  setProxySettings: async () => {},
+  testProxy: async () => null,
   getConfig: () => {
     const stored = localStorage.getItem('rustatio-config');
     return stored ? JSON.parse(stored) : null;
