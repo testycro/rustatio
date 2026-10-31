@@ -52,16 +52,47 @@ function writeJsonStorage(key, value) {
   localStorage.setItem(key, JSON.stringify(value));
 }
 
+// In desktop (Tauri) mode the default preset lives in localStorage, but the watch
+// folder reads the backend default config. Keep both in sync, otherwise torrents
+// added via the watch folder ignore the preset (e.g. initial completion percent).
+let defaultPresetSyncedToBackend = false;
+
+async function syncDefaultConfigToBackend(preset) {
+  if (!isTauri) return;
+
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    if (preset?.settings) {
+      await invoke('set_default_config', { config: preset.settings });
+    } else {
+      await invoke('clear_default_config');
+    }
+  } catch (error) {
+    console.warn('Failed to sync default preset to backend config:', error);
+  }
+}
+
 async function getLocalDefaultPreset() {
-  return readJsonStorage(DEFAULT_PRESET_KEY, null);
+  const stored = readJsonStorage(DEFAULT_PRESET_KEY, null);
+
+  // One-time sync per session so a preset saved before this fix reaches the backend.
+  if (isTauri && stored?.settings && !defaultPresetSyncedToBackend) {
+    defaultPresetSyncedToBackend = true;
+    await syncDefaultConfigToBackend(stored);
+  }
+
+  return stored;
 }
 
 async function setLocalDefaultPreset(preset) {
   writeJsonStorage(DEFAULT_PRESET_KEY, preset);
+  defaultPresetSyncedToBackend = true;
+  await syncDefaultConfigToBackend(preset);
 }
 
 async function clearLocalDefaultPreset() {
   localStorage.removeItem(DEFAULT_PRESET_KEY);
+  await syncDefaultConfigToBackend(null);
 }
 
 async function listLocalCustomPresets() {
