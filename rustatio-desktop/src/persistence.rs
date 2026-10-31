@@ -1,4 +1,4 @@
-use rustatio_core::{FakerConfig, FakerState, ProxySettings, TorrentSummary};
+use rustatio_core::{ClientDefinition, FakerConfig, FakerState, ProxySettings, TorrentSummary};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -28,6 +28,10 @@ pub struct PersistedState {
     pub next_instance_id: u32,
     #[serde(default)]
     pub default_config: Option<FakerConfig>,
+    /// Emulated BitTorrent client definitions, stored next to `default_config`.
+    /// Missing clients fall back to the built-in ones.
+    #[serde(default)]
+    pub clients: Option<Vec<ClientDefinition>>,
     #[serde(default)]
     pub watch_settings: Option<WatchSettings>,
     #[serde(default)]
@@ -41,6 +45,7 @@ impl PersistedState {
             instances: HashMap::new(),
             next_instance_id: 1,
             default_config: None,
+            clients: None,
             watch_settings: None,
             proxy_settings: None,
             version: 1,

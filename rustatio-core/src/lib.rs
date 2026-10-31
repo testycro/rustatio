@@ -21,8 +21,9 @@ pub use grid::{primary_tracker_host, GridImportSettings, GridMode, InstanceSumma
 pub use peer_listener::{PeerCatalog, PeerListenerService, PeerListenerStatus, PeerLookup};
 pub use proxy::ProxySettings;
 pub use torrent::{
-    ClientConfig, ClientInfo, ClientType, HttpVersion, TorrentError, TorrentFile, TorrentInfo,
-    TorrentSummary,
+    builtin_client_definitions, client_definition, client_definitions, set_client_definitions,
+    ClientConfig, ClientDefinition, ClientInfo, ClientType, HttpVersion, TorrentError,
+    TorrentFile, TorrentInfo, TorrentSummary, VersionScheme,
 };
 pub use validation::*;
 

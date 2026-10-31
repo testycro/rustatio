@@ -236,6 +236,12 @@ fn main() {
     let saved_watch_settings = saved_state.watch_settings;
     let saved_proxy_settings = saved_state.proxy_settings;
 
+    // Client definitions are stored next to default_config in the state file
+    if let Some(definitions) = saved_state.clients {
+        let accepted = rustatio_core::set_client_definitions(definitions);
+        log::info!("Restored {accepted} client definition(s) from saved state");
+    }
+
     // Keep references for exit handler
     let fakers_for_exit = Arc::new(RwLock::new(HashMap::new()));
     let next_id_for_exit = Arc::new(RwLock::new(next_id));

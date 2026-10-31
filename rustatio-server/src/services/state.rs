@@ -372,6 +372,14 @@ impl AppState {
             *self.default_preset.write().await = Some(preset);
         }
 
+        // Client definitions live in the state file next to default_config. When
+        // absent (first start / older state.json), the built-in ones are used and
+        // get written out on the next save so they can be edited.
+        if let Some(definitions) = saved.clients.clone() {
+            let accepted = rustatio_core::set_client_definitions(definitions);
+            tracing::info!("Restored {accepted} client definition(s) from saved state");
+        }
+
         if let Some(settings) = saved.watch_settings.clone() {
             *self.watch_settings.write().await = Some(settings);
             tracing::info!("Restored watch settings from saved state");
@@ -503,6 +511,7 @@ impl AppState {
         let mut persisted = PersistedState {
             instances: HashMap::new(),
             default_config,
+            clients: Some(rustatio_core::client_definitions()),
             default_preset,
             watch_settings,
             proxy_settings,
