@@ -28,7 +28,7 @@
 
   /* global __APP_VERSION__ */
   let appVersion = $state(__APP_VERSION__);
-  const repository = 'https://github.com/takitsu21/rustatio';
+  const repository = 'https://github.com/testycro/rustatio';
   const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
   let {

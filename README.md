@@ -60,7 +60,7 @@ Rustatio runs as a native desktop app or as a self-hosted Docker server with a w
 
 ### Desktop
 
-Download the latest release for your platform from [Releases](https://github.com/takitsu21/rustatio/releases).
+Download the latest release for your platform from [Releases](https://github.com/testycro/rustatio/releases).
 
 **Windows**
 
@@ -132,7 +132,7 @@ services:
     restart: unless-stopped
 
   rustatio:
-    image: ghcr.io/takitsu21/rustatio:latest
+    image: ghcr.io/testycro/rustatio:latest
     container_name: rustatio
     environment:
       - PORT=8080
