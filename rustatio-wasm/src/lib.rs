@@ -206,36 +206,47 @@ pub async fn start_faker(
         let torrent_info_hash = torrent.info_hash;
 
         // Preserve cumulative stats if same torrent
-        let (cumulative_uploaded, cumulative_downloaded, tags, created_at) = INSTANCES.with(|instances| {
-            let instances_ref = instances.borrow();
-            if let Some(existing) = instances_ref.get(&id) {
-                if existing.torrent_info_hash == torrent_info_hash {
-                    rustatio_core::log_info!(
-                        "Same torrent detected - continuing with cumulative stats: uploaded={} bytes, downloaded={} bytes",
-                        existing.cumulative_uploaded,
-                        existing.cumulative_downloaded
-                    );
-                    (
-                        existing.cumulative_uploaded,
-                        existing.cumulative_downloaded,
-                        existing.tags.clone(),
-                        existing.created_at,
-                    )
+        let (cumulative_uploaded, cumulative_downloaded, cumulative_elapsed_secs, tags, created_at) =
+            INSTANCES.with(|instances| {
+                let instances_ref = instances.borrow();
+                if let Some(existing) = instances_ref.get(&id) {
+                    if existing.torrent_info_hash == torrent_info_hash {
+                        let elapsed_secs = existing
+                            .faker
+                            .get_stats()
+                            .elapsed_time
+                            .as_secs()
+                            .max(config.initial_elapsed_secs);
+                        rustatio_core::log_info!(
+                            "Same torrent detected - continuing with cumulative stats: uploaded={} bytes, downloaded={} bytes, seed_time={}s",
+                            existing.cumulative_uploaded,
+                            existing.cumulative_downloaded,
+                            elapsed_secs
+                        );
+                        (
+                            existing.cumulative_uploaded,
+                            existing.cumulative_downloaded,
+                            elapsed_secs,
+                            existing.tags.clone(),
+                            existing.created_at,
+                        )
+                    } else {
+                        rustatio_core::log_info!(
+                            "Different torrent detected - resetting cumulative stats (was: {}, now: {})",
+                            existing.torrent.name,
+                            torrent.name
+                        );
+                        (0u64, 0u64, 0u64, Vec::new(), now_millis())
+                    }
                 } else {
-                    rustatio_core::log_info!(
-                        "Different torrent detected - resetting cumulative stats (was: {}, now: {})",
-                        existing.torrent.name,
-                        torrent.name
-                    );
-                    (0u64, 0u64, Vec::new(), now_millis())
+                    // No instance in memory (e.g. after a page reload): use the saved seed time
+                    (0u64, 0u64, config.initial_elapsed_secs, Vec::new(), now_millis())
                 }
-            } else {
-                (0u64, 0u64, Vec::new(), now_millis())
-            }
-        });
+            });
 
         config.initial_uploaded = cumulative_uploaded;
         config.initial_downloaded = cumulative_downloaded;
+        config.initial_elapsed_secs = cumulative_elapsed_secs;
 
         let stored_config = config.clone();
         let torrent = Arc::new(torrent.without_files());

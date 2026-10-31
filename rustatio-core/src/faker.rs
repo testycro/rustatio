@@ -57,6 +57,10 @@ pub struct FakerConfig {
     /// Initial downloaded amount in bytes
     pub initial_downloaded: u64,
 
+    /// Initial elapsed (seed) time in seconds, restored from previous sessions
+    #[serde(default)]
+    pub initial_elapsed_secs: u64,
+
     /// Percentage already downloaded (0-100)
     pub completion_percent: f64,
 
@@ -200,6 +204,7 @@ impl From<PresetSettings> for FakerConfig {
             client_version: p.selected_client_version,
             initial_uploaded: 0,
             initial_downloaded: 0,
+            initial_elapsed_secs: 0,
             completion_percent: p.completion_percent.unwrap_or(100.0),
             num_want: 50,
             randomize_rates: p.randomize_rates.unwrap_or(true),
@@ -263,6 +268,7 @@ impl Default for FakerConfig {
             client_version: None,
             initial_uploaded: 0,
             initial_downloaded: 0,
+            initial_elapsed_secs: 0,
             completion_percent: 0.0,
             num_want: 50,
             randomize_rates: true,
@@ -336,7 +342,7 @@ pub struct FakerStats {
     pub session_uploaded: u64,   // Uploaded in current session
     pub session_downloaded: u64, // Downloaded in current session
     pub session_ratio: f64,      // Session ratio: session_uploaded / torrent_size
-    pub elapsed_time: Duration,  // Time since session started
+    pub elapsed_time: Duration,  // Cumulative seed time (kept across stop/start and restarts)
 
     // === RATES ===
     pub current_upload_rate: f64,   // Current upload rate KB/s
@@ -394,7 +400,9 @@ pub struct RatioFaker {
 
     // Timing
     start_time: Instant,
+    elapsed_offset: Duration,
     last_update: Instant,
+    session_base: Duration,
     announce_interval: Duration,
 
     // Scrape
@@ -419,6 +427,8 @@ struct TickInputs {
     announce_count: u32,
     torrent_size: u64,
     start_time: Instant,
+    elapsed_offset: Duration,
+    session_base: Duration,
     config: FakerConfig,
 }
 
@@ -664,7 +674,7 @@ impl RatioFaker {
             session_uploaded: 0,
             session_downloaded: 0,
             session_ratio: 0.0,
-            elapsed_time: Duration::from_secs(0),
+            elapsed_time: Duration::from_secs(config.initial_elapsed_secs),
 
             // Rates
             current_upload_rate: 0.0,
@@ -702,6 +712,8 @@ impl RatioFaker {
             post_stop_action: config.post_stop_action,
         };
 
+        let elapsed_offset = Duration::from_secs(config.initial_elapsed_secs);
+
         Ok(Self {
             torrent,
             config,
@@ -711,7 +723,9 @@ impl RatioFaker {
             key,
             tracker_id: None,
             start_time: Instant::now(),
+            elapsed_offset,
             last_update: Instant::now(),
+            session_base: Duration::ZERO,
             announce_interval: Duration::from_mins(30), // Default 30 minutes
             last_scrape: Instant::now(),
             scrape_supported: true,
@@ -735,8 +749,7 @@ impl RatioFaker {
         log_info!("Starting ratio faker for torrent: {}", self.torrent.name);
 
         self.reset_session_state_for_start(true);
-        self.start_time = Instant::now();
-        self.last_update = Instant::now();
+        self.begin_session(Instant::now());
 
         let request = self.build_announce_request(TrackerEvent::Started);
 
@@ -751,7 +764,6 @@ impl RatioFaker {
         self.stats.session_uploaded = 0;
         self.stats.session_downloaded = 0;
         self.stats.session_ratio = 0.0;
-        self.stats.elapsed_time = Duration::from_secs(0);
         self.stats.current_upload_rate = 0.0;
         self.stats.current_download_rate = 0.0;
         self.stats.average_upload_rate = 0.0;
@@ -781,8 +793,16 @@ impl RatioFaker {
         self.stats.state = FakerState::Starting;
     }
 
-    fn rebase_timers_from_elapsed(&mut self, now: Instant) {
-        self.start_time = now.checked_sub(self.stats.elapsed_time).unwrap_or(now);
+    const fn rebase_timers_from_elapsed(&mut self, now: Instant) {
+        self.start_time = now;
+        self.elapsed_offset = self.stats.elapsed_time;
+        self.last_update = now;
+    }
+
+    const fn begin_session(&mut self, now: Instant) {
+        self.session_base = self.stats.elapsed_time;
+        self.start_time = now;
+        self.elapsed_offset = self.stats.elapsed_time;
         self.last_update = now;
     }
 
@@ -1022,7 +1042,7 @@ impl RatioFaker {
 
     fn build_tick_inputs(&self, elapsed: Duration) -> TickInputs {
         let stats = &self.stats;
-        let elapsed_secs = stats.elapsed_time.as_secs();
+        let elapsed_secs = stats.elapsed_time.saturating_sub(self.session_base).as_secs();
 
         TickInputs {
             elapsed,
@@ -1033,6 +1053,8 @@ impl RatioFaker {
             announce_count: stats.announce_count,
             torrent_size: self.torrent.total_size,
             start_time: self.start_time,
+            elapsed_offset: self.elapsed_offset,
+            session_base: self.session_base,
             config: self.config.clone(),
         }
     }
@@ -1151,6 +1173,8 @@ impl RatioFaker {
             inputs.torrent_size,
             &inputs.config,
             inputs.start_time,
+            inputs.elapsed_offset,
+            inputs.session_base,
         );
     }
 
@@ -1261,8 +1285,7 @@ impl RatioFaker {
         }
 
         self.reset_session_state_for_start(false);
-        self.start_time = Instant::now();
-        self.last_update = Instant::now();
+        self.begin_session(Instant::now());
         Ok(())
     }
 
@@ -1330,7 +1353,7 @@ impl RatioFaker {
             session_uploaded: 0,
             session_downloaded: 0,
             session_ratio: 0.0,
-            elapsed_time: Duration::from_secs(0),
+            elapsed_time: Duration::from_secs(config.initial_elapsed_secs),
             current_upload_rate: 0.0,
             current_download_rate: 0.0,
             average_upload_rate: 0.0,
@@ -1548,12 +1571,15 @@ impl RatioFaker {
     }
 
     /// Update derived statistics (ratio, elapsed time, average rates, progress)
+    #[allow(clippy::too_many_arguments)]
     fn update_derived_stats_with_size(
         stats: &mut FakerStats,
         now: Instant,
         torrent_size: u64,
         config: &FakerConfig,
         start_time: Instant,
+        elapsed_offset: Duration,
+        session_base: Duration,
     ) {
         // Cumulative ratio (for display in Total Stats)
         let current_ratio =
@@ -1568,7 +1594,7 @@ impl RatioFaker {
             0.0
         };
 
-        stats.elapsed_time = now.duration_since(start_time);
+        stats.elapsed_time = elapsed_offset + now.duration_since(start_time);
 
         // Torrent completion percentage
         stats.torrent_completion = if torrent_size > 0 {
@@ -1577,10 +1603,10 @@ impl RatioFaker {
             100.0
         };
 
-        let elapsed_secs = stats.elapsed_time.as_secs_f64();
-        if elapsed_secs > 0.0 {
-            stats.average_upload_rate = (stats.session_uploaded as f64 / 1024.0) / elapsed_secs;
-            stats.average_download_rate = (stats.session_downloaded as f64 / 1024.0) / elapsed_secs;
+        let session_secs = stats.elapsed_time.saturating_sub(session_base).as_secs_f64();
+        if session_secs > 0.0 {
+            stats.average_upload_rate = (stats.session_uploaded as f64 / 1024.0) / session_secs;
+            stats.average_download_rate = (stats.session_downloaded as f64 / 1024.0) / session_secs;
         }
 
         Self::update_progress_and_eta_with_size(stats, config, torrent_size);
@@ -2702,5 +2728,79 @@ mod tests {
         assert!(matches!(faker.stats.state, FakerState::Stopped));
         assert_eq!(faker.stats.current_upload_rate, 0.0);
         assert_eq!(faker.stats.current_download_rate, 0.0);
+    }
+
+    #[test]
+    fn seed_time_larger_than_instant_origin_is_not_lost() {
+        let saved = Duration::from_hours(876_000);
+        let torrent = Arc::new(TorrentInfo {
+            info_hash: [41; 20],
+            announce: "https://tracker.test/announce".to_string(),
+            announce_list: None,
+            name: "sample".to_string(),
+            total_size: 1024,
+            piece_length: 256,
+            num_pieces: 4,
+            creation_date: None,
+            comment: None,
+            created_by: None,
+            is_single_file: true,
+            file_count: 1,
+            files: Vec::new(),
+        });
+        let faker = RatioFaker::new(
+            torrent,
+            FakerConfig { initial_elapsed_secs: saved.as_secs(), ..FakerConfig::default() },
+            None,
+        );
+        let mut faker = faker.unwrap_or_else(|_| panic!("failed to create faker"));
+
+        let _plan = faker.begin_start();
+        faker.stats.state = FakerState::Running;
+        let _outcome = faker.tick(Instant::now());
+
+        assert!(faker.stats.elapsed_time >= saved);
+        assert!(faker.stats.elapsed_time < saved + Duration::from_mins(1));
+    }
+
+    #[test]
+    fn stats_from_config_keeps_saved_seed_time() {
+        let stats = RatioFaker::stats_from_config(&FakerConfig {
+            initial_elapsed_secs: 5400,
+            ..FakerConfig::default()
+        });
+
+        assert_eq!(stats.elapsed_time, Duration::from_mins(90));
+    }
+
+    #[test]
+    fn start_keeps_cumulative_seed_time() {
+        let torrent = Arc::new(TorrentInfo {
+            info_hash: [22; 20],
+            announce: "https://tracker.test/announce".to_string(),
+            announce_list: None,
+            name: "sample".to_string(),
+            total_size: 1024,
+            piece_length: 256,
+            num_pieces: 4,
+            creation_date: None,
+            comment: None,
+            created_by: None,
+            is_single_file: true,
+            file_count: 1,
+            files: Vec::new(),
+        });
+        let faker = RatioFaker::new(
+            torrent,
+            FakerConfig { stop_at_seed_time: Some(3600), ..FakerConfig::default() },
+            None,
+        );
+        let mut faker = faker.unwrap_or_else(|_| panic!("failed to create faker"));
+        faker.stats.elapsed_time = Duration::from_mins(30);
+
+        assert!(faker.begin_start().is_some());
+        assert_eq!(faker.stats.elapsed_time, Duration::from_mins(30));
+        assert_eq!(faker.session_base, Duration::from_mins(30));
+        assert!(!faker.check_stop_conditions(&faker.stats));
     }
 }
