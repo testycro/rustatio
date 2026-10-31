@@ -2554,8 +2554,10 @@ mod tests {
     }
 
     #[test]
-    fn tick_while_tracker_down_retries_announce() {
-        let mut faker = sample_faker(37, FakerConfig::default());
+    fn tick_while_tracker_down_keeps_seed_clock_and_retries_announce() {
+        let mut faker =
+            sample_faker(37, FakerConfig { initial_elapsed_secs: 600, ..FakerConfig::default() });
+        faker.begin_session(Instant::now());
         faker.stats.state = FakerState::Running;
         faker.apply_tracker_error(&http_error());
 
@@ -2576,7 +2578,8 @@ mod tests {
         assert!(outcome.announce_due);
         assert!(!outcome.stop);
 
-        // Nothing was transferred while the tracker was down
+        // The seed clock kept running from the saved time, nothing was transferred
+        assert!(faker.stats.elapsed_time >= Duration::from_secs(600));
         assert_eq!(faker.stats.uploaded, uploaded_before);
         assert_eq!(faker.stats.downloaded, downloaded_before);
         assert_eq!(faker.stats.current_upload_rate, 0.0);
@@ -2623,6 +2626,32 @@ mod tests {
         assert!(faker.stats.tracker_error.is_none());
         assert_eq!(faker.stats.tracker_retry_attempt, 0);
         assert!(!faker.scrape_supported);
+    }
+
+    #[test]
+    fn seed_time_larger_than_instant_origin_is_not_lost() {
+        let saved = Duration::from_hours(876_000);
+        let mut faker = sample_faker(
+            41,
+            FakerConfig { initial_elapsed_secs: saved.as_secs(), ..FakerConfig::default() },
+        );
+
+        let _plan = faker.begin_start();
+        faker.stats.state = FakerState::Running;
+        let _outcome = faker.tick(Instant::now());
+
+        assert!(faker.stats.elapsed_time >= saved);
+        assert!(faker.stats.elapsed_time < saved + Duration::from_mins(1));
+    }
+
+    #[test]
+    fn stats_from_config_keeps_saved_seed_time() {
+        let stats = RatioFaker::stats_from_config(&FakerConfig {
+            initial_elapsed_secs: 5400,
+            ..FakerConfig::default()
+        });
+
+        assert_eq!(stats.elapsed_time, Duration::from_mins(90));
     }
 
     #[test]
@@ -2731,52 +2760,9 @@ mod tests {
     }
 
     #[test]
-    fn seed_time_larger_than_instant_origin_is_not_lost() {
-        let saved = Duration::from_hours(876_000);
-        let torrent = Arc::new(TorrentInfo {
-            info_hash: [41; 20],
-            announce: "https://tracker.test/announce".to_string(),
-            announce_list: None,
-            name: "sample".to_string(),
-            total_size: 1024,
-            piece_length: 256,
-            num_pieces: 4,
-            creation_date: None,
-            comment: None,
-            created_by: None,
-            is_single_file: true,
-            file_count: 1,
-            files: Vec::new(),
-        });
-        let faker = RatioFaker::new(
-            torrent,
-            FakerConfig { initial_elapsed_secs: saved.as_secs(), ..FakerConfig::default() },
-            None,
-        );
-        let mut faker = faker.unwrap_or_else(|_| panic!("failed to create faker"));
-
-        let _plan = faker.begin_start();
-        faker.stats.state = FakerState::Running;
-        let _outcome = faker.tick(Instant::now());
-
-        assert!(faker.stats.elapsed_time >= saved);
-        assert!(faker.stats.elapsed_time < saved + Duration::from_mins(1));
-    }
-
-    #[test]
-    fn stats_from_config_keeps_saved_seed_time() {
-        let stats = RatioFaker::stats_from_config(&FakerConfig {
-            initial_elapsed_secs: 5400,
-            ..FakerConfig::default()
-        });
-
-        assert_eq!(stats.elapsed_time, Duration::from_mins(90));
-    }
-
-    #[test]
     fn start_keeps_cumulative_seed_time() {
         let torrent = Arc::new(TorrentInfo {
-            info_hash: [22; 20],
+            info_hash: [22u8; 20],
             announce: "https://tracker.test/announce".to_string(),
             announce_list: None,
             name: "sample".to_string(),
