@@ -1,5 +1,14 @@
 <script>
-  import { Scale, EyeOff, Server, Download, Rocket, Folder, Star } from '@lucide/svelte';
+  import {
+    Scale,
+    EyeOff,
+    Server,
+    Download,
+    Rocket,
+    Folder,
+    Star,
+    CalendarClock,
+  } from '@lucide/svelte';
 
   let { icon, size = 20, class: className = '' } = $props();
 
@@ -12,6 +21,7 @@
     rocket: Rocket, // fast
     folder: Folder, // default/custom
     star: Star, // exported custom preset
+    'calendar-clock': CalendarClock, // daemon-month
   };
 
   let IconComponent = $derived(iconMap[icon] || Folder);

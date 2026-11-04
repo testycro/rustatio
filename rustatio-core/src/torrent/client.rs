@@ -425,9 +425,16 @@ pub enum HttpVersion {
 }
 
 impl ClientConfig {
-    /// Get configuration for a specific client, built from its active definition
+    /// Get configuration for a specific client, built from its active definition.
+    ///
+    /// When the client no longer exists, the default client is used at its own default
+    /// version: the requested version belongs to the deleted client and would give the
+    /// default client a peer ID and User-Agent that never existed.
     pub fn get(client_type: &ClientType, version: Option<String>) -> Self {
-        client_type.definition().to_config(version)
+        client_definition(client_type.id()).map_or_else(
+            || client_type.definition().to_config(None),
+            |definition| definition.to_config(version),
+        )
     }
 
     /// Generate a random peer ID based on this client config
@@ -458,12 +465,13 @@ trait PadString {
 }
 
 impl PadString for str {
+    /// Works on characters: slicing bytes panicked (and aborted the whole process, see
+    /// `panic = "abort"`) on a version holding a non-ASCII character.
     fn pad_to_width_with_char(&self, width: usize, ch: char) -> String {
-        if self.len() >= width {
-            self[..width].to_string()
-        } else {
-            format!("{}{}", self, ch.to_string().repeat(width - self.len()))
-        }
+        let mut padded: String = self.chars().take(width).collect();
+        let len = padded.chars().count();
+        padded.extend(std::iter::repeat_n(ch, width - len));
+        padded
     }
 }
 
@@ -857,6 +865,25 @@ mod tests {
         let config = ClientConfig::get(&ClientType::new("deleted-client"), None);
         assert_eq!(config.client_type, ClientType::default());
         assert_eq!(ClientType::default(), ClientType::new("qbittorrent"));
+    }
+
+    #[test]
+    fn test_unknown_client_ignores_the_version_of_the_deleted_client() {
+        let config =
+            ClientConfig::get(&ClientType::new("deleted-client"), Some("2.1.1".to_string()));
+        let default = default_client_definition();
+        assert_eq!(config.client_type, ClientType::new(default.id.clone()));
+        assert_eq!(config.version, default.default_version);
+    }
+
+    #[test]
+    fn test_version_code_with_non_ascii_characters_does_not_panic() {
+        let config = ClientConfig::get(&ClientType::new("utorrent"), Some("abcé.1".to_string()));
+        assert_eq!(config.peer_id_prefix.chars().count(), 8);
+
+        assert_eq!("abcé1".pad_to_width_with_char(4, '0'), "abcé");
+        assert_eq!("é".pad_to_width_with_char(2, '0'), "é0");
+        assert_eq!("12".pad_to_width_with_char(4, '0'), "1200");
     }
 
     #[test]

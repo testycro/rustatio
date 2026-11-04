@@ -1,5 +1,9 @@
+import { resolvePresetClient } from '../clients/clientCatalog.js';
+
+// Also resolves the client of the preset against the saved client definitions (latest version,
+// default client when it no longer exists), see resolvePresetClient.
 export function normalizePresetSettings(settings = {}) {
-  return {
+  return resolvePresetClient({
     ...settings,
     ...(settings.idleWhenNoLeechers == null && settings.stopWhenNoLeechers != null
       ? { idleWhenNoLeechers: settings.stopWhenNoLeechers }
@@ -7,7 +11,70 @@ export function normalizePresetSettings(settings = {}) {
     ...(settings.idleWhenNoSeeders == null && settings.stopWhenNoSeeders != null
       ? { idleWhenNoSeeders: settings.stopWhenNoSeeders }
       : {}),
-  };
+  });
+}
+
+// Instance settings a preset may change. Anything else found in a preset (an imported file can
+// hold any key: id, torrent, isRunning, stats...) must never reach the instance.
+export const PRESET_INSTANCE_KEYS = Object.freeze([
+  'selectedClient',
+  'selectedClientVersion',
+  'uploadRate',
+  'downloadRate',
+  'port',
+  'vpnPortSync',
+  'completionPercent',
+  'randomizeRates',
+  'randomRangePercent',
+  'updateIntervalSeconds',
+  'scrapeInterval',
+  'progressiveRatesEnabled',
+  'targetUploadRate',
+  'targetDownloadRate',
+  'progressiveDurationHours',
+  'stopAtRatioEnabled',
+  'stopAtRatio',
+  'randomizeRatio',
+  'randomRatioRangePercent',
+  'stopAtUploadedEnabled',
+  'stopAtUploadedGB',
+  'stopAtDownloadedEnabled',
+  'stopAtDownloadedGB',
+  'stopAtSeedTimeEnabled',
+  'stopAtSeedTimeHours',
+  'idleWhenNoLeechers',
+  'idleWhenNoSeeders',
+  'postStopAction',
+]);
+
+// Keys kept in a saved preset: the instance settings, the preset-only options and the legacy
+// names still read by normalizePresetSettings.
+const PRESET_SETTING_KEYS = new Set([
+  ...PRESET_INSTANCE_KEYS,
+  'useLatestClientVersion',
+  'stopWhenNoLeechers',
+  'stopWhenNoSeeders',
+]);
+
+function pickKeys(settings, keys) {
+  const picked = {};
+  for (const [key, value] of Object.entries(settings || {})) {
+    if (keys.has(key) && value !== undefined) picked[key] = value;
+  }
+  return picked;
+}
+
+// Settings of a preset coming from outside (imported file): unknown keys are dropped.
+export function sanitizePresetSettings(settings = {}) {
+  return pickKeys(settings, PRESET_SETTING_KEYS);
+}
+
+const INSTANCE_KEY_SET = new Set(PRESET_INSTANCE_KEYS);
+
+// Settings to put on an instance: resolved like above, restricted to the instance settings (no
+// preset-only options, nothing that could overwrite the state of the instance).
+export function presetInstanceSettings(settings = {}) {
+  return pickKeys(normalizePresetSettings(settings), INSTANCE_KEY_SET);
 }
 
 export function normalizePreset(preset) {
@@ -25,7 +92,10 @@ export function normalizePresets(presets = []) {
   return presets.map(normalizePreset);
 }
 
-export function buildCustomPreset(instance, { name, description = '', id, now = new Date() } = {}) {
+export function buildCustomPreset(
+  instance,
+  { name, description = '', id, now = new Date(), useLatestClientVersion = true } = {}
+) {
   if (!instance) {
     throw new Error('Instance not found.');
   }
@@ -49,6 +119,8 @@ export function buildCustomPreset(instance, { name, description = '', id, now = 
     settings: {
       selectedClient: instance.selectedClient,
       selectedClientVersion: instance.selectedClientVersion,
+      // Follow the client updates instead of keeping this exact version
+      useLatestClientVersion,
       uploadRate: instance.uploadRate,
       downloadRate: instance.downloadRate,
       port: instance.port,

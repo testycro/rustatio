@@ -21,6 +21,24 @@ pub type Result<T> = std::result::Result<T, TorrentError>;
 
 type BencodeDict = std::collections::HashMap<Vec<u8>, serde_bencode::value::Value>;
 
+/// Size field of the info dictionary: a crafted torrent could give a negative value, which used
+/// to wrap around to a huge `u64`.
+fn get_size(dict: &BencodeDict, key: &str) -> Result<u64> {
+    to_size(key, bencode::get_int(dict, key)?)
+}
+
+fn to_size(key: &str, value: i64) -> Result<u64> {
+    u64::try_from(value)
+        .map_err(|_| TorrentError::InvalidStructure(format!("Negative '{key}': {value}")))
+}
+
+/// Adds a file length to the total size, refusing a total that does not fit in a `u64`.
+fn add_size(total: u64, length: u64) -> Result<u64> {
+    total
+        .checked_add(length)
+        .ok_or_else(|| TorrentError::InvalidStructure("Total size is too large".into()))
+}
+
 fn parse_announce_list(dict: &BencodeDict) -> Option<Vec<Vec<String>>> {
     dict.get(b"announce-list".as_ref())
         .and_then(|v| match v {
@@ -205,7 +223,7 @@ impl TorrentInfo {
         let name = bencode::get_string(info_dict, "name")?;
 
         // Extract piece length
-        let piece_length = bencode::get_int(info_dict, "piece length")? as u64;
+        let piece_length = get_size(info_dict, "piece length")?;
 
         // Extract pieces length only (avoid cloning piece hash data)
         let pieces_len = bencode::get_bytes_len(info_dict, "pieces")?;
@@ -216,12 +234,8 @@ impl TorrentInfo {
             bencode::get_int(info_dict, "length")
         {
             // Single file torrent
-            (
-                true,
-                length as u64,
-                vec![TorrentFile { path: vec![name.clone()], length: length as u64 }],
-                1,
-            )
+            let length = to_size("length", length)?;
+            (true, length, vec![TorrentFile { path: vec![name.clone()], length }], 1)
         } else if let Some(files_list) = info_dict.get(b"files".as_ref()).and_then(|v| match v {
             serde_bencode::value::Value::List(l) => Some(l),
             _ => None,
@@ -236,7 +250,7 @@ impl TorrentInfo {
                     return Err(TorrentError::InvalidStructure("Invalid file entry".into()));
                 };
 
-                let length = bencode::get_int(file_dict, "length")? as u64;
+                let length = get_size(file_dict, "length")?;
 
                 let path = file_dict
                     .get(b"path".as_ref())
@@ -255,7 +269,7 @@ impl TorrentInfo {
                     .collect();
 
                 files.push(TorrentFile { path, length });
-                total += length;
+                total = add_size(total, length)?;
                 count += 1;
             }
 
@@ -423,7 +437,7 @@ impl TorrentSummary {
 
     fn basic_info(info_dict: &BencodeDict) -> Result<(String, u64, usize)> {
         let name = bencode::get_string(info_dict, "name")?;
-        let piece_length = bencode::get_int(info_dict, "piece length")? as u64;
+        let piece_length = get_size(info_dict, "piece length")?;
         let pieces_len = bencode::get_bytes_len(info_dict, "pieces")?;
         let num_pieces = pieces_len / 20;
         Ok((name, piece_length, num_pieces))
@@ -431,7 +445,7 @@ impl TorrentSummary {
 
     fn files_summary(info_dict: &BencodeDict) -> Result<(bool, u64, usize)> {
         if let Ok(length) = bencode::get_int(info_dict, "length") {
-            return Ok((true, length as u64, 1));
+            return Ok((true, to_size("length", length)?, 1));
         }
 
         let Some(files_list) = info_dict.get(b"files".as_ref()).and_then(|v| match v {
@@ -451,8 +465,8 @@ impl TorrentSummary {
                 return Err(TorrentError::InvalidStructure("Invalid file entry".into()));
             };
 
-            let length = bencode::get_int(file_dict, "length")? as u64;
-            total += length;
+            let length = get_size(file_dict, "length")?;
+            total = add_size(total, length)?;
             count += 1;
         }
 
@@ -803,6 +817,65 @@ mod tests {
         let res = TorrentInfo::from_bytes(&data);
 
         assert!(matches!(res, Err(TorrentError::InvalidStructure(_))));
+        Ok(())
+    }
+
+    #[test]
+    fn test_from_bytes_rejects_negative_sizes() -> Result<()> {
+        let single = |piece_length: i64, length: i64| {
+            encode(&dict(vec![
+                (b"announce".to_vec(), bytes("http://tracker.test/announce")),
+                (
+                    b"info".to_vec(),
+                    dict(vec![
+                        (b"name".to_vec(), bytes("file")),
+                        (b"piece length".to_vec(), int(piece_length)),
+                        (b"pieces".to_vec(), pieces(1)),
+                        (b"length".to_vec(), int(length)),
+                    ]),
+                ),
+            ]))
+        };
+
+        for data in [single(16384, -1)?, single(-16384, 10)?] {
+            assert!(matches!(
+                TorrentInfo::from_bytes(&data),
+                Err(TorrentError::InvalidStructure(_))
+            ));
+            assert!(matches!(
+                TorrentSummary::from_bytes(&data),
+                Err(TorrentError::InvalidStructure(_))
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_from_bytes_rejects_total_size_overflow() -> Result<()> {
+        let file = |length: i64| {
+            dict(vec![
+                (b"length".to_vec(), int(length)),
+                (b"path".to_vec(), list(vec![bytes("a")])),
+            ])
+        };
+        let data = encode(&dict(vec![
+            (b"announce".to_vec(), bytes("http://tracker.test/announce")),
+            (
+                b"info".to_vec(),
+                dict(vec![
+                    (b"name".to_vec(), bytes("folder")),
+                    (b"piece length".to_vec(), int(16384)),
+                    (b"pieces".to_vec(), pieces(1)),
+                    (b"files".to_vec(), list(vec![file(i64::MAX), file(i64::MAX), file(i64::MAX)])),
+                ]),
+            ),
+        ]))?;
+
+        assert!(matches!(TorrentInfo::from_bytes(&data), Err(TorrentError::InvalidStructure(_))));
+        assert!(matches!(
+            TorrentSummary::from_bytes(&data),
+            Err(TorrentError::InvalidStructure(_))
+        ));
         Ok(())
     }
 

@@ -45,12 +45,6 @@ if [ ! -f "$DATA_DIR/rules.txt" ]; then
         echo "=> Fichier rules.txt par défaut copié dans $DATA_DIR"
     fi
 fi
-if [ ! -f "$DATA_DIR/state.json" ]; then
-    if [ -f /app/state.default.json ]; then
-        cp /app/state.default.json "$DATA_DIR/state.json"
-        echo "=> Fichier state.json par défaut copié dans $DATA_DIR"
-    fi
-fi
 
 # Only modify user/group if running as root
 if [ "$(id -u)" = "0" ]; then

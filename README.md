@@ -132,7 +132,9 @@ services:
       - HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE={"auth":"apikey","apikey":"${GLUETUN_API_KEY:-CHANGE_ME}"}
     ports:
       - "${WEBUI_PORT:-8080}:8080" # Rustatio Web UI
-      - "8081:8081"  # Admin Daemon
+      # Admin Daemon: reachable from the Web UI (Daemon menu) without exposing it. To open its
+      # own port, also set ADMIN_HOST=0.0.0.0 (and AUTH_TOKEN) on the rustatio service
+      # - "8081:8081"
     restart: unless-stopped
 
   rustatio:
@@ -179,6 +181,8 @@ docker compose up -d
 | `PORT` | Internal server port | `8080` |
 | `RUST_LOG` | Log level (`error`, `warn`, `info`, `debug`, `trace`) | `info` (`trace` in the example above) |
 | `VPN_PORT_SYNC` | Follow Gluetun's forwarded port automatically (requires `VPN_PORT_FORWARDING=on`) | `on` in the example above |
+| `ADMIN_HOST` | Address the admin daemon panel listens on; `127.0.0.1` keeps it reachable only through the web UI (Daemon menu) | `127.0.0.1` |
+| `CORS_ALLOWED_ORIGINS` | Comma-separated origins allowed to call the API from another site (`*` for any). The web UI does not need it | none |
 
 **Watch folder**: create the host directory before starting the container (otherwise Docker creates it as root and the container can't read it), then uncomment the volume mount. New `.torrent` files are picked up automatically.
 

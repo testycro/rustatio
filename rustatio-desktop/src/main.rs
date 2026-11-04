@@ -1,6 +1,8 @@
 #![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
 
 mod commands;
+mod daemon;
+mod data_dir;
 mod logging;
 mod persistence;
 mod scheduler;
@@ -11,8 +13,8 @@ mod watch_tests;
 
 use async_trait::async_trait;
 use rustatio_core::{
-    AppConfig, FakerState, PeerCatalog, PeerListenerService, PeerListenerStatus, PeerLookup,
-    RatioFaker, RatioFakerHandle,
+    FakerState, PeerCatalog, PeerListenerService, PeerListenerStatus, PeerLookup, RatioFaker,
+    RatioFakerHandle,
 };
 use rustatio_watch::InstanceSource;
 use std::collections::HashMap;
@@ -227,7 +229,8 @@ fn main() {
 
     log::info!("Starting Rustatio v{} (Multi-Instance)", env!("CARGO_PKG_VERSION"));
 
-    let config = AppConfig::load_or_default();
+    persistence::migrate_legacy_data();
+    let config = persistence::load_config();
 
     let saved_state = persistence::load_state();
     let next_id = saved_state.next_instance_id.max(1);
@@ -235,6 +238,7 @@ fn main() {
     let saved_default_config = saved_state.default_config.clone();
     let saved_watch_settings = saved_state.watch_settings;
     let saved_proxy_settings = saved_state.proxy_settings;
+    let saved_daemon_settings = saved_state.daemon_settings;
 
     // Client definitions are stored next to default_config in the state file
     if let Some(definitions) = saved_state.clients {
@@ -273,6 +277,7 @@ fn main() {
         watch: Arc::new(RwLock::new(None)),
         default_config: Arc::new(RwLock::new(saved_default_config)),
         watch_settings: Arc::new(RwLock::new(saved_watch_settings)),
+        daemon_settings: Arc::new(RwLock::new(saved_daemon_settings)),
         should_exit: Arc::clone(&should_exit),
         close_prompt_open: Arc::clone(&close_prompt_open),
         peer_listener: Arc::new(RwLock::new(None)),
@@ -288,6 +293,7 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_os::init())
         .manage(app_state)
+        .manage(daemon::DaemonState::default())
         .invoke_handler(tauri::generate_handler![
             commands::create_instance,
             commands::delete_instance,
@@ -345,6 +351,11 @@ fn main() {
             commands::close_to_tray,
             commands::quit_app,
             commands::cancel_close_prompt,
+            daemon::daemon_request,
+            daemon::daemon_status,
+            daemon::daemon_start,
+            daemon::daemon_stop,
+            daemon::daemon_set_autostart,
         ])
         .setup(move |app| {
             rustatio_core::logger::init_logger(app.handle().clone());
@@ -435,6 +446,9 @@ fn main() {
                 scheduler::spawn(scheduler_state, app_handle);
             });
 
+            // Embedded admin daemon (no-op when no compiled daemon is bundled)
+            daemon::spawn(app.handle().clone());
+
             // Periodic auto-save every 30 seconds
             let state_for_save: tauri::State<'_, AppState> = app.state();
             let state_for_save = state_for_save.inner().clone();
@@ -475,6 +489,7 @@ fn main() {
             log::info!("Application exiting, saving final state...");
             let state = app_handle.state::<AppState>();
             save_state_sync(state.inner());
+            daemon::shutdown(app_handle);
         }
     });
 }

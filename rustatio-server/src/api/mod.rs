@@ -167,6 +167,7 @@ pub fn router() -> Router<ServerState> {
         .merge(routes::events::router())
         .merge(routes::grid::router())
         .merge(routes::browse::router())
+        .merge(routes::daemon::router())
 }
 
 pub fn public_router() -> Router<ServerState> {

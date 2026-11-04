@@ -1,4 +1,4 @@
-const VALID_VIEW_MODES = new Set(['standard', 'grid', 'watch']);
+const VALID_VIEW_MODES = new Set(['standard', 'grid', 'watch', 'daemon']);
 
 function normalizeViewMode(value, fallback = 'grid') {
   if (!value) return fallback;

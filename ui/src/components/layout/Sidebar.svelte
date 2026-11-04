@@ -24,6 +24,7 @@
     Github,
     LayoutGrid,
     AlertTriangle,
+    Terminal,
   } from '@lucide/svelte';
 
   /* global __APP_VERSION__ */
@@ -49,6 +50,9 @@
   let isCompact = $derived(isOpen ? false : isCollapsed);
   let isWatchMode = $derived($viewMode === 'watch');
   let isWatchRuntime = $derived(getRunMode() === 'server' || getRunMode() === 'desktop');
+  // The admin daemon (Python) exists in the Docker/server build and inside the desktop app
+  let isDaemonMode = $derived($viewMode === 'daemon');
+  let isDaemonRuntime = $derived(getRunMode() === 'server' || getRunMode() === 'desktop');
   let watchCount = $state(null);
   let watchLoadedCount = $state(null);
   let watchInterval = null;
@@ -67,6 +71,14 @@
     return Number.isFinite(value) ? value : 16;
   });
   let rowHeight = $derived(1.75 * rootFontPx);
+
+  // Browser-only (WASM) build: the Daemon view is a demo with simulated data, no backend
+  let isDaemonDemo = $derived(getRunMode() === 'wasm');
+  let isDaemonAvailable = $derived(isDaemonRuntime || isDaemonDemo);
+  let daemonTitle = $derived.by(() => {
+    if (isDaemonDemo) return 'Admin daemon (demo)';
+    return isDaemonRuntime ? 'Admin daemon' : 'Admin daemon (not available here)';
+  });
 
   let filteredInstances = $derived.by(() => {
     const query = search.trim().toLowerCase();
@@ -372,6 +384,41 @@
           title="{watchLoadedCount ?? 0} loaded · {watchCount} watch files"
         >
           {watchLoadedCount ?? 0}
+        </span>
+      {/if}
+    </button>
+
+    <button
+      class={cn(
+        'relative flex w-full items-center gap-2 px-2 py-1.5 text-xs transition-colors cursor-pointer',
+        isDaemonMode
+          ? 'bg-muted text-foreground'
+          : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
+        !isDaemonAvailable && 'cursor-not-allowed opacity-50',
+        isCompact && 'lg:justify-center lg:px-0'
+      )}
+      onclick={() => (isDaemonAvailable ? viewMode.set('daemon') : null)}
+      title={daemonTitle}
+      disabled={!isDaemonAvailable}
+      aria-disabled={!isDaemonAvailable}
+    >
+      <span
+        class={cn(
+          'absolute bottom-1 left-0 top-1 w-0.5',
+          isDaemonMode ? 'bg-primary' : 'bg-transparent'
+        )}
+        aria-hidden="true"
+      ></span>
+      <Terminal size={14} class="flex-shrink-0" />
+      <span class={cn('flex-1 text-left', isCompact && 'lg:hidden')}>Daemon</span>
+      {#if isDaemonDemo}
+        <span
+          class={cn(
+            'border border-stat-ratio/40 px-1 text-[0.5625rem] font-semibold uppercase leading-4 text-stat-ratio',
+            isCompact && 'lg:hidden'
+          )}
+        >
+          Demo
         </span>
       {/if}
     </button>

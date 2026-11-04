@@ -6,7 +6,10 @@ import {
   buildPresetExportData,
   normalizePreset,
   normalizePresetSettings,
+  presetInstanceSettings,
+  sanitizePresetSettings,
 } from './customPreset.js';
+import { setClientCatalog } from '../clients/clientCatalog.js';
 
 function makeInstance() {
   return {
@@ -104,4 +107,76 @@ test('normalizePreset normalizes nested preset settings', () => {
   });
 
   assert.equal(preset.settings.idleWhenNoLeechers, true);
+});
+
+test('custom presets follow the latest client version unless asked not to', () => {
+  assert.equal(
+    buildCustomPreset(makeInstance(), { name: 'Latest' }).settings.useLatestClientVersion,
+    true
+  );
+  assert.equal(
+    buildCustomPreset(makeInstance(), { name: 'Pinned', useLatestClientVersion: false }).settings
+      .useLatestClientVersion,
+    false
+  );
+});
+
+test('preset settings are resolved against the saved clients', () => {
+  setClientCatalog([
+    { id: 'qbittorrent', versions: ['5.1.0', '5.2.0', '5.3.0'], is_default: true },
+    { id: 'transmission', versions: ['4.1.4', '4.0.5'] },
+  ]);
+  try {
+    const latest = normalizePresetSettings({ selectedClient: 'qbittorrent' });
+    assert.equal(latest.selectedClientVersion, '5.3.0');
+
+    const pinned = normalizePresetSettings({
+      selectedClient: 'qbittorrent',
+      selectedClientVersion: '5.2.0',
+      useLatestClientVersion: false,
+    });
+    assert.equal(pinned.selectedClientVersion, '5.2.0');
+
+    const removed = normalizePresetSettings({ selectedClient: 'deluge' });
+    assert.equal(removed.selectedClient, 'qbittorrent');
+    assert.equal(removed.selectedClientVersion, '5.3.0');
+  } finally {
+    setClientCatalog([]);
+  }
+});
+
+test('preset settings applied to an instance only contain instance settings', () => {
+  const settings = presetInstanceSettings({
+    uploadRate: 42,
+    scrapeInterval: 90,
+    useLatestClientVersion: true,
+    stopWhenNoLeechers: true,
+    id: 'other-instance',
+    torrent: { name: 'injected' },
+    isRunning: true,
+    stats: {},
+  });
+
+  assert.deepEqual(settings, {
+    uploadRate: 42,
+    scrapeInterval: 90,
+    idleWhenNoLeechers: true,
+  });
+});
+
+test('imported preset settings drop unknown keys', () => {
+  // Parsed like an imported file: "__proto__" is then a real key of the object
+  const settings = sanitizePresetSettings(
+    JSON.parse(
+      '{"selectedClient":"qbittorrent","useLatestClientVersion":false,"stopWhenNoSeeders":true,' +
+        '"torrentPath":"/etc/passwd","__proto__":{"polluted":true}}'
+    )
+  );
+
+  assert.deepEqual(settings, {
+    selectedClient: 'qbittorrent',
+    useLatestClientVersion: false,
+    stopWhenNoSeeders: true,
+  });
+  assert.equal(settings.polluted, undefined);
 });

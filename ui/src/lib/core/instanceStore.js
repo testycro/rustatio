@@ -1,7 +1,7 @@
 import { writable, get } from 'svelte/store';
 import { api } from '$lib/api';
 import { getDefaultPreset } from '$lib/presets/defaultPreset.js';
-import { normalizePreset } from '$lib/presets/customPreset.js';
+import { normalizePreset, presetInstanceSettings } from '$lib/presets/customPreset.js';
 import { getRunMode } from '$lib/api.js';
 import { getIdlingStatus, getStatusFromStats, getTrackerIssue } from '$lib/core/status.js';
 import { mergeSummary } from '$lib/core/instanceSync.js';
@@ -148,8 +148,9 @@ async function getServerEffectiveDefaults() {
 }
 
 async function buildNewInstanceDefaults(defaults = {}) {
-  const presetDefaults =
-    normalizePreset(await api.getDefaultPreset())?.settings || getDefaultPreset()?.settings || {};
+  const presetDefaults = presetInstanceSettings(
+    normalizePreset(await api.getDefaultPreset())?.settings || getDefaultPreset()?.settings || {}
+  );
   const serverMode = isServerMode();
   const serverDefaults = serverMode ? await getServerEffectiveDefaults() : {};
   const vpnPortSync = serverMode

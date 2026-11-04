@@ -494,6 +494,34 @@ jobs:
             sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" package.json
           fi
 
+      # The admin daemon (Python) is compiled into an executable bundled with the app
+      # (rustatio-desktop/binaries/, see bundle.externalBin in tauri.conf.json)
+      - name: Build admin daemon (sidecar)
+        shell: bash
+        env:
+          TARGET: ${{ steps.target.outputs.target }}
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            python -m venv .daemon-venv
+            PY=.daemon-venv/Scripts/python
+          elif [[ "$TARGET" == "universal-apple-darwin" ]]; then
+            # The runner's Python (Homebrew) is arm64 only: a universal executable needs the
+            # universal2 Python from python.org
+            curl -fsSL -o "$RUNNER_TEMP/python.pkg" https://www.python.org/ftp/python/3.12.8/python-3.12.8-macos11.pkg
+            sudo installer -pkg "$RUNNER_TEMP/python.pkg" -target /
+            /Library/Frameworks/Python.framework/Versions/3.12/bin/python3 -m venv .daemon-venv
+            PY=.daemon-venv/bin/python
+          else
+            python3 -m venv .daemon-venv
+            PY=.daemon-venv/bin/python
+          fi
+          "$PY" -m pip install -r scripts/daemon-requirements.txt
+          if [[ "$TARGET" == "universal-apple-darwin" ]]; then
+            "$PY" scripts/build_daemon_sidecar.py --universal
+          else
+            "$PY" scripts/build_daemon_sidecar.py --target "$TARGET"
+          fi
+
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@73fb865345c54760d875b94642314f8c0c894afa # action-v0.6.1
         env:

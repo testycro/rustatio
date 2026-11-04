@@ -18,7 +18,9 @@ services:
       - HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE={"auth":"apikey","apikey":"${GLUETUN_API_KEY:-CHANGE_ME}"}
     ports:
       - "${WEBUI_PORT:-8080}:8080" # Rustatio Web UI
-      - "8081:8081"  # Admin Daemon
+      # Admin Daemon: reachable from the Web UI (Daemon menu) without exposing it. To open its
+      # own port, also set ADMIN_HOST=0.0.0.0 (and AUTH_TOKEN) on the rustatio service
+      # - "8081:8081"
     restart: unless-stopped
 
   rustatio:

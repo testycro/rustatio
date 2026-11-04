@@ -4,6 +4,7 @@ pub mod auth;
 pub mod browse;
 pub mod clients;
 pub mod config;
+pub mod daemon;
 pub mod events;
 pub mod faker;
 pub mod grid;

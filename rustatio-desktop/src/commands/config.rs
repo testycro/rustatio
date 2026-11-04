@@ -23,7 +23,7 @@ pub async fn update_config(config: AppConfig, state: State<'_, AppState>) -> Res
     let mut app_config = state.config.write().await;
     *app_config = config.clone();
 
-    let path = AppConfig::default_path();
+    let path = crate::persistence::config_file_path();
     config.save(&path).map_err(|e| format!("Failed to save config: {e}"))?;
 
     log::info!("Configuration updated and saved");
@@ -76,9 +76,45 @@ pub fn set_log_level(level: String) {
     log::info!("IPC log level set to: {level}");
 }
 
+/// Only used to export presets. Limited to `.json` files so that the webview cannot overwrite
+/// any file of the user (scripts, shell profile...) through this command.
 #[tauri::command]
 pub async fn write_file(path: String, contents: String) -> Result<(), String> {
+    let path = json_export_path(&path)?;
     std::fs::write(&path, contents).map_err(|e| format!("Failed to write file: {e}"))?;
-    log::info!("File written to: {path}");
+    log::info!("File written to: {}", path.display());
     Ok(())
+}
+
+/// The save dialog does not add the extension everywhere (Linux): a name without extension
+/// gets `.json`, any other extension is refused.
+fn json_export_path(path: &str) -> Result<std::path::PathBuf, String> {
+    let mut path = std::path::PathBuf::from(path);
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some(ext) if ext.eq_ignore_ascii_case("json") => Ok(path),
+        None => {
+            path.set_extension("json");
+            Ok(path)
+        }
+        Some(_) => Err("Only .json files can be written".to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::json_export_path;
+    use std::path::PathBuf;
+
+    #[test]
+    fn json_export_path_only_allows_json_files() {
+        assert_eq!(json_export_path("/tmp/preset.json"), Ok(PathBuf::from("/tmp/preset.json")));
+        assert_eq!(json_export_path("/tmp/preset.JSON"), Ok(PathBuf::from("/tmp/preset.JSON")));
+        assert_eq!(json_export_path("/tmp/preset"), Ok(PathBuf::from("/tmp/preset.json")));
+        // never the file itself: a dot file has no extension, ".json" is added
+        assert_eq!(
+            json_export_path("/home/user/.bashrc"),
+            Ok(PathBuf::from("/home/user/.bashrc.json"))
+        );
+        assert!(json_export_path("/tmp/run.sh").is_err());
+    }
 }

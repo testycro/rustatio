@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { api, getRunMode } from '$lib/api.js';
+  import { setClientCatalog } from '$lib/clients/clientCatalog.js';
   import { errorText } from '$lib/proxy.js';
   import {
     HTTP_VERSIONS,
@@ -55,6 +56,7 @@
     loading = true;
     try {
       definitions = (await api.listClientDefinitions()) || [];
+      setClientCatalog(definitions);
       error = '';
     } catch (e) {
       error = `Failed to load clients: ${errorText(e)}`;

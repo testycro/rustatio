@@ -1,0 +1,100 @@
+/* Colors of the daemon view. Everything derives from the app theme tokens (or light-dark(),
+   which follows the color-scheme every theme sets), so it stays readable in all themes.
+   This file is not in a CSS layer on purpose: it must win over the Tailwind utilities. */
+
+.daemon-root {
+  --act-start: var(--color-stat-upload);
+  --act-stop: var(--color-stat-leecher);
+  --act-restart: light-dark(#c2410c, #fb923c);
+  --act-pause: light-dark(#c2410c, #fb923c);
+  --act-resume: var(--color-stat-download);
+  --act-delete: light-dark(#7e22ce, #c084fc);
+  --act-update: light-dark(#0f766e, #2dd4bf);
+  --act-addtags: light-dark(#0e7490, #22d3ee);
+  --act-removetags: light-dark(#8a5a44, #d6a58c);
+}
+
+.dm-start,
+.dm-act-start {
+  --tone: var(--act-start);
+}
+.dm-stop,
+.dm-act-stop {
+  --tone: var(--act-stop);
+}
+.dm-restart {
+  --tone: var(--act-restart);
+}
+.dm-act-pause {
+  --tone: var(--act-pause);
+}
+.dm-act-resume {
+  --tone: var(--act-resume);
+}
+.dm-act-delete {
+  --tone: var(--act-delete);
+}
+.dm-act-update {
+  --tone: var(--act-update);
+}
+.dm-act-addtags {
+  --tone: var(--act-addtags);
+}
+.dm-act-removetags {
+  --tone: var(--act-removetags);
+}
+
+/* Tinted button / select: text + border + soft background all come from --tone */
+.dm-tone {
+  color: var(--tone);
+  border-color: color-mix(in srgb, var(--tone) 45%, transparent);
+  background-color: color-mix(in srgb, var(--tone) 12%, transparent);
+}
+.dm-tone:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--tone) 24%, transparent);
+}
+/* Native dropdown lists ignore the tint: keep them readable in every theme */
+.dm-tone option {
+  color: var(--color-foreground);
+  background-color: var(--color-popover);
+}
+
+/* One rule = one colored edge, the color of its action */
+.dm-rule {
+  border-left: 3px solid var(--tone, var(--color-border));
+}
+.dm-arrow {
+  color: var(--tone, var(--color-muted-foreground));
+}
+
+/* Logs: one tone per level */
+.dm-log {
+  padding-left: 0.5rem;
+  border-left: 2px solid transparent;
+}
+.dm-log-time {
+  margin-right: 0.5rem;
+  color: var(--color-muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.dm-log-error {
+  color: var(--color-stat-leecher);
+  border-left-color: var(--color-stat-leecher);
+  background-color: color-mix(in srgb, var(--color-stat-leecher) 8%, transparent);
+}
+.dm-log-warn {
+  color: var(--color-stat-ratio);
+  border-left-color: var(--color-stat-ratio);
+}
+.dm-log-success {
+  color: var(--color-stat-upload);
+}
+.dm-log-accent {
+  color: var(--color-stat-download);
+}
+.dm-log-trace {
+  color: var(--color-muted-foreground);
+}
+.dm-log-info {
+  color: var(--color-foreground);
+}

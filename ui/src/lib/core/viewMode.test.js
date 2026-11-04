@@ -6,6 +6,7 @@ test('normalizeViewMode accepts known modes', () => {
   assert.equal(normalizeViewMode('standard'), 'standard');
   assert.equal(normalizeViewMode('grid'), 'grid');
   assert.equal(normalizeViewMode('watch'), 'watch');
+  assert.equal(normalizeViewMode('daemon'), 'daemon');
 });
 
 test('normalizeViewMode falls back on invalid values', () => {

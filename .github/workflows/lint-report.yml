@@ -1,0 +1,128 @@
+name: Lint report
+
+# Runs every lint step on its own and prints its complete output, with the diffs prettier and
+# cargo fmt want to apply. hk stops at the first failing step and hides the others, which makes
+# the normal CI log hard to use. Start it by hand from the Actions tab (or on a pull request).
+# Nothing here fixes or pushes anything.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  lint:
+    name: Lint report
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Install mise
+        uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          cache: true
+
+      - name: Install UI dependencies
+        run: cd ui && npm ci
+
+      - name: Run every lint step
+        run: |
+          failed=""
+          for step in cargo-fmt typos actionlint shellcheck hadolint zizmor prettier eslint; do
+            echo
+            echo "================ hk check --step $step ================"
+            if ! hk check --all --step "$step"; then
+              failed="$failed $step"
+            fi
+          done
+          echo
+          echo "Failed steps:${failed:- none}"
+          printf '%s' "$failed" > "$RUNNER_TEMP/failed.txt"
+
+      - name: Prettier, files and diffs
+        run: |
+          cd ui
+          files=$(npx prettier --list-different . || true)
+          if [ -z "$files" ]; then
+            echo "prettier: nothing to change"
+            exit 0
+          fi
+          echo "Files prettier would change:"
+          echo "$files"
+          while IFS= read -r file; do
+            echo
+            echo "---------------- $file ----------------"
+            npx prettier "$file" | diff -u "$file" - || true
+          done <<< "$files"
+
+      - name: ESLint, full output
+        run: cd ui && npx eslint . || true
+
+      - name: cargo fmt, diffs
+        run: |
+          for manifest in Cargo.toml rustatio-wasm rustatio-server rustatio-watch rustatio-core rustatio-cli rustatio-desktop; do
+            path="$manifest"
+            if [ -d "$manifest" ]; then path="$manifest/Cargo.toml"; fi
+            echo "---------------- cargo fmt --check $path ----------------"
+            cargo fmt --all --check --manifest-path "$path" || true
+          done
+
+      - name: Complete hk log
+        if: always()
+        run: cat .git/hk/output.log || echo "no hk log"
+
+      - name: Fail when a step failed
+        run: |
+          failed=$(cat "$RUNNER_TEMP/failed.txt")
+          if [ -n "$failed" ]; then
+            echo "Failed steps:$failed"
+            exit 1
+          fi
+
+  clippy:
+    name: Clippy report
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Install mise
+        uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          cache: true
+
+      # .cargo/config.toml links with mold
+      - name: Setup mold linker
+        uses: rui314/setup-mold@339e96b4ff1f3bd865856ba4cbbe8818a7acb038 # v1
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            clang
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+
+      - name: Create frontend dist stub for Tauri compilation
+        run: mkdir -p ui/dist
+
+      - name: Clippy, full output
+        run: cargo clippy -p rustatio-core -p rustatio-cli -p rustatio-server -p rustatio --all-targets -- -D warnings

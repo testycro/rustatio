@@ -27,9 +27,10 @@ app = Flask(__name__)
 # CONFIGURATION
 # ==========================================
 DEFAULT_CONFIG = {
-    'PORT': 8080,                                 # Rustatio's port
+    'PORT': "",                                   # Rustatio's port
     'RUSTATIO_API': "http://127.0.0.1",           # Rustatio's ip
     'ADMIN_PORT': "",                             # Daemon admin port (blank to use Rustatio)
+    'ADMIN_HOST' : "127.0.0.1",                   # panneau joignable uniquement via l'app Rustatio (menu Daemon). "0.0.0.0" pour debloquer
     'AUTH_TOKEN': "",                             # If you want another token for admin panel (blank to use Rustatio)
     'REFRESH_INTERVAL': 0,                        # 0 to use scrape interval from Rustatio (hardcoded 10s min to avoid self spam)
     'ARCHIVE_FOLDER': "/data/archived",           # (blank to disable)
@@ -49,7 +50,7 @@ DEFAULT_CONFIG = {
 
 # Config's key locked
 READONLY_KEYS = {
-    'PORT', 'ADMIN_PORT', 'RUSTATIO_API',
+    'PORT', 'ADMIN_PORT', 'ADMIN_HOST', 'RUSTATIO_API', 'AUTH_TOKEN',
     'ARCHIVE_FOLDER', 'RULES_FILE', 'DEFAULTS_FILE',
     'LOGFILE', 'CHECK_LOGS_FILE'
 }
@@ -75,6 +76,24 @@ def parse_value(val, sample_value):
         return int(val)
     return str(val)
 
+def resolve_port(script_value, env_value):
+    """Priorité : valeur du script > variable d'environnement Docker.
+    Ignore None, "" et les espaces. Accepte int ou str numérique."""
+    for source, value in (("script", script_value), ("environnement", env_value)):
+        if value is None:
+            continue
+        s = str(value).strip()
+        if not s:
+            continue
+        try:
+            port = int(s)
+        except ValueError:
+            raise ValueError(f"PORT invalide ({source}) : {value!r}")
+        if not 1 <= port <= 65535:
+            raise ValueError(f"PORT hors limites ({source}) : {port}")
+        return port
+    raise ValueError("PORT non défini : ni dans le script, ni dans l'environnement Docker")
+
 class ConfigManager:
     def __init__(self, defaults: dict, readonly_keys: set):
         self.readonly_keys = readonly_keys
@@ -90,9 +109,10 @@ class ConfigManager:
             env_val = os.getenv(key)
             self.initial_state[key] = parse_value(env_val, default_val) if env_val is not None else default_val
 
-        port = self.initial_state['PORT']
-        admin_port = self.initial_state['ADMIN_PORT']
+        port = resolve_port(defaults.get('PORT'), os.getenv('PORT'))
+        self.initial_state['PORT'] = port
 
+        admin_port = self.initial_state['ADMIN_PORT']
         self.initial_state['ADMIN_PORT'] = int(admin_port) if admin_port else port + 1
         self.initial_state['RUSTATIO_API'] = os.getenv("RUSTATIO_API", f"http://127.0.0.1:{port}")
 
@@ -106,23 +126,28 @@ class ConfigManager:
 
         ALLOWED_LOG_LEVELS = {"", "TRACE", "DEBUG", "INFO", "WARN", "ERROR"}
 
+        # Everything is validated first: an invalid value no longer leaves the configuration
+        # half updated (nor ends in an error 500)
+        parsed = {}
         for key, val in new_data.items():
-            if key in self.state:
-                if key == 'RUST_DAEMON_LOG':
-                    val_str = str(val).strip().upper()
-                    if val_str not in ALLOWED_LOG_LEVELS:
-                        return False, f"Valeur invalide pour RUST_DAEMON_LOG. Autorisé : {', '.join(sorted(ALLOWED_LOG_LEVELS))}"
-                    val = val_str
+            if key not in self.state:
+                continue
+            if key == 'RUST_DAEMON_LOG':
+                val = str(val).strip().upper()
+                if val not in ALLOWED_LOG_LEVELS:
+                    return False, f"Valeur invalide pour RUST_DAEMON_LOG. Autorisé : {', '.join(sorted(ALLOWED_LOG_LEVELS))}"
+            try:
+                parsed[key] = parse_value(val, self.initial_state.get(key, ""))
+            except (TypeError, ValueError):
+                return False, f"Valeur invalide pour {key} : {val!r}"
 
-                sample_val = self.initial_state.get(key, "")
-                parsed_val = parse_value(val, sample_val)
-                self.state[key] = parsed_val
+        for key, parsed_val in parsed.items():
+            self.state[key] = parsed_val
+            os.environ[key] = str(parsed_val)
 
-                os.environ[key] = str(parsed_val)
-
-                if key == 'RUST_DAEMON_LOG':
-                    new_level = RUST_LOG_LEVELS.get(val_str, logging.INFO)
-                    logging.getLogger("Rustatio").setLevel(new_level)
+            if key == 'RUST_DAEMON_LOG':
+                new_level = RUST_LOG_LEVELS.get(parsed_val, logging.INFO)
+                logging.getLogger("Rustatio").setLevel(new_level)
 
         self._sync_to_globals() # globals part
         return True, "Variables mises à jour temporairement"
@@ -843,6 +868,12 @@ HTML_TEMPLATE = """
     </datalist>
 
     <script>
+        // Torrent names and tracker messages are untrusted: escape them before any innerHTML
+        const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, ch => HTML_ESCAPES[ch]);
+        }
+
         const i18n = {
             fr: {
                 ctrl_title: "⚙️ Rustatio Control", daemon_check: "Vérification...", btn_daemon_start: "▶ Démarrer Daemon",
@@ -1331,7 +1362,7 @@ HTML_TEMPLATE = """
                 for (const [tag, info] of Object.entries(data.state)) {
                     let errDetails = '';
                     for (const [err, count] of Object.entries(info.errors)) {
-                        errDetails += `<div style="font-size: 0.85em; color: #aaa; margin-top: 4px;">- ${err}: <strong style="color:#fff;">${count}</strong></div>`;
+                        errDetails += `<div style="font-size: 0.85em; color: #aaa; margin-top: 4px;">- ${escapeHtml(err)}: <strong style="color:#fff;">${escapeHtml(count)}</strong></div>`;
                     }
 
                     let statusBadge = info.status === "paused"
@@ -1341,15 +1372,15 @@ HTML_TEMPLATE = """
                         : `<span class="status-badge status-running" style="color: #a5d6a7;">${t('obs')}</span>`;
 
                     html += `<tr style="border-bottom: 1px solid #333;">
-                        <td style="padding: 10px; word-break: break-all; max-width: 250px;"><strong>${tag}</strong></td>
+                        <td style="padding: 10px; word-break: break-all; max-width: 250px;"><strong>${escapeHtml(tag)}</strong></td>
                         <td style="padding: 10px;">${statusBadge}</td>
                         <td style="padding: 10px;">
-                            <span style="color: var(--rust-orange); font-weight: bold;">${t('strikes')} ${info.total_strikes}</span>
+                            <span style="color: var(--rust-orange); font-weight: bold;">${t('strikes')} ${escapeHtml(info.total_strikes)}</span>
                             ${errDetails}
                         </td>
                         <td style="padding: 10px; color: #64b5f6; font-weight: bold;">${formatTimeLeft(info.time_left)}</td>
                         <td style="padding: 10px;">
-                            <button class="small start" style="background-color: #2e7d32;" onclick="clearAndResume(this.dataset.tag)" data-tag="${tag.replace(/"/g, '&quot;')}">${t('clearnresume')}</button>
+                            <button class="small start" style="background-color: #2e7d32;" onclick="clearAndResume(this.dataset.tag)" data-tag="${escapeHtml(tag)}">${t('clearnresume')}</button>
                         </td>
                     </tr>`;
                 }
@@ -1489,13 +1520,13 @@ HTML_TEMPLATE = """
                         : 'background: #181818; border: 1px solid var(--border-color);';
 
                     const labelHtml = isReadOnly
-                        ? `<span style="color: #777; font-family: monospace;" title="${t('read_only')}">🔒 ${key}</span>`
-                        : `<span style="color: #aaa; font-family: monospace;">${key}</span>`;
+                        ? `<span style="color: #777; font-family: monospace;" title="${t('read_only')}">🔒 ${escapeHtml(key)}</span>`
+                        : `<span style="color: #aaa; font-family: monospace;">${escapeHtml(key)}</span>`;
 
                     if (key === 'AUTH_TOKEN') {
                         inputHtml = `
                             <div style="display: inline-flex; align-items: center; gap: 4px;">
-                                <input id="env-input-${key}" type="password" value="${val}" ${isReadOnly ? 'readonly' : ''}
+                                <input id="env-input-${escapeHtml(key)}" type="password" value="${escapeHtml(val)}" ${isReadOnly ? 'readonly' : ''}
                                        style="background: #181818; border: 1px solid #333; border-radius: 4px; color: #888; font-family: monospace; width: 100px; padding: 2px 5px; text-align: right; ${isReadOnly ? 'cursor: not-allowed;' : ''}">
                                 <button id="auth-token-btn" onclick="toggleTokenVisibility()" type="button"
                                         style="background: none; border: none; cursor: pointer; padding: 0; font-size: 1em;">👁️</button>
@@ -1505,20 +1536,20 @@ HTML_TEMPLATE = """
                         const levels = ['', 'TRACE', 'DEBUG', 'INFO', 'WARN', 'ERROR'];
                         const options = levels.map(l => `<option value="${l}" ${currentVal === l ? 'selected' : ''}>${l || '(Default)'}</option>`).join('');
                         inputHtml = `
-                            <select id="env-input-${key}" style="background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-family: monospace; padding: 2px 5px;">
+                            <select id="env-input-${escapeHtml(key)}" style="background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-family: monospace; padding: 2px 5px;">
                                 ${options}
                             </select>`;
                     } else if (key === 'LOGS_WATCHER' || key === 'TOR_KEEP_LAST') {
                         const intVal = parseInt(val, 10) || 0;
                         inputHtml = `
-                            <select id="env-input-${key}" style="background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-family: monospace; padding: 2px 5px;">
+                            <select id="env-input-${escapeHtml(key)}" style="background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-family: monospace; padding: 2px 5px;">
                                 <option value="0" ${intVal === 0 ? 'selected' : ''}>0</option>
                                 <option value="1" ${intVal === 1 ? 'selected' : ''}>1</option>
                             </select>`;
                     } else if (key === 'DRY_RUN' || typeof val === 'boolean') {
                         const boolVal = (val === true || val === 'true');
                         inputHtml = `
-                            <select id="env-input-${key}" style="background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-family: monospace; padding: 2px 5px;">
+                            <select id="env-input-${escapeHtml(key)}" style="background: #222; border: 1px solid #444; border-radius: 4px; color: #fff; font-family: monospace; padding: 2px 5px;">
                                 <option value="true" ${boolVal ? 'selected' : ''}>true</option>
                                 <option value="false" ${!boolVal ? 'selected' : ''}>false</option>
                             </select>`;
@@ -1531,7 +1562,7 @@ HTML_TEMPLATE = """
                         const numberAttrs = isNumber ? 'min="0" step="1"' : '';
 
                         inputHtml = `
-                            <input id="env-input-${key}" type="${isNumber ? 'number' : 'text'}" value="${val}" ${numberAttrs} ${isReadOnly ? 'readonly' : ''}
+                            <input id="env-input-${escapeHtml(key)}" type="${isNumber ? 'number' : 'text'}" value="${escapeHtml(val)}" ${numberAttrs} ${isReadOnly ? 'readonly' : ''}
                                    style="background: ${inputBg}; border: ${inputBorder}; border-radius: 4px; color: ${inputColor}; font-family: monospace; width: 110px; padding: 2px 5px; text-align: right; cursor: ${inputCursor};">`;
                     }
 
@@ -1661,6 +1692,14 @@ else:
     rust_log_env = os.getenv("RUST_LOG", "info")
     log_level = get_global_rust_log_level(rust_log_env)
 
+# Log lines carry emoji: never depend on the platform default encoding (cp1252 on Windows,
+# where the desktop app's packaged daemon would lose every line)
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass  # no console attached
+
 logger = logging.getLogger("Rustatio")
 logger.setLevel(log_level)
 
@@ -1684,9 +1723,11 @@ def setup_file_handler():
         if log_dir:
             os.makedirs(log_dir, exist_ok=True)
         if not os.path.exists(LOGFILE):
-            open(LOGFILE, 'a').close()
+            open(LOGFILE, 'a', encoding='utf-8').close()
 
-        file_handler = FlushingRotatingFileHandler(LOGFILE, maxBytes=1024*1024, backupCount=10)
+        file_handler = FlushingRotatingFileHandler(
+            LOGFILE, maxBytes=1024*1024, backupCount=10, encoding='utf-8'
+        )
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
 
@@ -1863,6 +1904,7 @@ class ASTEvaluator:
             if op_type in self.BINARY_OPS:
                 left = self.eval(node.left)
                 right = self.eval(node.right)
+                self._check_operands(op_type, left, right)
                 return self.BINARY_OPS[op_type](left, right)
             raise TypeError(f"Unsupported binary operator: {op_type}")
 
@@ -1892,7 +1934,11 @@ class ASTEvaluator:
             elif isinstance(node.func, ast.Attribute):
                 obj = self.eval(node.func.value)
                 method_name = node.func.attr
-                if method_name in self.ALLOWED_METHODS and hasattr(obj, method_name):
+                if (
+                    method_name in self.ALLOWED_METHODS
+                    and isinstance(obj, (str, bytes, float, int))
+                    and hasattr(obj, method_name)
+                ):
                     args = [self.eval(arg) for arg in node.args]
                     kwargs = {kw.arg: self.eval(kw.value) for kw in node.keywords}
                     return getattr(obj, method_name)(*args, **kwargs)
@@ -1901,11 +1947,31 @@ class ASTEvaluator:
         elif isinstance(node, ast.Attribute):
             obj = self.eval(node.value)
             attr_name = node.attr
+            # No access to private/dunder attributes (__class__, __globals__, ...): they lead
+            # out of the sandbox
+            if attr_name.startswith('_'):
+                raise AttributeError(f"Attribute '{attr_name}' is not allowed")
             if hasattr(obj, attr_name):
                 return getattr(obj, attr_name)
             return None
 
         raise TypeError(f"Unsupported AST node type: {type(node).__name__}")
+
+    # Limits that keep a rule from freezing the daemon (e.g. 9**9**9 or "a" * 10**9)
+    MAX_EXPONENT = 1000
+    MAX_SEQUENCE_LEN = 100_000
+
+    def _check_operands(self, op_type, left, right):
+        if op_type is ast.Pow and isinstance(right, (int, float)) and abs(right) > self.MAX_EXPONENT:
+            raise ValueError("Exponent too large")
+        if op_type is ast.Mult:
+            for seq, count in ((left, right), (right, left)):
+                if (
+                    isinstance(seq, (str, bytes, list, tuple))
+                    and isinstance(count, int)
+                    and len(seq) * count > self.MAX_SEQUENCE_LEN
+                ):
+                    raise ValueError("Result too large")
 
 
 # ==========================================
@@ -1989,9 +2055,10 @@ class RustatioManager:
         log("Loading configurations...", "trace")
         try:
             if os.path.exists(DEFAULTS_FILE):
-                with open(DEFAULTS_FILE, 'r') as f:
+                with open(DEFAULTS_FILE, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                    self.default_config = data.get("default_config", data)
+                    # default_config is null in the desktop state file until a default is saved
+                    self.default_config = data.get("default_config", data) or {}
                     log(f"Defaults loaded from {DEFAULTS_FILE}", "start")
                     log(f"Loaded default_config content: {self.default_config}", "trace")
             else:
@@ -2002,7 +2069,7 @@ class RustatioManager:
 
         try:
             if os.path.exists(RULES_FILE):
-                with open(RULES_FILE, "r") as f:
+                with open(RULES_FILE, "r", encoding="utf-8") as f:
                     raw_lines = [l.strip() for l in f if l.strip() and not l.startswith("#")]
 
                 self.rules_lines = []
@@ -2039,7 +2106,7 @@ class RustatioManager:
         log(f"Loading logs state from {CHECK_LOGS_FILE}", "trace")
         try:
             if os.path.exists(CHECK_LOGS_FILE):
-                with open(CHECK_LOGS_FILE, 'r') as f:
+                with open(CHECK_LOGS_FILE, 'r', encoding='utf-8') as f:
                     return json.load(f)
         except Exception as e:
             log(f"Error: {str(e)}", "error")
@@ -2053,7 +2120,7 @@ class RustatioManager:
                 for tag, state in self.logs_state.items()
                 if self._has_persistent_data(state)
             }
-            with open(CHECK_LOGS_FILE, 'w') as f:
+            with open(CHECK_LOGS_FILE, 'w', encoding='utf-8') as f:
                 json.dump(persisted_state, f)
         except Exception as e:
             log(f"Error: {str(e)}", "error")
@@ -2690,10 +2757,15 @@ request_history = defaultdict(list)
 rate_limit_lock = threading.Lock()
 
 def get_client_ip():
-    x_forwarded = request.headers.get('X-Forwarded-For')
-    if x_forwarded:
-        return x_forwarded.split(',')[0].strip()
+    # X-Forwarded-For is not trusted: any client can set it, and getting a fresh rate limit
+    # bucket per request would allow brute-forcing the token on /login
     return request.remote_addr or '127.0.0.1'
+
+def token_matches(candidate):
+    """Constant-time comparison with AUTH_TOKEN (never matches when no token is set)."""
+    if not AUTH_TOKEN or not candidate:
+        return False
+    return hmac.compare_digest(str(candidate).encode('utf-8'), str(AUTH_TOKEN).encode('utf-8'))
 
 def rate_limit(max_requests=5, window_seconds=60, methods=None):
     def decorator(f):
@@ -2702,7 +2774,9 @@ def rate_limit(max_requests=5, window_seconds=60, methods=None):
             if methods and request.method not in methods:
                 return f(*args, **kwargs)
 
-            ip = get_client_ip()
+            # One history per client AND route: the panel polls some routes all the time, those
+            # requests must not count against the limit of start/stop/restart
+            ip = (get_client_ip(), request.endpoint)
             now = time.time()
 
             with rate_limit_lock:
@@ -2720,6 +2794,17 @@ def rate_limit(max_requests=5, window_seconds=60, methods=None):
     return decorator
 
 @app.before_request
+def reject_cross_site():
+    # Browsers flag requests coming from another site: without this, any web page could post to
+    # the panel (start/stop, restart, clear the logs...) when no AUTH_TOKEN is set. The app's
+    # proxy and the API clients do not send this header.
+    if request.headers.get('Sec-Fetch-Site', '').lower() == 'cross-site':
+        if request.path.startswith('/api/'):
+            return jsonify({"error": "Requête cross-site refusée"}), 403
+        return "Forbidden", 403
+    return None
+
+@app.before_request
 def require_auth():
     if not AUTH_TOKEN:
         return None
@@ -2735,7 +2820,7 @@ def require_auth():
     elif token_cookie:
         candidate = token_cookie
 
-    if candidate and hmac.compare_digest(candidate, AUTH_TOKEN):
+    if token_matches(candidate):
         return None
 
     if request.path.startswith('/api/'):
@@ -2747,7 +2832,7 @@ def require_auth():
 @rate_limit(max_requests=5, window_seconds=60)
 def login():
     token = request.form.get('token', '')
-    if AUTH_TOKEN and token == AUTH_TOKEN:
+    if token_matches(token):
         resp = make_response(redirect('/'))
         resp.set_cookie('auth_token', token, httponly=True, samesite='Lax')
         return resp
@@ -2759,7 +2844,7 @@ def index():
     logfile_filename = os.path.basename(LOGFILE) if LOGFILE else "rustatio_daemon.log"
 
     token_param = request.args.get("token", "")
-    if token_param and token_param == AUTH_TOKEN:
+    if token_matches(token_param):
         resp = make_response(redirect('/'))
         resp.set_cookie('auth_token', token_param, httponly=True, samesite='Lax')
         return resp
@@ -2786,7 +2871,7 @@ def get_status():
 daemon_lock = threading.Lock()
 
 @app.route('/api/daemon/<action>', methods=['POST'])
-@rate_limit(max_requests=2, window_seconds=60)
+@rate_limit(max_requests=5, window_seconds=60)
 def manage_daemon(action):
     global manager, manager_thread
 
@@ -2819,8 +2904,13 @@ def manage_daemon(action):
 @rate_limit(max_requests=3, window_seconds=60, methods=['POST'])
 def manage_rules():
     if request.method == 'POST':
-        content = request.json.get('content', '')
-        os.makedirs(os.path.dirname(RULES_FILE), exist_ok=True)
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict) or not isinstance(data.get('content', ''), str):
+            return jsonify({"success": False, "error": "JSON invalide"}), 400
+        content = data.get('content', '')
+        rules_dir = os.path.dirname(RULES_FILE)
+        if rules_dir:
+            os.makedirs(rules_dir, exist_ok=True)
         with open(RULES_FILE, 'w', encoding='utf-8') as f:
             f.write(content)
         if manager:
@@ -2840,6 +2930,8 @@ def get_logs():
         lines_limit = int(request.args.get('lines', 100))
     except ValueError:
         lines_limit = 100
+    # A negative value would return the whole file except its first lines
+    lines_limit = max(1, min(lines_limit, 10000))
 
     if os.path.exists(LOGFILE):
         with open(LOGFILE, 'r', encoding='utf-8') as f:
@@ -2964,8 +3056,10 @@ def manage_watcher(action):
 @app.route('/api/watcher/clear_resume', methods=['POST'])
 @rate_limit(max_requests=25, window_seconds=60)
 def api_watcher_clear_resume():
-    data = request.json or {}
-    tag = data.get("tag")
+    data = request.get_json(silent=True)
+    tag = data.get("tag") if isinstance(data, dict) else None
+    if not manager:
+        return jsonify({"success": False, "error": "Le daemon principal est arrêté"}), 409
     if tag:
         success = manager.clear_strike_and_resume(tag)
         return jsonify({"success": success})
@@ -2975,7 +3069,10 @@ def api_watcher_clear_resume():
 @rate_limit(max_requests=5, window_seconds=60, methods=['POST'])
 def handle_env_config():
     if request.method == 'POST':
-        success, message = config.update(request.json or {})
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify({"status": "error", "message": "JSON invalide"}), 400
+        success, message = config.update(data)
         if not success:
             return jsonify({"status": "forbidden", "message": message}), 403
         return jsonify({"status": "success", "message": message})
@@ -2996,9 +3093,110 @@ def run_flask_app():
     log_werkzeug.setLevel(logging.ERROR)
 
     log(f"Admin web panel started on port {ADMIN_PORT}", "start")
-    app.run(host='0.0.0.0', port=ADMIN_PORT, debug=False, use_reloader=False)
+    # ADMIN_HOST comes from the configuration (127.0.0.1 by default, the panel is then only
+    # reachable through the app); it used to fall back to 0.0.0.0 when the variable was unset
+    host = str(ADMIN_HOST or '').strip() or '127.0.0.1'
+    if host not in ('127.0.0.1', 'localhost', '::1') and not AUTH_TOKEN:
+        log("Admin panel exposed on the network without AUTH_TOKEN!", "warning")
+    app.run(host=host, port=ADMIN_PORT, debug=False, use_reloader=False)
+
+def parent_is_alive(pid):
+    """True while the process `pid` exists (never signals it)."""
+    if sys.platform == "win32":
+        import ctypes
+        SYNCHRONIZE = 0x00100000
+        WAIT_TIMEOUT = 0x00000102
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+        if not handle:
+            return False
+        try:
+            return kernel32.WaitForSingleObject(handle, 0) == WAIT_TIMEOUT
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+def exit_with_app(reason):
+    log(f"Rustatio app is gone ({reason}), daemon exits", "finish")
+    for h in logger.handlers:
+        h.flush()
+    os._exit(0)
+
+def watch_app_pipe(read_chunk, on_gone):
+    """The app writes to the daemon standard input right after launching it and never closes the
+    pipe: the operating system closes it when the app ends, even if it crashes or is killed.
+    The guard only arms itself once the app has written something, so a daemon that was started
+    without that pipe (terminal, null device) is never stopped by it."""
+    try:
+        armed = False
+        while True:
+            chunk = read_chunk()
+            if not chunk:
+                break
+            armed = True
+        if armed:
+            on_gone("input pipe closed")
+    except (OSError, ValueError):
+        pass
+
+def start_parent_watchdog():
+    """Embedded in the Rustatio desktop app: exit when the app is gone, whatever the reason.
+    The packaged daemon is a launcher plus a child process, so the app killing the launcher
+    would otherwise leave the child running forever. Does nothing outside the desktop app.
+    Two independent guards: the closing of the input pipe (immediate) and the existence of the
+    app process (polled)."""
+    if os.getenv("RUSTATIO_EXIT_ON_STDIN_EOF") == "1" and sys.stdin is not None:
+        try:
+            fd = sys.stdin.fileno()
+            threading.Thread(
+                target=watch_app_pipe, args=(lambda: os.read(fd, 4096), exit_with_app), daemon=True
+            ).start()
+        except (OSError, ValueError, AttributeError):
+            pass
+
+    raw = os.getenv("RUSTATIO_PARENT_PID", "").strip()
+    if not raw.isdigit() or int(raw) <= 0:
+        return
+    pid = int(raw)
+
+    def watch():
+        while parent_is_alive(pid):
+            time.sleep(2)
+        exit_with_app("process ended")
+
+    threading.Thread(target=watch, daemon=True).start()
+
+def apply_saved_env(raw):
+    """Desktop app: the variables saved from its Daemon view (JSON object), applied over the
+    defaults like the panel's "apply" button, so that "reset" still goes back to the defaults."""
+    if not raw:
+        return
+    try:
+        saved = json.loads(raw)
+    except ValueError:
+        log("Saved daemon settings ignored (invalid JSON)", "warning")
+        return
+    if not isinstance(saved, dict):
+        return
+
+    values = {k: v for k, v in saved.items() if k in config.state and k not in config.readonly_keys}
+    if not values:
+        return
+    success, message = config.update(values)
+    if success:
+        log(f"Saved settings applied ({', '.join(sorted(values))})", "start")
+    else:
+        log(f"Saved settings not applied: {message}", "warning")
 
 if __name__ == "__main__":
+    start_parent_watchdog()
+    apply_saved_env(os.getenv("RUSTATIO_SAVED_ENV", ""))
     ensure_paths_exist()
 
     manager = RustatioManager()

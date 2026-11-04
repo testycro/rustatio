@@ -11,7 +11,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::persistence;
-use crate::persistence::{PersistedInstance, PersistedState, WatchSettings};
+use crate::persistence::{DaemonSettings, PersistedInstance, PersistedState, WatchSettings};
 
 type PeerListenerHandle = Arc<Mutex<PeerListenerService>>;
 
@@ -95,6 +95,7 @@ pub struct AppState {
     pub watch: Arc<RwLock<Option<crate::watch::DesktopWatchService>>>,
     pub default_config: Arc<RwLock<Option<FakerConfig>>>,
     pub watch_settings: Arc<RwLock<Option<WatchSettings>>>,
+    pub daemon_settings: Arc<RwLock<Option<DaemonSettings>>>,
     pub should_exit: Arc<AtomicBool>,
     pub close_prompt_open: Arc<AtomicBool>,
     pub peer_listener: Arc<RwLock<Option<PeerListenerHandle>>>,
@@ -241,6 +242,7 @@ impl AppState {
         let default_config = self.default_config.read().await.clone();
         let watch_settings = self.watch_settings.read().await.clone();
         let proxy_settings = self.proxy_settings.read().await.clone();
+        let daemon_settings = self.daemon_settings.read().await.clone();
 
         PersistedState {
             instances,
@@ -249,6 +251,7 @@ impl AppState {
             clients: Some(rustatio_core::client_definitions()),
             watch_settings,
             proxy_settings,
+            daemon_settings,
             version: 1,
         }
     }
@@ -287,6 +290,7 @@ impl AppState {
         let default_config = self.default_config.blocking_read().clone();
         let watch_settings = self.watch_settings.blocking_read().clone();
         let proxy_settings = self.proxy_settings.blocking_read().clone();
+        let daemon_settings = self.daemon_settings.blocking_read().clone();
 
         PersistedState {
             instances,
@@ -295,6 +299,7 @@ impl AppState {
             clients: Some(rustatio_core::client_definitions()),
             watch_settings,
             proxy_settings,
+            daemon_settings,
             version: 1,
         }
     }
@@ -371,6 +376,7 @@ pub fn hex_info_hash(hash: &[u8; 20]) -> String {
 #[cfg(test)]
 mod tests {
     use crate::persistence;
+    use crate::persistence::{DaemonSettings, PersistedState};
     use crate::state::{AppState, FakerInstance, InstanceInfo};
     use rustatio_core::{
         AppConfig, FakerConfig, PeerListenerStatus, ProxySettings, RatioFaker, RatioFakerHandle,
@@ -415,6 +421,7 @@ mod tests {
             watch: Arc::new(RwLock::new(None)),
             default_config: Arc::new(RwLock::new(None)),
             watch_settings: Arc::new(RwLock::new(None)),
+            daemon_settings: Arc::new(RwLock::new(None)),
             should_exit: Arc::new(AtomicBool::new(false)),
             close_prompt_open: Arc::new(AtomicBool::new(false)),
             peer_listener: Arc::new(RwLock::new(None)),
@@ -735,6 +742,28 @@ mod tests {
         assert!(blocking.is_ok());
         let blocking = blocking.unwrap_or_else(|_| unreachable!());
         assert_eq!(blocking.proxy_settings, Some(settings));
+    }
+
+    #[tokio::test]
+    async fn daemon_settings_are_included_in_persisted_state() {
+        let state = app_state();
+        let mut settings = DaemonSettings { autostart: true, ..DaemonSettings::default() };
+        settings.env.insert("DRY_RUN".to_string(), serde_json::json!(true));
+        *state.daemon_settings.write().await = Some(settings.clone());
+
+        let persisted = state.build_persisted_state().await;
+        assert_eq!(persisted.daemon_settings, Some(settings.clone()));
+
+        let json = serde_json::to_string(&persisted).unwrap_or_default();
+        let restored: Result<PersistedState, _> = serde_json::from_str(&json);
+        assert_eq!(restored.ok().and_then(|restored| restored.daemon_settings), Some(settings));
+    }
+
+    #[test]
+    fn state_files_without_daemon_settings_still_load() {
+        let restored: Result<PersistedState, _> =
+            serde_json::from_str(r#"{"instances":{},"next_instance_id":1,"version":1}"#);
+        assert!(restored.is_ok_and(|restored| restored.daemon_settings.is_none()));
     }
 
     #[tokio::test]

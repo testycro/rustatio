@@ -1,0 +1,5 @@
+# Build requirements of the admin daemon executable bundled in the desktop app
+# (scripts/build_daemon_sidecar.py). Runtime needs: flask, requests.
+flask>=3.0,<4
+requests>=2.31,<3
+pyinstaller>=6.6,<7

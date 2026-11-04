@@ -1,6 +1,9 @@
-use rustatio_core::{ClientDefinition, FakerConfig, FakerState, ProxySettings, TorrentSummary};
+use crate::data_dir;
+use rustatio_core::{
+    AppConfig, ClientDefinition, FakerConfig, FakerState, ProxySettings, TorrentSummary,
+};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(test)]
@@ -37,7 +40,23 @@ pub struct PersistedState {
     pub watch_settings: Option<WatchSettings>,
     #[serde(default)]
     pub proxy_settings: Option<ProxySettings>,
+    /// Options of the embedded admin daemon (see [`DaemonSettings`]).
+    #[serde(default)]
+    pub daemon_settings: Option<DaemonSettings>,
     pub version: u32,
+}
+
+/// Options of the admin daemon embedded in the desktop app, kept with the other desktop options
+/// (like `watch_settings`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DaemonSettings {
+    /// Start the daemon together with the app (off by default).
+    #[serde(default)]
+    pub autostart: bool,
+    /// Daemon variables saved from the Daemon view ("environment configuration"), applied at
+    /// every start over the daemon defaults. Empty: the defaults.
+    #[serde(default)]
+    pub env: BTreeMap<String, serde_json::Value>,
 }
 
 impl PersistedState {
@@ -49,6 +68,7 @@ impl PersistedState {
             clients: None,
             watch_settings: None,
             proxy_settings: None,
+            daemon_settings: None,
             version: 1,
         }
     }
@@ -82,15 +102,67 @@ impl Default for WatchSettings {
     }
 }
 
-fn state_file_path() -> PathBuf {
+pub fn state_file_path() -> PathBuf {
     if let Some(override_path) = test_state_file_path() {
         return override_path;
     }
 
-    std::env::var("HOME").map_or_else(
-        |_| PathBuf::from("desktop-state.json"),
-        |home| PathBuf::from(home).join(".config").join("rustatio").join("desktop-state.json"),
-    )
+    data_dir::data_dir().join(data_dir::STATE_FILE)
+}
+
+/// File of the app configuration. On Windows it lives with the other app files, so that the
+/// uninstaller removes it too.
+pub fn config_file_path() -> PathBuf {
+    if cfg!(windows) {
+        data_dir::data_dir().join(data_dir::CONFIG_FILE)
+    } else {
+        AppConfig::default_path()
+    }
+}
+
+/// Moves the files written by earlier versions to the current data folder. Call once at startup,
+/// before anything is loaded.
+pub fn migrate_legacy_data() {
+    let data = data_dir::data_dir();
+
+    for legacy in data_dir::legacy_dirs() {
+        for moved in data_dir::migrate_from(&legacy, &data) {
+            log::info!("Moved {} from the previous location", moved.display());
+        }
+    }
+
+    let config = config_file_path();
+    if config != AppConfig::default_path() {
+        match data_dir::move_entry(&AppConfig::default_path(), &config) {
+            Ok(true) => log::info!("Moved the configuration to {}", config.display()),
+            Ok(false) => {}
+            Err(e) => log::warn!("Could not move the configuration to {}: {e}", config.display()),
+        }
+    }
+}
+
+/// The app configuration, created with the defaults when there is none yet.
+pub fn load_config() -> AppConfig {
+    let path = config_file_path();
+    if path == AppConfig::default_path() {
+        return AppConfig::load_or_default();
+    }
+
+    if path.exists() {
+        return AppConfig::load(&path).unwrap_or_else(|e| {
+            log::warn!("Failed to load config from {}: {e}. Using defaults.", path.display());
+            AppConfig::default()
+        });
+    }
+
+    let config = AppConfig::default();
+    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Err(e) = config.save(&path) {
+        log::warn!("Failed to save default config: {e}");
+    }
+    config
 }
 
 #[allow(clippy::missing_const_for_fn)]

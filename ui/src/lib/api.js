@@ -4,6 +4,7 @@ import {
   loadStoredClientDefinitions,
   saveStoredClientDefinitions,
 } from './clients/clientStorage.js';
+import { normalizePresetSettings } from './presets/customPreset.js';
 
 // Check if running in Tauri
 const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -68,7 +69,9 @@ async function syncDefaultConfigToBackend(preset) {
   try {
     const { invoke } = await import('@tauri-apps/api/core');
     if (preset?.settings) {
-      await invoke('set_default_config', { config: preset.settings });
+      // Resolved again (latest client version, default client if it was deleted) when it is set
+      // and once per session
+      await invoke('set_default_config', { config: normalizePresetSettings(preset.settings) });
     } else {
       await invoke('clear_default_config');
     }

@@ -51,7 +51,6 @@ COPY --from=builder /app/target/release/rustatio-server /app/rustatio-server
 COPY scripts/entrypoint.sh /app/entrypoint.sh
 COPY scripts/rustatio_daemon.py /app/rustatio_daemon.py
 COPY scripts/rules.txt /app/rules.default.txt
-COPY scripts/state.json /app/state.default.json
 RUN chmod +x /app/entrypoint.sh
 
 # Commande `rustatio_daemon` utilisable via `docker exec` (suit DAEMON_SCRIPT)

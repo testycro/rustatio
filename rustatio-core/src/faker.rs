@@ -147,6 +147,10 @@ pub struct PresetSettings {
     pub vpn_port_sync: Option<bool>,
     pub selected_client: Option<ClientType>,
     pub selected_client_version: Option<String>,
+    /// Follow the latest saved version of the client instead of `selected_client_version`
+    /// (resolved by the interface when the preset is applied). Kept so that saved presets
+    /// remember the choice.
+    pub use_latest_client_version: Option<bool>,
     pub completion_percent: Option<f64>,
     pub randomize_rates: Option<bool>,
     pub random_range_percent: Option<f64>,
@@ -156,14 +160,22 @@ pub struct PresetSettings {
     pub stop_at_ratio_enabled: Option<bool>,
     pub stop_at_ratio: Option<f64>,
     pub stop_at_uploaded_enabled: Option<bool>,
+    // The interface writes "GB" (camelCase alone would give "Gb", silently dropped); files saved
+    // with the old name are still read
+    #[serde(rename = "stopAtUploadedGB", alias = "stopAtUploadedGb")]
     pub stop_at_uploaded_gb: Option<f64>,
     pub stop_at_downloaded_enabled: Option<bool>,
+    #[serde(rename = "stopAtDownloadedGB", alias = "stopAtDownloadedGb")]
     pub stop_at_downloaded_gb: Option<f64>,
     pub stop_at_seed_time_enabled: Option<bool>,
     pub stop_at_seed_time_hours: Option<f64>,
     pub idle_when_no_leechers: Option<bool>,
     pub idle_when_no_seeders: Option<bool>,
     pub update_interval_seconds: Option<u64>,
+    /// Seconds between scrapes. Written by the interface; it was not part of this struct, so
+    /// presets saved by the server lost it. A float, so that a decimal value never makes the
+    /// whole preset unreadable.
+    pub scrape_interval: Option<f64>,
     pub post_stop_action: Option<String>,
     // Progressive rates
     pub progressive_rates_enabled: Option<bool>,
@@ -218,7 +230,10 @@ impl From<PresetSettings> for FakerConfig {
             stop_at_seed_time,
             idle_when_no_leechers: p.idle_when_no_leechers.unwrap_or(false),
             idle_when_no_seeders: p.idle_when_no_seeders.unwrap_or(false),
-            scrape_interval: 60,
+            scrape_interval: p
+                .scrape_interval
+                .filter(|seconds| seconds.is_finite() && *seconds >= 1.0)
+                .map_or_else(default_scrape_interval, |seconds| seconds as u64),
             update_interval_seconds: p.update_interval_seconds.unwrap_or(5),
             post_stop_action: match p.post_stop_action.as_deref() {
                 Some("stop_seeding") => PostStopAction::StopSeeding,
@@ -2182,6 +2197,50 @@ mod tests {
         // 2 hours in seconds
         assert_eq!(config.progressive_duration, 2 * 3600);
         assert_eq!(config.update_interval_seconds, 30);
+    }
+
+    #[test]
+    fn test_preset_settings_size_limits_use_the_interface_names() {
+        let json = r#"{"stopAtUploadedEnabled":true,"stopAtUploadedGB":10.0,
+            "stopAtDownloadedEnabled":true,"stopAtDownloadedGB":2.0}"#;
+        let preset: PresetSettings = serde_json::from_str(json).unwrap_or_default();
+        assert_eq!(preset.stop_at_uploaded_gb, Some(10.0));
+        assert_eq!(preset.stop_at_downloaded_gb, Some(2.0));
+
+        let config: FakerConfig = preset.clone().into();
+        assert_eq!(config.stop_at_uploaded, Some(10 * 1024 * 1024 * 1024));
+        assert_eq!(config.stop_at_downloaded, Some(2 * 1024 * 1024 * 1024));
+
+        let saved = serde_json::to_value(&preset).unwrap_or_default();
+        assert_eq!(saved["stopAtUploadedGB"], 10.0);
+        assert_eq!(saved["stopAtDownloadedGB"], 2.0);
+        assert!(saved.get("stopAtUploadedGb").is_none());
+    }
+
+    #[test]
+    fn test_preset_settings_keep_the_scrape_interval() {
+        let preset: PresetSettings =
+            serde_json::from_str(r#"{"scrapeInterval":120}"#).unwrap_or_default();
+        assert_eq!(preset.scrape_interval, Some(120.0));
+        let config: FakerConfig = preset.clone().into();
+        assert_eq!(config.scrape_interval, 120);
+
+        let saved = serde_json::to_value(&preset).unwrap_or_default();
+        assert_eq!(saved["scrapeInterval"], 120.0);
+
+        let missing: FakerConfig = PresetSettings::default().into();
+        assert_eq!(missing.scrape_interval, 60);
+        let invalid: FakerConfig =
+            PresetSettings { scrape_interval: Some(0.0), ..PresetSettings::default() }.into();
+        assert_eq!(invalid.scrape_interval, 60);
+    }
+
+    #[test]
+    fn test_preset_settings_still_read_the_old_size_limit_names() {
+        let json = r#"{"stopAtUploadedGb":5.0,"stopAtDownloadedGb":1.0}"#;
+        let preset: PresetSettings = serde_json::from_str(json).unwrap_or_default();
+        assert_eq!(preset.stop_at_uploaded_gb, Some(5.0));
+        assert_eq!(preset.stop_at_downloaded_gb, Some(1.0));
     }
 
     #[test]

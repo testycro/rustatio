@@ -48,7 +48,9 @@
   import ConfirmDialog from './components/common/ConfirmDialog.svelte';
   import GridView from './components/grid/GridView.svelte';
   import WatchView from './components/watch/WatchView.svelte';
+  import DaemonView from './components/daemon/DaemonView.svelte';
   import { buildFakerConfig, getCalculatedInitialDownloaded } from './lib/core/fakerConfig.js';
+  import { setClientCatalog } from './lib/clients/clientCatalog.js';
 
   // Import grid store
   import { viewMode, gridInstances } from './lib/grid/gridStore.js';
@@ -170,6 +172,17 @@
       clientInfos = (await api.getClientInfos()) || [];
     } catch (error) {
       console.error('Failed to refresh client infos:', error);
+    }
+    await refreshClientCatalog();
+  }
+
+  // Saved client definitions, used to resolve the client of presets (latest version, default
+  // client when the one of the preset no longer exists)
+  async function refreshClientCatalog() {
+    try {
+      setClientCatalog((await api.listClientDefinitions()) || []);
+    } catch (error) {
+      console.error('Failed to load client definitions:', error);
     }
   }
 
@@ -393,7 +406,7 @@
         return;
       }
 
-      if (mode === 'watch') {
+      if (mode === 'watch' || mode === 'daemon') {
         stopLiveStats();
         return;
       }
@@ -503,6 +516,7 @@
       // Fallback to empty - UI will be limited but won't crash
       clientInfos = [];
     }
+    await refreshClientCatalog();
 
     // Load config from localStorage
     const storedShowLogs = localStorage.getItem('rustatio-show-logs');
@@ -1686,6 +1700,10 @@
       {:else if $viewMode === 'watch'}
         <div class="min-h-0 flex-1 overflow-y-auto p-3">
           <WatchView />
+        </div>
+      {:else if $viewMode === 'daemon'}
+        <div class="min-h-0 flex-1 overflow-y-auto p-3">
+          <DaemonView />
         </div>
       {:else}
         <DetailHeader

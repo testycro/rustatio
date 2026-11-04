@@ -26,6 +26,11 @@ serde_json = "1.0"
 os-release = "0.1.0"
 
 tokio = { version = "1.48", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+
+# Loopback bridge between the embedded admin daemon and the app (src/daemon)
+axum = "0.8"
+rand = "0.9"
 
 log = "0.4"
 env_logger = "0.11"

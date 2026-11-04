@@ -52,9 +52,13 @@ description = "Install all dependencies (tools + packages)"
 depends = ["rust-install", "ui:install"]
 run = "echo '✅ All dependencies installed!'"
 
+[tasks."build:daemon"]
+description = "Compile the admin daemon bundled with the desktop app (pip install -r scripts/daemon-requirements.txt first)"
+run = "python3 scripts/build_daemon_sidecar.py"
+
 [tasks."build:desktop"]
 description = "Build desktop app for production"
-depends = ["build:web"]
+depends = ["build:web", "build:daemon"]
 run = [
     "echo '🏗️  Building Tauri desktop app...'",
     "cd rustatio-desktop && cargo tauri build",

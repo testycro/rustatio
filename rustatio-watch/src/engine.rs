@@ -68,6 +68,11 @@ fn resolve_watch_file(watch_dir: &Path, filename: &str) -> Result<(PathBuf, Path
     if !canonical_file.starts_with(&canonical_watch) {
         return Err("Invalid file path".to_string());
     }
+    // The delete/reload routes only deal with torrents: any other file of the folder (or the
+    // folder itself) is left alone
+    if !is_torrent_file(&canonical_file) {
+        return Err("Not a .torrent file".to_string());
+    }
 
     let relative = relative_watch_path(&canonical_watch, &canonical_file)?;
     Ok((canonical_file, relative))
@@ -714,6 +719,26 @@ mod tests {
 
         let started = engine.started_ids().await;
         assert!(started.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_watch_file_only_accepts_torrents_of_the_folder(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let temp = TempDir::new()?;
+        let watch_dir = temp.path().join("watch");
+        std::fs::create_dir_all(watch_dir.join("tracker"))?;
+        std::fs::write(watch_dir.join("tracker").join("one.torrent"), b"d4:infod4:name1:aee")?;
+        std::fs::write(watch_dir.join("notes.txt"), b"keep me")?;
+        std::fs::write(temp.path().join("outside.torrent"), b"x")?;
+
+        let (_, relative) = resolve_watch_file(&watch_dir, "tracker/one.torrent")?;
+        assert_eq!(relative, PathBuf::from("tracker/one.torrent"));
+
+        assert!(resolve_watch_file(&watch_dir, "notes.txt").is_err());
+        assert!(resolve_watch_file(&watch_dir, "tracker").is_err());
+        assert!(resolve_watch_file(&watch_dir, "").is_err());
+        assert!(resolve_watch_file(&watch_dir, "../outside.torrent").is_err());
         Ok(())
     }
 }

@@ -1,0 +1,38 @@
+{
+  "id": "daemon-month",
+  "name": "Balanced 1 Month Seed (for daemon mode)",
+  "description": "Seeds every torrent for a month at a steady pace, for the admin daemon rules",
+  "icon": "calendar-clock",
+  "recommended": false,
+  "settings": {
+    "uploadRate": 700,
+    "downloadRate": 0,
+    "port": 6881,
+    "vpnPortSync": false,
+    "selectedClient": "transmission",
+    "completionPercent": 100,
+    "randomizeRates": true,
+    "randomRangePercent": 50,
+    "randomizeRatio": false,
+    "randomRatioRangePercent": 10,
+    "progressiveRatesEnabled": false,
+    "targetUploadRate": 100,
+    "targetDownloadRate": 200,
+    "progressiveDurationHours": 1,
+    "stopAtRatioEnabled": false,
+    "stopAtRatio": 2.0,
+    "stopAtUploadedEnabled": false,
+    "stopAtDownloadedEnabled": false,
+    "stopAtSeedTimeEnabled": true,
+    "stopAtSeedTimeHours": 744,
+    "idleWhenNoLeechers": true,
+    "idleWhenNoSeeders": false,
+    "postStopAction": "idle"
+  },
+  "tips": [
+    "Stops after 31 days (744 h) of seeding: no ratio or size limit",
+    "700 KB/s with 50% randomization gives a natural, varying pace",
+    "Idles when nobody is leeching instead of announcing traffic",
+    "Made for the admin daemon: its rules take over the long-running torrents"
+  ]
+}

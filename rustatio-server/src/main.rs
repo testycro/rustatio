@@ -5,12 +5,12 @@ mod api;
 mod services;
 mod util;
 
-use axum::{middleware, routing::get, Router};
+use axum::{http::HeaderValue, middleware, routing::get, Router};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::signal;
 use tokio::sync::{oneshot, RwLock};
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::trace::{MakeSpan, TraceLayer};
 use tracing_subscriber::layer::SubscriberExt;
 use utoipa::OpenApi;
@@ -38,6 +38,26 @@ impl<B> MakeSpan<B> for PathOnlyMakeSpan {
             version = ?request.version(),
         )
     }
+}
+
+/// Cross-origin access to the API.
+///
+/// The web UI is served by this server (same origin) and needs no CORS header. Allowing any
+/// origin let every web page the user visits drive the API and read its answers (instances,
+/// file browser, daemon...) whenever `AUTH_TOKEN` is not set. `CORS_ALLOWED_ORIGINS`
+/// (comma-separated list of origins, or `*`) opens it on purpose.
+fn cors_layer() -> CorsLayer {
+    let configured = std::env::var("CORS_ALLOWED_ORIGINS").unwrap_or_default();
+    let origins: Vec<&str> =
+        configured.split(',').map(str::trim).filter(|origin| !origin.is_empty()).collect();
+
+    let allow_origin = if origins.contains(&"*") {
+        AllowOrigin::any()
+    } else {
+        AllowOrigin::list(origins.iter().filter_map(|origin| HeaderValue::from_str(origin).ok()))
+    };
+
+    CorsLayer::new().allow_origin(allow_origin).allow_methods(Any).allow_headers(Any)
 }
 
 #[tokio::main]
@@ -130,7 +150,7 @@ async fn main() {
     let server_state = ServerState { app: state.clone(), watch: Arc::clone(&watch_service) };
 
     let port: u16 = std::env::var("PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(8080);
-    let cors = CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any);
+    let cors = cors_layer();
 
     let app = Router::new()
         .route("/health", get(|| async { "OK" }))

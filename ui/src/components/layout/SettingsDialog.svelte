@@ -27,7 +27,8 @@
     buildPresetExportData,
     normalizePreset,
     normalizePresets,
-    normalizePresetSettings,
+    presetInstanceSettings,
+    sanitizePresetSettings,
   } from '$lib/presets/customPreset.js';
   import {
     THEMES,
@@ -283,7 +284,7 @@
   function applyPreset(preset) {
     const active = get(activeInstanceId);
     if (active !== null) {
-      instanceActions.updateInstance(active, normalizePresetSettings(preset.settings));
+      instanceActions.updateInstance(active, presetInstanceSettings(preset.settings));
     }
     close();
   }
@@ -293,7 +294,7 @@
     if (!instance) return false;
 
     // Compare all settings in the preset with the instance
-    for (const [key, value] of Object.entries(normalizePresetSettings(preset.settings))) {
+    for (const [key, value] of Object.entries(presetInstanceSettings(preset.settings))) {
       // Handle numeric comparisons with tolerance for floating point
       if (typeof value === 'number' && typeof instance[key] === 'number') {
         if (Math.abs(instance[key] - value) > 0.001) return false;
@@ -334,6 +335,8 @@
   let showSaveDialog = $state(false);
   let exportPresetName = $state('');
   let exportPresetDescription = $state('');
+  // Custom presets follow the client updates by default (like the built-in presets)
+  let exportUseLatestVersion = $state(true);
 
   function getActiveInstanceOrThrow() {
     const active = get(activeInstanceId);
@@ -355,6 +358,7 @@
     exportSuccess = '';
     exportPresetName = '';
     exportPresetDescription = '';
+    exportUseLatestVersion = true;
   }
 
   function openSaveDialog() {
@@ -388,6 +392,7 @@
       const preset = buildCustomPreset(instance, {
         name: exportPresetName,
         description: exportPresetDescription,
+        useLatestClientVersion: exportUseLatestVersion,
       });
 
       await api.upsertCustomPreset(preset);
@@ -416,6 +421,7 @@
       presetData = buildPresetExportData(instance, {
         name: exportPresetName,
         description: exportPresetDescription,
+        useLatestClientVersion: exportUseLatestVersion,
       });
     } catch (err) {
       exportError = err.message;
@@ -447,7 +453,8 @@
         }
       } catch (err) {
         console.error('Export failed:', err);
-        exportError = `Export failed: ${err.message}`;
+        // Tauri commands reject with a plain string, not an Error
+        exportError = `Export failed: ${err?.message ?? err}`;
       }
     } else {
       // Browser: use download with suggested filename
@@ -467,7 +474,7 @@
         showExportDialog = false;
       } catch (err) {
         console.error('Export failed:', err);
-        exportError = `Export failed: ${err.message}`;
+        exportError = `Export failed: ${err?.message ?? err}`;
       }
     }
   }
@@ -493,19 +500,26 @@
       const data = JSON.parse(text);
 
       // Validate preset structure
-      if (data.type !== 'rustatio-preset' || !data.settings) {
+      if (
+        data?.type !== 'rustatio-preset' ||
+        !data.settings ||
+        typeof data.settings !== 'object' ||
+        Array.isArray(data.settings)
+      ) {
         throw new Error('Invalid preset file format');
       }
 
       // Create custom preset object
       const newPreset = normalizePreset({
         id: `custom-${Date.now()}`,
-        name: data.name || 'Imported Preset',
-        description: data.description || 'Imported custom preset',
-        icon: data.icon || 'folder',
+        name: (typeof data.name === 'string' && data.name.trim()) || 'Imported Preset',
+        description:
+          (typeof data.description === 'string' && data.description) || 'Imported custom preset',
+        icon: (typeof data.icon === 'string' && data.icon) || 'folder',
         custom: true,
         created_at: data.created_at || data.createdAt || new Date().toISOString(),
-        settings: data.settings,
+        // Only the known settings: the file may come from anyone
+        settings: sanitizePresetSettings(data.settings),
       });
 
       // Add to custom presets
@@ -1433,6 +1447,20 @@
         ></textarea>
       </div>
 
+      <label class="flex cursor-pointer items-start gap-2 text-xs text-foreground">
+        <input
+          type="checkbox"
+          class="mt-0.5 h-3.5 w-3.5 accent-foreground"
+          bind:checked={exportUseLatestVersion}
+        />
+        <span>
+          Always use the latest version of the client
+          <span class="block text-[0.6875rem] text-muted-foreground">
+            Newest saved version when applied, or the default client if this one was deleted.
+          </span>
+        </span>
+      </label>
+
       {#if exportError}
         <p class="text-sm text-stat-leecher">{exportError}</p>
       {/if}
@@ -1523,6 +1551,20 @@
           class="w-full h-8 border border-input bg-background px-2.5 text-xs text-foreground focus:border-ring focus:outline-none resize-none"
         ></textarea>
       </div>
+
+      <label class="flex cursor-pointer items-start gap-2 text-xs text-foreground">
+        <input
+          type="checkbox"
+          class="mt-0.5 h-3.5 w-3.5 accent-foreground"
+          bind:checked={exportUseLatestVersion}
+        />
+        <span>
+          Always use the latest version of the client
+          <span class="block text-[0.6875rem] text-muted-foreground">
+            Newest saved version when applied, or the default client if this one was deleted.
+          </span>
+        </span>
+      </label>
 
       {#if exportError}
         <p class="text-sm text-stat-leecher">{exportError}</p>
