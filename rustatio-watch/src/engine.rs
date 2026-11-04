@@ -141,30 +141,18 @@ impl<E: WatchEngine + 'static> WatchService<E> {
         self.auto_start.store(enabled, Ordering::Relaxed);
     }
 
+    /// Registers the instances already loaded, so that their files are not loaded twice.
+    ///
+    /// Their state is the one the app saved before stopping (running, paused, stopped...) and
+    /// the app restores it: it is left as it is here, the auto-start only applies to new
+    /// files. This used to start every watch folder instance that was not running, including
+    /// the ones paused or stopped on purpose.
     pub async fn init_from_state(&self) {
         let instances = self.engine.list_instances().await;
-        let mut hashes = self.loaded_hashes.write().await;
-
-        let mut watch_folder_to_start = Vec::new();
-
-        for instance in &instances {
-            hashes.insert(instance.info_hash);
-
-            if self.auto_start.load(Ordering::Relaxed)
-                && instance.source == InstanceSource::WatchFolder
-                && !matches!(instance.state.as_str(), "starting" | "running")
-            {
-                watch_folder_to_start.push(instance.id.clone());
-            }
-        }
-
-        drop(hashes);
-
-        for id in watch_folder_to_start {
-            if let Err(e) = self.engine.start_instance(&id).await {
-                tracing::warn!("Failed to auto-start watch folder instance {}: {}", id, e);
-            }
-        }
+        self.loaded_hashes
+            .write()
+            .await
+            .extend(instances.iter().map(|instance| instance.info_hash));
     }
 
     pub async fn start(&mut self) -> Result<(), String> {
@@ -663,10 +651,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn init_from_state_starts_stopped_watch_instances_when_auto_start_enabled(
+    async fn init_from_state_keeps_the_saved_state_of_watch_instances(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let temp = TempDir::new()?;
-        let engine = MockEngine::with_instances(vec![watch_instance("w1", "stopped")]);
+        let engine = MockEngine::with_instances(vec![
+            watch_instance("w1", "stopped"),
+            watch_instance("w2", "paused"),
+        ]);
         let config = EngineConfig {
             watch_dir: temp.path().to_path_buf(),
             auto_start: true,
@@ -677,8 +668,11 @@ mod tests {
         let service = WatchService::new(config, Arc::new(engine.clone()));
         service.init_from_state().await;
 
+        // Paused or stopped before the shutdown: they stay that way
         let started = engine.started_ids().await;
-        assert_eq!(started, vec!["w1".to_string()]);
+        assert!(started.is_empty());
+        // Their files are known: not loaded a second time
+        assert!(service.loaded_hashes.read().await.contains(&[1; 20]));
         Ok(())
     }
 

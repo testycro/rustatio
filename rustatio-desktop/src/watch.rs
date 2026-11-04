@@ -91,7 +91,15 @@ impl WatchEngine for DesktopWatchEngine {
             Arc::clone(&instance.faker)
         };
 
-        faker.start().await.map_err(|e| e.to_string())
+        // Started in the background: the announce waits for the request timeout when the
+        // tracker is down, and the watch folder (startup, every new file) used to wait for each
+        // of them in turn. The requests to one tracker are paced by the tracker gate.
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = faker.start().await {
+                log::warn!("Failed to start watch folder instance {instance_id}: {e}");
+            }
+        });
+        Ok(())
     }
 
     async fn delete_instance_by_info_hash(&self, info_hash: &[u8; 20]) -> Result<(), String> {

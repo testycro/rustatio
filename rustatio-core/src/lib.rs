@@ -7,6 +7,8 @@ pub mod peer_listener;
 pub mod protocol;
 pub mod proxy;
 pub mod torrent;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod tracker_gate;
 pub mod validation;
 
 // Re-export main types explicitly to avoid ambiguous Result types

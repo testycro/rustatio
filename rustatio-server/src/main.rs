@@ -203,10 +203,10 @@ async fn main() {
         watch_for_shutdown.write().await.stop().await;
 
         tracing::info!("Stopping running instances...");
-        state_for_shutdown.shutdown_all().await;
+        let states_before_shutdown = state_for_shutdown.shutdown_all().await;
 
         tracing::info!("Saving state before shutdown...");
-        if let Err(e) = state_for_shutdown.save_state().await {
+        if let Err(e) = state_for_shutdown.save_final_state(&states_before_shutdown).await {
             tracing::error!("Failed to save state on shutdown: {}", e);
         } else {
             tracing::info!("State saved successfully");

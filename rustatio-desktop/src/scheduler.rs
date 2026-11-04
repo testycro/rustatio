@@ -1,12 +1,65 @@
 use crate::state::{build_summary, AppState};
-use rustatio_core::logger::set_instance_context_str;
+use rustatio_core::logger::with_instance_context;
 use rustatio_core::{FakerState, FakerStats, InstanceSummary, PostStopAction, RatioFakerHandle};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
+use tokio::sync::mpsc;
 
 const TICK: Duration = Duration::from_secs(5);
+/// How long a tick waits for the updates it started. Most finish at once; an update waiting
+/// for a tracker (announce or retry, up to the request timeout) is collected at a later tick
+/// and never holds up the other instances.
+const COLLECT_WINDOW: Duration = Duration::from_secs(3);
+
+/// Result of one update: the stats before and after it, `None` when nothing was done.
+type UpdateDone = (u32, Option<(FakerStats, FakerStats)>);
+
+/// Instance updates run as their own tasks. An instance whose previous update is still running
+/// (tracker not answering) is skipped until it is done.
+struct PendingUpdates {
+    /// Instances being updated, with their update interval
+    in_flight: HashMap<u32, Duration>,
+    done_tx: mpsc::UnboundedSender<UpdateDone>,
+    done_rx: mpsc::UnboundedReceiver<UpdateDone>,
+}
+
+impl PendingUpdates {
+    fn new() -> Self {
+        let (done_tx, done_rx) = mpsc::unbounded_channel();
+        Self { in_flight: HashMap::new(), done_tx, done_rx }
+    }
+
+    fn spawn(&mut self, id: u32, faker: Arc<RatioFakerHandle>, name: String, interval: Duration) {
+        self.in_flight.insert(id, interval);
+        let done_tx = self.done_tx.clone();
+        tauri::async_runtime::spawn(async move {
+            let result = run(id, &faker, &name).await;
+            let _ = done_tx.send((id, result));
+        });
+    }
+
+    /// Updates finished so far (waiting at most `window` for the ones still running).
+    async fn collect(&mut self, window: Duration) -> Vec<(u32, Duration, FakerStats, FakerStats)> {
+        let deadline = tokio::time::Instant::now() + window;
+        let mut done = Vec::new();
+
+        while !self.in_flight.is_empty() {
+            let Ok(Some((id, result))) =
+                tokio::time::timeout_at(deadline, self.done_rx.recv()).await
+            else {
+                break;
+            };
+            let interval = self.in_flight.remove(&id).unwrap_or(TICK);
+            if let Some((before, after)) = result {
+                done.push((id, interval, before, after));
+            }
+        }
+
+        done
+    }
+}
 
 fn should_update(state: FakerState, tracker_error: Option<&str>, retry_due: bool) -> bool {
     match state {
@@ -25,15 +78,21 @@ pub fn spawn(state: AppState, app: AppHandle) {
         let mut timer = tokio::time::interval(TICK);
         timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut due = HashMap::new();
+        let mut updates = PendingUpdates::new();
 
         loop {
             timer.tick().await;
-            tick(&state, &app, &mut due).await;
+            tick(&state, &app, &mut due, &mut updates).await;
         }
     });
 }
 
-async fn tick(state: &AppState, app: &AppHandle, due: &mut HashMap<u32, Instant>) {
+async fn tick(
+    state: &AppState,
+    app: &AppHandle,
+    due: &mut HashMap<u32, Instant>,
+    updates: &mut PendingUpdates,
+) {
     let mut dirty = false;
     let mut updated = Vec::new();
     let mut deleted = Vec::new();
@@ -43,16 +102,20 @@ async fn tick(state: &AppState, app: &AppHandle, due: &mut HashMap<u32, Instant>
     let ids: HashSet<u32> = instances.iter().map(|(id, _, _, _, _)| *id).collect();
 
     for (id, faker, name, interval, retry) in instances {
+        if updates.in_flight.contains_key(&id) {
+            continue;
+        }
         let interval = Duration::from_secs(interval.max(1));
         let next = *due.entry(id).or_insert(now + interval);
         if !retry && now < next {
             continue;
         }
 
-        let Some((before, after)) = run(id, &faker, &name).await else {
-            continue;
-        };
+        updates.spawn(id, faker, name, interval);
+    }
 
+    // An update that waited for its tracker is collected at a later tick
+    for (id, interval, before, after) in updates.collect(COLLECT_WINDOW).await {
         due.insert(id, now + interval);
 
         if should_delete(&after) {
@@ -99,22 +162,23 @@ async fn run(id: u32, faker: &RatioFakerHandle, name: &str) -> Option<(FakerStat
         return None;
     }
 
-    set_instance_context_str(Some(name));
-    let result = if retry {
-        faker.recover_tracker().await.map(|_| ()).map_err(|error| error.to_string())
-    } else {
-        faker.update().await.map_err(|error| error.to_string())
-    };
+    // The context follows the task (updates now run side by side, a thread-local value set
+    // before an await would be read by the others)
+    let result = with_instance_context(name, async {
+        if retry {
+            faker.recover_tracker().await.map(|_| ()).map_err(|error| error.to_string())
+        } else {
+            faker.update().await.map_err(|error| error.to_string())
+        }
+    })
+    .await;
 
     if let Err(error) = result {
         log::warn!("Scheduler update failed for instance {id}: {error}");
-        set_instance_context_str(None);
         return None;
     }
 
-    let after = faker.stats_snapshot();
-    set_instance_context_str(None);
-    Some((before, after))
+    Some((before, faker.stats_snapshot()))
 }
 
 async fn retry_due(stats: &FakerStats, faker: &RatioFakerHandle) -> bool {

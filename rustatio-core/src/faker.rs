@@ -487,6 +487,8 @@ struct AnnouncePlan {
 
 impl AnnouncePlan {
     async fn execute(&self) -> Result<AnnounceResponse> {
+        #[cfg(not(target_arch = "wasm32"))]
+        let _slot = crate::tracker_gate::acquire(&self.tracker_url).await;
         self.tracker_client
             .announce(&self.tracker_url, &self.request)
             .await
@@ -502,6 +504,8 @@ struct ScrapePlan {
 
 impl ScrapePlan {
     async fn execute(&self) -> Result<crate::protocol::ScrapeResponse> {
+        #[cfg(not(target_arch = "wasm32"))]
+        let _slot = crate::tracker_gate::acquire(&self.tracker_url).await;
         self.tracker_client
             .scrape(&self.tracker_url, &self.info_hash)
             .await
@@ -860,6 +864,11 @@ impl RatioFaker {
 
         if matches!(stats.state, FakerState::Starting) {
             stats.state = FakerState::Running;
+        }
+        // Saved while its stop announce was still pending (shutdown cut short): the session is
+        // over, it must not stay "stopping" forever
+        if matches!(stats.state, FakerState::Stopping) {
+            stats.state = FakerState::Stopped;
         }
 
         self.stats = stats;
@@ -1241,10 +1250,13 @@ impl RatioFaker {
     }
 
     fn build_periodic_announce_plan(&self) -> AnnouncePlan {
+        // "started" until an announce succeeds in this session: also after a restore (resume of
+        // a paused torrent, retry), the tracker having received "stopped" at the shutdown
+        let started = self.stats.announce_count == 0 || self.stats.last_announce.is_none();
         AnnouncePlan {
             tracker_client: Arc::clone(&self.tracker_client),
             tracker_url: self.torrent.get_tracker_url().to_string(),
-            request: self.build_announce_request(if self.stats.announce_count == 0 {
+            request: self.build_announce_request(if started {
                 TrackerEvent::Started
             } else {
                 TrackerEvent::None
@@ -1920,6 +1932,21 @@ impl RatioFakerHandle {
         let _ = self.stats_tx.send(guard.stats_snapshot());
     }
 
+    /// Restored running session whose announce is queued (see [`Self::restore_running`]): it is
+    /// shown as starting and the schedulers, which only update running sessions, leave it alone
+    /// until then (no second announce in parallel). Returns whether it was marked; a session
+    /// without elapsed time is started from scratch instead and is left unchanged.
+    pub async fn mark_pending_start(&self) -> bool {
+        let mut guard = self.inner.lock().await;
+        let marked = matches!(guard.stats.state, FakerState::Running)
+            && guard.stats.elapsed_time.as_secs() > 0;
+        if marked {
+            guard.stats.state = FakerState::Starting;
+            let _ = self.stats_tx.send(guard.stats_snapshot());
+        }
+        marked
+    }
+
     async fn apply_post_stop_action(&self) -> Result<()> {
         let post_stop_action = {
             let guard = self.inner.lock().await;
@@ -2125,6 +2152,48 @@ impl RatioFakerHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn restored_running_session_waits_as_starting_until_announced() {
+        let torrent = Arc::new(TorrentInfo {
+            info_hash: [12u8; 20],
+            announce: "https://tracker.test/announce".to_string(),
+            announce_list: None,
+            name: "pending".to_string(),
+            total_size: 1024,
+            piece_length: 256,
+            num_pieces: 4,
+            creation_date: None,
+            comment: None,
+            created_by: None,
+            is_single_file: true,
+            file_count: 1,
+            files: Vec::new(),
+        });
+        let Ok(faker) = RatioFaker::new(torrent, FakerConfig::default(), None) else {
+            unreachable!("valid faker")
+        };
+        let handle = RatioFakerHandle::new(faker);
+
+        let mut stats = handle.stats_snapshot();
+        stats.state = FakerState::Running;
+        stats.elapsed_time = Duration::from_secs(60);
+        handle.restore_snapshot(stats.clone()).await;
+        assert!(handle.mark_pending_start().await);
+        assert!(matches!(handle.stats_snapshot().state, FakerState::Starting));
+
+        // Without elapsed time the session is started from scratch: left unchanged
+        stats.elapsed_time = Duration::ZERO;
+        handle.restore_snapshot(stats.clone()).await;
+        assert!(!handle.mark_pending_start().await);
+        assert!(matches!(handle.stats_snapshot().state, FakerState::Running));
+
+        // Saved while stopping (shutdown cut short): restored as stopped
+        stats.state = FakerState::Stopping;
+        handle.restore_snapshot(stats).await;
+        assert!(matches!(handle.stats_snapshot().state, FakerState::Stopped));
+    }
 
     #[test]
     fn test_faker_config_default() {
@@ -2701,6 +2770,31 @@ mod tests {
 
         faker.apply_periodic_announce_result(Ok(announce_ok()));
         assert!(matches!(faker.build_periodic_announce_plan().request.event, TrackerEvent::None));
+    }
+
+    #[test]
+    fn restored_session_announces_started_first() {
+        let mut faker = sample_faker(41, FakerConfig::default());
+        let mut stats = faker.stats_snapshot();
+        stats.state = FakerState::Paused;
+        stats.announce_count = 12;
+        stats.uploaded = 5_000;
+        stats.elapsed_time = Duration::from_hours(3);
+        faker.restore_runtime(stats);
+
+        assert!(matches!(faker.stats.state, FakerState::Paused));
+        assert_eq!(faker.stats.uploaded, 5_000);
+        assert_eq!(faker.stats.elapsed_time, Duration::from_hours(3));
+
+        faker.resume().unwrap_or_else(|_| unreachable!());
+        assert!(matches!(
+            faker.build_periodic_announce_plan().request.event,
+            TrackerEvent::Started
+        ));
+
+        faker.apply_periodic_announce_result(Ok(announce_ok()));
+        assert!(matches!(faker.build_periodic_announce_plan().request.event, TrackerEvent::None));
+        assert!(faker.stats.elapsed_time >= Duration::from_hours(3));
     }
 
     #[test]

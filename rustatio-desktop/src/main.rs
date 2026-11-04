@@ -70,7 +70,6 @@ async fn restore_saved_instances(
     app_handle: tauri::AppHandle,
     state: AppState,
     saved_instances: HashMap<u32, persistence::PersistedInstance>,
-    watch_auto_start: bool,
 ) {
     let mut auto_start_ids: Vec<u32> = Vec::new();
 
@@ -92,10 +91,19 @@ async fn restore_saved_instances(
                     InstanceSource::Manual
                 };
 
+                let faker = Arc::new(RatioFakerHandle::new(faker));
+                // Paused before closing: put back in pause (the resume announces "started").
+                // The values and the seed time come from the saved config either way.
+                if matches!(persisted.state, FakerState::Paused) {
+                    if let Err(e) = faker.pause().await {
+                        log_and_emit!(&app_handle, *id, warn, "Failed to restore pause: {}", e);
+                    }
+                }
+
                 state.fakers.write().await.insert(
                     *id,
                     FakerInstance {
-                        faker: Arc::new(RatioFakerHandle::new(faker)),
+                        faker,
                         torrent,
                         summary,
                         config: persisted.config.clone(),
@@ -109,8 +117,10 @@ async fn restore_saved_instances(
 
                 let _ = app_handle.emit("instance-restored", *id);
 
-                if was_running && matches!(source, InstanceSource::WatchFolder) && watch_auto_start
-                {
+                // Running before closing, whatever its source: started again. It used to be done
+                // only for the watch folder torrents (with its auto-start on), the others came
+                // back stopped.
+                if was_running {
                     auto_start_ids.push(*id);
                 }
 
@@ -138,26 +148,40 @@ async fn restore_saved_instances(
         );
     }
 
-    for id in &auto_start_ids {
+    // Started in the background, all at once (the requests to one tracker are paced by the
+    // tracker gate): one after the other, a tracker that is down made the watch folder and the
+    // scheduler wait for (torrents in error x request timeout) before starting.
+    let mut starts = tokio::task::JoinSet::new();
+    for id in auto_start_ids {
         let faker = {
             let fakers = state.fakers.read().await;
-            match fakers.get(id) {
+            match fakers.get(&id) {
                 Some(instance) => Arc::clone(&instance.faker),
                 None => continue,
             }
         };
-
-        match faker.start().await {
-            Ok(()) => {
-                log_and_emit!(&app_handle, *id, info, "Auto-started (was running before shutdown)");
+        let app_handle = app_handle.clone();
+        starts.spawn(async move {
+            match faker.start().await {
+                Ok(()) => {
+                    log_and_emit!(
+                        &app_handle,
+                        id,
+                        info,
+                        "Auto-started (was running before shutdown)"
+                    );
+                }
+                Err(e) => {
+                    log_and_emit!(&app_handle, id, error, "Auto-start failed: {}", e);
+                }
             }
-            Err(e) => {
-                log_and_emit!(&app_handle, *id, error, "Auto-start failed: {}", e);
-            }
-        };
+        });
     }
 
-    state.refresh_peer_listener_port().await;
+    tauri::async_runtime::spawn(async move {
+        while starts.join_next().await.is_some() {}
+        state.refresh_peer_listener_port().await;
+    });
 }
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -420,17 +444,11 @@ fn main() {
                 state_inner.watch_settings.try_read().ok().and_then(|guard| guard.clone());
             let default_config = Arc::clone(&state_inner.default_config);
             let watch_state = Arc::clone(&state_inner.watch);
-            let watch_auto_start = watch_settings.clone().unwrap_or_default().auto_start;
 
             let scheduler_state = state_inner.clone();
             tauri::async_runtime::spawn(async move {
-                restore_saved_instances(
-                    app_handle.clone(),
-                    state_inner.clone(),
-                    saved_instances,
-                    watch_auto_start,
-                )
-                .await;
+                restore_saved_instances(app_handle.clone(), state_inner.clone(), saved_instances)
+                    .await;
 
                 let mut watch =
                     watch::build_watch_service(state_inner, default_config, watch_settings);

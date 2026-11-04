@@ -11,10 +11,13 @@ use rustatio_core::{
     TorrentInfo, TorrentSummary,
 };
 use std::collections::{BTreeSet, HashMap};
-use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, Mutex, RwLock};
+
+/// Longest wait for the stop announces at shutdown (`docker stop` kills after 10 s by default).
+const SHUTDOWN_STOP_TIMEOUT: Duration = Duration::from_secs(7);
 
 type PeerListenerHandle = Arc<Mutex<PeerListenerService>>;
 
@@ -34,6 +37,9 @@ pub struct AppState {
     server_vpn_port_sync: bool,
     peer_listener: Arc<RwLock<Option<PeerListenerHandle>>>,
     peer_listener_status: Arc<RwLock<PeerListenerStatus>>,
+    /// Set by the final save of the shutdown: a task still finishing afterwards must not
+    /// overwrite it with the states the shutdown produced (everything stopped).
+    final_state_saved: Arc<AtomicBool>,
 }
 
 pub struct InstanceBuildContext {
@@ -137,6 +143,7 @@ impl AppState {
             }),
             peer_listener: Arc::new(RwLock::new(None)),
             peer_listener_status: Arc::new(RwLock::new(PeerListenerStatus::default())),
+            final_state_saved: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -489,20 +496,74 @@ impl AppState {
             tracing::info!("Restored {} instances from saved state", restored_count);
         }
 
-        // Second pass: auto-start instances that were previously running
+        // Second pass: auto-start instances that were previously running, in the background.
+        // Each start announces to its tracker and a tracker that is down makes it wait for the
+        // request timeout: done here, one after the other, it kept the server from listening
+        // (no UI, no logs) for as long as (torrents in error x timeout). They are shown as
+        // starting meanwhile, and the requests to one tracker are paced by the tracker gate.
         if !auto_start_ids.is_empty() {
-            tracing::info!("Auto-starting {} instance(s)...", auto_start_ids.len());
-            for id in &auto_start_ids {
-                if let Err(e) = self.start_instance(id).await {
-                    tracing::warn!("Failed to auto-start instance {}: {}", id, e);
-                }
-            }
+            tracing::info!(
+                "Auto-starting {} instance(s) in the background...",
+                auto_start_ids.len()
+            );
+            self.mark_pending_starts(&auto_start_ids).await;
+            let state = self.clone();
+            tokio::spawn(async move { state.auto_start_instances(auto_start_ids).await });
         }
 
         Ok(restored_count)
     }
 
+    /// Restored running instances waiting for their announce: shown as starting, skipped by the
+    /// scheduler and by the watch folder auto-start until then.
+    async fn mark_pending_starts(&self, ids: &[String]) {
+        let fakers: Vec<_> = {
+            let instances = self.instances.read().await;
+            ids.iter()
+                .filter_map(|id| instances.get(id))
+                .map(|instance| Arc::clone(&instance.faker))
+                .collect()
+        };
+        for faker in fakers {
+            faker.mark_pending_start().await;
+        }
+        self.emit_instance_summaries(ids).await;
+    }
+
+    async fn auto_start_instances(&self, ids: Vec<String>) {
+        let count = ids.len();
+        let starts = ids.into_iter().map(|id| async move {
+            if let Err(e) = self.start_instance(&id).await {
+                tracing::warn!("Failed to auto-start instance {}: {}", id, e);
+            }
+        });
+        futures::future::join_all(starts).await;
+        tracing::info!("Auto-start of {} restored instance(s) finished", count);
+    }
+
     pub async fn save_state(&self) -> Result<(), String> {
+        if self.final_state_saved.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        self.write_state(&HashMap::new()).await
+    }
+
+    /// Last save of the shutdown. The instances were stopped (stop announce) just before:
+    /// each one is saved with the state it had before the shutdown, so that the next start
+    /// puts it back as it was (running, paused, stopped...). Values (uploaded, seed time...)
+    /// are the current ones.
+    pub async fn save_final_state(
+        &self,
+        states_before_shutdown: &HashMap<String, FakerState>,
+    ) -> Result<(), String> {
+        self.final_state_saved.store(true, Ordering::Release);
+        self.write_state(states_before_shutdown).await
+    }
+
+    async fn write_state(
+        &self,
+        state_overrides: &HashMap<String, FakerState>,
+    ) -> Result<(), String> {
         let instances = self.instances.read().await;
 
         let default_config = self.default_config.read().await.clone();
@@ -535,7 +596,7 @@ impl AppState {
                     config,
                     cumulative_uploaded: stats.uploaded,
                     cumulative_downloaded: stats.downloaded,
-                    state: stats.state,
+                    state: state_overrides.get(id).copied().unwrap_or(stats.state),
                     created_at: instance.created_at,
                     updated_at: now_timestamp(),
                     source: instance.source,
@@ -1182,25 +1243,45 @@ impl AppState {
         Ok(())
     }
 
-    pub async fn shutdown_all(&self) {
+    /// Sends the stop announce of the active instances and returns the state each of them had
+    /// before (see [`Self::save_final_state`]).
+    pub async fn shutdown_all(&self) -> HashMap<String, FakerState> {
         tracing::info!("Stopping all running faker instances...");
 
-        let instances = self.instances.read().await;
-        for (id, instance) in instances.iter() {
-            let stats = instance.faker.stats_snapshot();
-            if matches!(
-                stats.state,
-                FakerState::Starting | FakerState::Running | FakerState::Paused
-            ) {
-                if let Err(e) = instance.faker.stop().await {
-                    tracing::warn!("Failed to stop instance {}: {}", id, e);
-                }
-            }
-        }
-        drop(instances);
+        let active: Vec<_> = {
+            let instances = self.instances.read().await;
+            instances
+                .iter()
+                .map(|(id, instance)| {
+                    (id.clone(), Arc::clone(&instance.faker), instance.faker.stats_snapshot().state)
+                })
+                .filter(|(_, _, state)| {
+                    matches!(state, FakerState::Starting | FakerState::Running | FakerState::Paused)
+                })
+                .collect()
+        };
 
-        tracing::info!("All faker instances stopped");
+        // All at once (paced per tracker): one after the other, a tracker that is down made the
+        // shutdown last (instances x timeout), past the grace period of `docker stop`, which then
+        // killed the server before the final save.
+        let stops = active.iter().map(|(id, faker, _)| async move {
+            if let Err(e) = faker.stop().await {
+                tracing::warn!("Failed to stop instance {}: {}", id, e);
+            }
+        });
+        if tokio::time::timeout(SHUTDOWN_STOP_TIMEOUT, futures::future::join_all(stops))
+            .await
+            .is_err()
+        {
+            tracing::warn!(
+                "Some trackers did not answer the stop announce in time, saving the state anyway"
+            );
+        } else {
+            tracing::info!("All faker instances stopped");
+        }
         self.refresh_peer_listener_port().await;
+
+        active.into_iter().map(|(id, _, state)| (id, state)).collect()
     }
 }
 
@@ -1696,6 +1777,53 @@ mod tests {
         let stats = &instances[0].stats;
         assert!(matches!(stats.state, FakerState::Stopped));
         assert_eq!(stats.tracker_error.as_deref(), Some("Torrent not found on tracker"));
+    }
+
+    #[tokio::test]
+    async fn final_save_keeps_the_state_before_the_shutdown() {
+        let temp = tempfile::tempdir();
+        assert!(temp.is_ok(), "failed to create tempdir");
+        let Ok(temp) = temp else {
+            return;
+        };
+        let path = temp.path().to_string_lossy().to_string();
+        let state = AppState::new(&path);
+
+        for (byte, id) in [(21u8, "running"), (22, "paused"), (23, "stopped")] {
+            let created =
+                state.create_instance(id, torrent_with_hash(byte), FakerConfig::default()).await;
+            assert!(created.is_ok());
+        }
+        // As left by the shutdown: everything stopped, values kept
+        {
+            let instances = state.instances.read().await;
+            for instance in instances.values() {
+                let mut stats = instance.faker.stats_snapshot();
+                stats.state = FakerState::Stopped;
+                stats.uploaded = 4_096;
+                stats.elapsed_time = Duration::from_hours(5);
+                instance.faker.restore_snapshot(stats).await;
+            }
+        }
+
+        let before = HashMap::from([
+            ("running".to_string(), FakerState::Running),
+            ("paused".to_string(), FakerState::Paused),
+        ]);
+        assert!(state.save_final_state(&before).await.is_ok());
+        // A save from a task still finishing must not overwrite it
+        assert!(state.save_state().await.is_ok());
+
+        let saved = state.persistence.load().await;
+        let saved_state = |id: &str| saved.instances.get(id).map(|instance| instance.state);
+        assert!(matches!(saved_state("running"), Some(FakerState::Running)));
+        assert!(matches!(saved_state("paused"), Some(FakerState::Paused)));
+        assert!(matches!(saved_state("stopped"), Some(FakerState::Stopped)));
+        assert_eq!(saved.instances.len(), 3);
+        for instance in saved.instances.values() {
+            assert_eq!(instance.cumulative_uploaded, 4_096);
+            assert_eq!(instance.runtime.as_ref().map(|runtime| runtime.elapsed_secs), Some(18_000));
+        }
     }
 
     #[tokio::test]

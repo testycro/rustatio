@@ -180,7 +180,17 @@ impl WatchEngine for ServerWatchEngine {
     }
 
     async fn start_instance(&self, id: &str) -> Result<(), String> {
-        self.state.start_instance(id).await
+        // Started in the background: the announce waits for the request timeout when the
+        // tracker is down, and the watch folder (startup, every new file) used to wait for each
+        // of them in turn. The requests to one tracker are paced by the tracker gate.
+        let state = self.state.clone();
+        let id = id.to_string();
+        tokio::spawn(async move {
+            if let Err(e) = state.start_instance(&id).await {
+                tracing::warn!("Failed to start watch folder instance {}: {}", id, e);
+            }
+        });
+        Ok(())
     }
 
     async fn delete_instance_by_info_hash(&self, info_hash: &[u8; 20]) -> Result<(), String> {
