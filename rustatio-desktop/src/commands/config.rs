@@ -1,5 +1,5 @@
 use rustatio_core::validation;
-use rustatio_core::{AppConfig, ClientInfo, ClientType};
+use rustatio_core::{AppConfig, ClientDefinition, ClientInfo, ClientType};
 use tauri::State;
 
 use crate::state::AppState;
@@ -38,6 +38,35 @@ pub async fn get_client_types() -> Vec<String> {
 #[tauri::command]
 pub async fn get_client_infos() -> Vec<ClientInfo> {
     ClientType::all_infos()
+}
+
+/// Full definition of every emulated client (stored in the state file next to `default_config`)
+#[tauri::command]
+pub async fn get_client_definitions() -> Vec<ClientDefinition> {
+    rustatio_core::client_definitions()
+}
+
+/// Add a client, or replace the one with the same id
+#[tauri::command]
+pub async fn upsert_client_definition(
+    definition: ClientDefinition,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    rustatio_core::upsert_client_definition(definition)?;
+    state.save_state().await
+}
+
+/// Delete a client (the last remaining one cannot be deleted)
+#[tauri::command]
+pub async fn delete_client_definition(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    if rustatio_core::client_definition(&id).is_none() {
+        return Err(format!("client '{id}' not found"));
+    }
+    rustatio_core::remove_client_definition(&id)?;
+    state.save_state().await
 }
 
 #[tauri::command]

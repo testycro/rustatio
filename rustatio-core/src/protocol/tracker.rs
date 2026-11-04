@@ -490,7 +490,7 @@ mod tests {
     use std::collections::HashMap;
 
     fn client() -> Result<TrackerClient<ReqwestHttpClient>> {
-        let cfg = ClientConfig::get(ClientType::QBittorrent, None);
+        let cfg = ClientConfig::get(&ClientType::new("qbittorrent"), None);
         TrackerClient::new(cfg, None)
     }
 
@@ -529,7 +529,7 @@ mod tests {
     }
 
     fn client_with_http(http: MockHttpClient) -> TrackerClient<MockHttpClient> {
-        let config = ClientConfig::get(ClientType::QBittorrent, None);
+        let config = ClientConfig::get(&ClientType::new("qbittorrent"), None);
         TrackerClient { http, client_config: config }
     }
 

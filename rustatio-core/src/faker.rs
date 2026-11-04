@@ -200,7 +200,7 @@ impl From<PresetSettings> for FakerConfig {
             download_rate: p.download_rate.unwrap_or(100.0),
             port: p.port.unwrap_or(6881),
             vpn_port_sync: p.vpn_port_sync.unwrap_or(false),
-            client_type: p.selected_client.unwrap_or(ClientType::QBittorrent),
+            client_type: p.selected_client.unwrap_or_default(),
             client_version: p.selected_client_version,
             initial_uploaded: 0,
             initial_downloaded: 0,
@@ -264,7 +264,7 @@ impl Default for FakerConfig {
             download_rate: 100.0, // 100 KB/s
             port: 6881,
             vpn_port_sync: false,
-            client_type: ClientType::QBittorrent,
+            client_type: ClientType::default(),
             client_version: None,
             initial_uploaded: 0,
             initial_downloaded: 0,
@@ -652,7 +652,7 @@ impl RatioFaker {
         );
 
         // Create client configuration
-        let client_config = ClientConfig::get(config.client_type, config.client_version.clone());
+        let client_config = ClientConfig::get(&config.client_type, config.client_version.clone());
 
         // Generate session identifiers
         let peer_id = client_config.generate_peer_id();
@@ -1446,7 +1446,7 @@ impl RatioFaker {
 
         if client_type_changed {
             let client_config =
-                ClientConfig::get(config.client_type, config.client_version.clone());
+                ClientConfig::get(&config.client_type, config.client_version.clone());
             self.peer_id = client_config.generate_peer_id();
             self.key = ClientConfig::generate_key();
             self.tracker_client = Arc::new(
@@ -1483,7 +1483,7 @@ impl RatioFaker {
     /// the new client without losing their peer id or session state.
     pub fn set_http_client(&mut self, http_client: Option<reqwest::Client>) -> Result<()> {
         let client_config =
-            ClientConfig::get(self.config.client_type, self.config.client_version.clone());
+            ClientConfig::get(&self.config.client_type, self.config.client_version.clone());
         self.tracker_client = Arc::new(
             TrackerClient::new(client_config, http_client)
                 .map_err(|e| FakerError::ConfigError(e.to_string()))?,
@@ -2129,7 +2129,7 @@ mod tests {
         assert_eq!(config.download_rate, 100.0);
         assert_eq!(config.port, 6881);
         assert!(!config.vpn_port_sync);
-        assert_eq!(config.client_type, ClientType::QBittorrent);
+        assert_eq!(config.client_type, ClientType::new("qbittorrent"));
         assert_eq!(config.completion_percent, 100.0);
         assert!(config.randomize_rates);
         assert_eq!(config.random_range_percent, 20.0);
@@ -2148,7 +2148,7 @@ mod tests {
             download_rate: Some(200.0),
             port: Some(51413),
             vpn_port_sync: Some(true),
-            selected_client: Some(ClientType::Transmission),
+            selected_client: Some(ClientType::new("transmission")),
             completion_percent: Some(50.0),
             randomize_rates: Some(false),
             stop_at_ratio_enabled: Some(true),
@@ -2169,7 +2169,7 @@ mod tests {
         assert_eq!(config.download_rate, 200.0);
         assert_eq!(config.port, 51413);
         assert!(config.vpn_port_sync);
-        assert_eq!(config.client_type, ClientType::Transmission);
+        assert_eq!(config.client_type, ClientType::new("transmission"));
         assert_eq!(config.completion_percent, 50.0);
         assert!(!config.randomize_rates);
         assert_eq!(config.stop_at_ratio, Some(2.5));

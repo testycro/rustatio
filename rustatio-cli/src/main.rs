@@ -71,6 +71,22 @@ async fn main() -> Result<()> {
             // Load config file (if specified) or use defaults
             let app_config = load_config(config_file.as_ref(), json);
 
+            // Resolve the client now that the config (which may define extra clients) is loaded
+            let client = client.map_or_else(rustatio_core::ClientType::default, |id| {
+                rustatio_core::ClientType::from_id(&id.to_lowercase()).unwrap_or_else(|| {
+                    let message = format!(
+                        "Unknown client '{id}'. Available clients: {}",
+                        rustatio_core::ClientType::all_ids().join(", ")
+                    );
+                    if json {
+                        json::OutputEvent::error(message).emit();
+                    } else {
+                        eprintln!("Error: {message}");
+                    }
+                    std::process::exit(1);
+                })
+            });
+
             // Load torrent to get info_hash for session lookup
             let torrent_info = runner::load_torrent(&torrent)?;
             let info_hash = torrent_info.info_hash_hex();
@@ -205,15 +221,10 @@ async fn main() -> Result<()> {
                 );
             }
 
-            // Parse client type from session
-            let client = match session.client.to_lowercase().as_str() {
-                "utorrent" => cli::ClientArg::Utorrent,
-                "transmission" => cli::ClientArg::Transmission,
-                "deluge" => cli::ClientArg::Deluge,
-                "bittorrent" => cli::ClientArg::Bittorrent,
-                "rtorrent" => cli::ClientArg::Rtorrent,
-                _ => cli::ClientArg::Qbittorrent,
-            };
+            // Parse client type from session (it may be a client defined in the config file)
+            load_client_definitions();
+            let client = rustatio_core::ClientType::from_id(&session.client.to_lowercase())
+                .unwrap_or_default();
 
             let config = RunnerConfig {
                 torrent_path,
@@ -281,6 +292,8 @@ async fn main() -> Result<()> {
         }
 
         Commands::Clients { json } => {
+            load_client_definitions();
+
             let clients = ClientsOutput::new();
 
             if json {
@@ -493,6 +506,15 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Pick up the clients defined in the default config file (`[[clients]]`), if it exists.
+/// Loading the config registers them; nothing is created or written.
+fn load_client_definitions() {
+    let config_path = rustatio_core::AppConfig::default_path();
+    if config_path.exists() {
+        let _ = rustatio_core::AppConfig::load(&config_path);
+    }
 }
 
 /// Load configuration from file or use defaults

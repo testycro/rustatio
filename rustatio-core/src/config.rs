@@ -1,5 +1,5 @@
 use crate::faker::PostStopAction;
-use crate::torrent::ClientType;
+use crate::torrent::{set_client_definitions, ClientDefinition, ClientType};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -21,6 +21,11 @@ pub type Result<T> = std::result::Result<T, ConfigError>;
 pub struct AppConfig {
     #[serde(default)]
     pub client: ClientSettings,
+
+    /// Emulated `BitTorrent` clients (`[[clients]]` tables). Empty = built-in clients.
+    /// Add an entry to add a client, list only some to drop the others.
+    #[serde(default)]
+    pub clients: Vec<ClientDefinition>,
 
     #[serde(default)]
     pub faker: FakerSettings,
@@ -138,8 +143,8 @@ pub struct UiSettings {
 }
 
 // Default values
-const fn default_client_type() -> ClientType {
-    ClientType::QBittorrent
+fn default_client_type() -> ClientType {
+    ClientType::default()
 }
 
 const fn default_port() -> u16 {
@@ -224,6 +229,11 @@ impl AppConfig {
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
         let content = fs::read_to_string(path)?;
         let config: Self = toml::from_str(&content)?;
+
+        if !config.clients.is_empty() {
+            set_client_definitions(config.clients.clone());
+        }
+
         Ok(config)
     }
 

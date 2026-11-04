@@ -87,6 +87,9 @@ impl Modify for SecurityAddon {
         // Clients
         routes::clients::get_client_types,
         routes::clients::get_client_infos,
+        routes::clients::get_client_definitions,
+        routes::clients::upsert_client_definition,
+        routes::clients::delete_client_definition,
         // Network
         routes::network::get_network_status,
         routes::network::get_proxy,

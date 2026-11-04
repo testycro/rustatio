@@ -10,3 +10,9 @@ extend-exclude = [
     "*.py",
     "**/*.py"
 ]
+
+# French translations of the daemon panel: not English, not spell-checked.
+# A file type (not files.extend-exclude) so it also applies when hk passes the file explicitly.
+[type.daemon-i18n]
+extend-glob = ["i18n.svelte.js"]
+check-file = false

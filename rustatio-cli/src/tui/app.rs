@@ -49,8 +49,8 @@ pub struct App {
 
 impl App {
     pub fn new(torrent: TorrentInfo, config: &RunnerConfig) -> Self {
-        let client_type: ClientType = config.client.into();
-        let client_config = ClientConfig::get(client_type, config.client_version.clone());
+        let client_type = config.client.clone();
+        let client_config = ClientConfig::get(&client_type, config.client_version.clone());
 
         Self {
             torrent,
@@ -276,13 +276,13 @@ pub async fn run_tui_mode(config: RunnerConfig) -> Result<()> {
     // Save session if enabled
     if config.save_session {
         if let Some(ref stats) = app.stats {
-            let client_type: ClientType = config.client.into();
+            let client_type = config.client.clone();
             let mut session = Session::new(SessionInit {
                 info_hash: config.info_hash.clone(),
                 torrent_name: config.torrent_name.clone(),
                 torrent_path: config.torrent_path.to_string_lossy().into_owned(),
                 torrent_size: config.torrent_size,
-                client: format!("{client_type:?}"),
+                client: client_type.id().to_string(),
                 client_version: config.client_version.clone(),
             });
             session.upload_rate = config.upload_rate;
@@ -406,7 +406,7 @@ fn render_torrent_info(frame: &mut Frame, app: &App, area: Rect) {
         Line::from(vec![
             Span::styled("Client:  ", Style::default().fg(Color::Gray)),
             Span::styled(
-                format!("{:?} {}", app.client_type, app.client_version),
+                format!("{} {}", app.client_type.info().name, app.client_version),
                 Style::default().fg(Color::Green),
             ),
             Span::raw("   "),

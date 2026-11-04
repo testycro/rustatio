@@ -28,9 +28,9 @@ pub enum Commands {
         #[arg(value_name = "TORRENT_FILE")]
         torrent: PathBuf,
 
-        /// Client to emulate
-        #[arg(short, long, value_enum, default_value = "qbittorrent")]
-        client: ClientArg,
+        /// Client to emulate, by id (see the `clients` command); defaults to qBittorrent
+        #[arg(short, long, value_name = "CLIENT")]
+        client: Option<String>,
 
         /// Client version string (e.g., "5.2.0")
         #[arg(long, value_name = "VERSION")]
@@ -242,29 +242,6 @@ pub enum Commands {
         #[arg(value_enum)]
         shell: ShellArg,
     },
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum ClientArg {
-    Qbittorrent,
-    Utorrent,
-    Transmission,
-    Deluge,
-    Bittorrent,
-    Rtorrent,
-}
-
-impl From<ClientArg> for rustatio_core::ClientType {
-    fn from(client: ClientArg) -> Self {
-        match client {
-            ClientArg::Qbittorrent => Self::QBittorrent,
-            ClientArg::Utorrent => Self::UTorrent,
-            ClientArg::Transmission => Self::Transmission,
-            ClientArg::Deluge => Self::Deluge,
-            ClientArg::Bittorrent => Self::BitTorrent,
-            ClientArg::Rtorrent => Self::RTorrent,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]

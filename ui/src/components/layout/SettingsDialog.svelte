@@ -54,6 +54,7 @@
     ZoomOut,
   } from '@lucide/svelte';
   import PresetIcon from '../config/PresetIcon.svelte';
+  import ClientsManager from '../config/ClientsManager.svelte';
 
   // Theme picker options, split by tone for the automatic light/dark pair
   const allThemeIds = Object.keys(THEMES);
@@ -114,6 +115,9 @@
       closeBehavior = getCloseBehavior();
     }
   });
+
+  // Client management: state file on server/desktop, localStorage in the browser build
+  const clientsSupported = true;
 
   // Proxy settings (server and desktop only)
   const proxySupported = getRunMode() !== 'wasm';
@@ -607,6 +611,17 @@
           Connection
         </button>
       {/if}
+      {#if clientsSupported}
+        <button
+          class="flex-1 cursor-pointer px-3 py-1.5 text-[0.6875rem] font-medium transition-colors {activeTab ===
+          'clients'
+            ? 'border-b-2 border-primary bg-primary/5 text-primary'
+            : 'text-muted-foreground hover:text-foreground'}"
+          onclick={() => (activeTab = 'clients')}
+        >
+          Clients
+        </button>
+      {/if}
       <button
         class="flex-1 cursor-pointer px-3 py-1.5 text-[0.6875rem] font-medium transition-colors {activeTab ===
         'presets'
@@ -977,6 +992,9 @@
             Docker, use the host address (e.g. host.docker.internal) instead of localhost.
           </p>
         </div>
+      {:else if activeTab === 'clients'}
+        <!-- Clients Tab -->
+        <ClientsManager />
       {:else if activeTab === 'presets'}
         <!-- Presets Tab -->
         <div class="space-y-6">

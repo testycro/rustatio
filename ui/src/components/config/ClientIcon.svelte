@@ -1,7 +1,7 @@
 <script>
   import { siBittorrent, siQbittorrent, siUtorrent, siTransmission, siDeluge } from 'simple-icons';
 
-  let { clientId, size = 16, class: className = '' } = $props();
+  let { clientId, name = '', size = 16, class: className = '' } = $props();
 
   const icons = {
     qbittorrent: { kind: 'simple', icon: siQbittorrent, color: `#${siQbittorrent.hex}` },
@@ -18,6 +18,14 @@
   };
 
   const currentIcon = $derived(icons[clientId]);
+
+  // Custom clients have no brand icon: show their initial instead
+  const initial = $derived(
+    String(name || clientId || '?')
+      .trim()
+      .charAt(0)
+      .toUpperCase()
+  );
 </script>
 
 {#if currentIcon}
@@ -32,4 +40,16 @@
   >
     <path d={currentIcon.kind === 'simple' ? currentIcon.icon.path : currentIcon.path} />
   </svg>
+{:else if clientId}
+  <span
+    role="img"
+    aria-label={name || clientId}
+    class="inline-flex flex-shrink-0 items-center justify-center rounded-sm bg-muted font-semibold text-muted-foreground {className}"
+    style:width="{size}px"
+    style:height="{size}px"
+    style:font-size="{Math.round(size * 0.62)}px"
+    style:line-height="1"
+  >
+    {initial}
+  </span>
 {/if}

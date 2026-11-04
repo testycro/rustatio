@@ -164,6 +164,15 @@
     });
   }
 
+  // Reload the client list after clients were added, edited or deleted in the settings
+  async function refreshClientInfos() {
+    try {
+      clientInfos = (await api.getClientInfos()) || [];
+    } catch (error) {
+      console.error('Failed to refresh client infos:', error);
+    }
+  }
+
   async function refreshNetworkStatus() {
     networkStatusLoading = true;
     networkStatusError = null;
@@ -536,6 +545,7 @@
     await instanceActions.initialize();
     startNetworkStatusPolling();
     window.addEventListener('rustatio:refresh-network-status', refreshNetworkStatus);
+    window.addEventListener('rustatio:clients-changed', refreshClientInfos);
     // WASM has no backend scheduler, so the frontend drives tracker retries.
     // Desktop and server handle retries in their backend schedulers.
     if (getRunMode() === 'wasm') {
@@ -678,6 +688,7 @@
     window.removeEventListener('keydown', handleZoomKeydown, true);
     window.removeEventListener('wheel', handleZoomWheel, true);
     window.removeEventListener('rustatio:refresh-network-status', refreshNetworkStatus);
+    window.removeEventListener('rustatio:clients-changed', refreshClientInfos);
 
     // Clean up beforeunload handler
     if (beforeUnloadHandler) {

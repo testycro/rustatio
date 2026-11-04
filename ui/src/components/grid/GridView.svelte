@@ -100,6 +100,7 @@
   }
   refreshNetworkStatus();
   refreshClientInfos();
+  window.addEventListener('rustatio:clients-changed', refreshClientInfos);
 
   const cleanupEvents = listenToInstanceEvents(event => {
     if (event.type === 'summaries') {
@@ -186,6 +187,7 @@
   onDestroy(() => {
     gridActions.stopPolling();
     cleanupEvents();
+    window.removeEventListener('rustatio:clients-changed', refreshClientInfos);
     clearTimeout(debounceTimer);
   });
 </script>

@@ -1,4 +1,9 @@
 import { createEventStream } from './serverStream.js';
+import {
+  browserStorage,
+  loadStoredClientDefinitions,
+  saveStoredClientDefinitions,
+} from './clients/clientStorage.js';
 
 // Check if running in Tauri
 const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -237,6 +242,23 @@ if (!isTauri) {
   }
 }
 
+// Emulated clients added/edited in the browser build are kept in localStorage (there is no
+// backend state file): put them back into the WASM registry once it is ready.
+function restoreClientDefinitions() {
+  const stored = loadStoredClientDefinitions(browserStorage());
+  if (!stored) return;
+
+  try {
+    wasm.set_client_definitions(stored);
+  } catch (error) {
+    console.error('Failed to restore client definitions:', error);
+  }
+}
+
+function persistClientDefinitions() {
+  saveStoredClientDefinitions(browserStorage(), wasm.get_client_definitions());
+}
+
 export async function initWasm() {
   if (isTauri) {
     // In Tauri, no WASM initialization needed
@@ -260,6 +282,7 @@ export async function initWasm() {
     const { default: init } = wasm;
     await init();
     wasm.init();
+    restoreClientDefinitions();
 
     // Set up log callback for WASM
     wasm.set_log_callback((level, message) => {
@@ -580,6 +603,19 @@ const serverApi = {
   },
   getClientInfos: async () => {
     return serverFetch('/clients/info', { method: 'GET' });
+  },
+  // Full client definitions (add / edit / delete emulated clients)
+  listClientDefinitions: async () => {
+    return serverFetch('/clients/definitions', { method: 'GET' });
+  },
+  upsertClientDefinition: async definition => {
+    await serverFetch(`/clients/definitions/${encodeURIComponent(definition.id)}`, {
+      method: 'PUT',
+      body: JSON.stringify(definition),
+    });
+  },
+  deleteClientDefinition: async id => {
+    await serverFetch(`/clients/definitions/${encodeURIComponent(id)}`, { method: 'DELETE' });
   },
   getNetworkStatus: async () => {
     return serverFetch('/network/status', { method: 'GET' });
@@ -988,6 +1024,18 @@ const tauriApi = {
     const { invoke } = await import('@tauri-apps/api/core');
     return invoke('get_client_infos');
   },
+  listClientDefinitions: async () => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('get_client_definitions');
+  },
+  upsertClientDefinition: async definition => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('upsert_client_definition', { definition });
+  },
+  deleteClientDefinition: async id => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('delete_client_definition', { id });
+  },
   getNetworkStatus: async () => {
     const { invoke } = await import('@tauri-apps/api/core');
     const local = await invoke('get_network_status');
@@ -1217,6 +1265,18 @@ const wasmApi = {
   },
   getClientInfos: async () => {
     return wasm.get_client_infos();
+  },
+  // Client management: the registry lives in the WASM module, saved in localStorage
+  listClientDefinitions: async () => {
+    return wasm.get_client_definitions();
+  },
+  upsertClientDefinition: async definition => {
+    wasm.upsert_client_definition(definition);
+    persistClientDefinitions();
+  },
+  deleteClientDefinition: async id => {
+    wasm.delete_client_definition(id);
+    persistClientDefinitions();
   },
   getNetworkStatus: async () => {
     // Use fallback function for WASM

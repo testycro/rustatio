@@ -80,7 +80,7 @@ impl GridImportSettings {
         config.completion_percent = Some(self.mode.completion_percent());
 
         if let Some(ref client) = self.client_type {
-            config.selected_client = Some(*client);
+            config.selected_client = Some(client.clone());
         }
 
         if let Some(ref version) = self.client_version {
@@ -181,12 +181,12 @@ mod tests {
     #[test]
     fn test_resolve_for_instance_applies_client() {
         let settings = GridImportSettings {
-            client_type: Some(ClientType::Transmission),
+            client_type: Some(ClientType::new("transmission")),
             client_version: Some("4.0.0".to_string()),
             ..Default::default()
         };
         let resolved = settings.resolve_for_instance();
-        assert_eq!(resolved.selected_client, Some(ClientType::Transmission));
+        assert_eq!(resolved.selected_client, Some(ClientType::new("transmission")));
         assert_eq!(resolved.selected_client_version, Some("4.0.0".to_string()));
     }
 

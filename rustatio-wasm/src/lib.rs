@@ -423,6 +423,42 @@ pub fn get_client_infos() -> JsValue {
     to_js(&infos).expect("serializing client infos to JsValue")
 }
 
+// --- Client definitions (add / edit / delete emulated clients) ---
+//
+// The registry lives in rustatio-core. Without a backend state file, persisting it is up to
+// the JS side (localStorage): it reads the list back after every change and restores it at
+// startup with `set_client_definitions`.
+
+#[wasm_bindgen]
+pub fn get_client_definitions() -> Result<JsValue, JsValue> {
+    to_js(&rustatio_core::client_definitions())
+}
+
+#[wasm_bindgen]
+pub fn upsert_client_definition(definition: JsValue) -> Result<(), JsValue> {
+    let definition: rustatio_core::ClientDefinition = serde_wasm_bindgen::from_value(definition)
+        .map_err(|e| JsValue::from_str(&format!("Invalid client definition: {e}")))?;
+
+    rustatio_core::upsert_client_definition(definition).map_err(|e| JsValue::from_str(&e))
+}
+
+#[wasm_bindgen]
+pub fn delete_client_definition(id: &str) -> Result<(), JsValue> {
+    rustatio_core::remove_client_definition(id).map_err(|e| JsValue::from_str(&e))
+}
+
+/// Replaces the whole list (restore from localStorage). Invalid entries are skipped; if none
+/// is valid the built-in clients are used. Returns the number of accepted definitions.
+#[wasm_bindgen]
+pub fn set_client_definitions(definitions: JsValue) -> Result<u32, JsValue> {
+    let definitions: Vec<rustatio_core::ClientDefinition> =
+        serde_wasm_bindgen::from_value(definitions)
+            .map_err(|e| JsValue::from_str(&format!("Invalid client definitions: {e}")))?;
+
+    let accepted = rustatio_core::set_client_definitions(definitions);
+    Ok(u32::try_from(accepted).unwrap_or(u32::MAX))
+}
+
 // --- Grid Operations ---
 
 #[wasm_bindgen]

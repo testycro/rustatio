@@ -1,4 +1,3 @@
-use crate::cli::ClientArg;
 use crate::json::{
     AnnounceEvent, AnnounceType, InputCommand, OutputEvent, ScrapeEvent, StartedEvent, StatsEvent,
     StopReason, StoppedEvent,
@@ -18,7 +17,7 @@ use tokio::time::{interval, Duration};
 #[allow(dead_code)]
 pub struct RunnerConfig {
     pub torrent_path: std::path::PathBuf,
-    pub client: ClientArg,
+    pub client: ClientType,
     pub client_version: Option<String>,
     pub upload_rate: f64,
     pub download_rate: f64,
@@ -74,8 +73,8 @@ pub async fn run_json_mode(config: RunnerConfig) -> Result<()> {
     let faker_config = create_faker_config(&config);
 
     // Get client info for started event
-    let client_type: ClientType = config.client.into();
-    let client_config = ClientConfig::get(client_type, config.client_version.clone());
+    let client_type = config.client.clone();
+    let client_config = ClientConfig::get(&client_type, config.client_version.clone());
 
     // Create faker
     let mut faker = RatioFaker::new(Arc::new(torrent), faker_config, None)
@@ -87,7 +86,7 @@ pub async fn run_json_mode(config: RunnerConfig) -> Result<()> {
     // Emit started event
     OutputEvent::Started(StartedEvent {
         peer_id: client_config.generate_peer_id(),
-        client: format!("{client_type:?}"),
+        client: client_type.id().to_string(),
         client_version: client_config.version.clone(),
         port: config.port,
         timestamp: Utc::now(),
@@ -228,13 +227,13 @@ pub async fn run_json_mode(config: RunnerConfig) -> Result<()> {
 
     // Save session if enabled
     if config.save_session {
-        let client_type: ClientType = config.client.into();
+        let client_type = config.client.clone();
         let mut session = Session::new(SessionInit {
             info_hash: config.info_hash.clone(),
             torrent_name: config.torrent_name.clone(),
             torrent_path: config.torrent_path.to_string_lossy().into_owned(),
             torrent_size: config.torrent_size,
-            client: format!("{client_type:?}"),
+            client: client_type.id().to_string(),
             client_version: config.client_version.clone(),
         });
         session.upload_rate = config.upload_rate;
@@ -282,7 +281,7 @@ pub fn create_faker_config(config: &RunnerConfig) -> FakerConfig {
         download_rate: config.download_rate,
         port: config.port,
         vpn_port_sync: false,
-        client_type: config.client.into(),
+        client_type: config.client.clone(),
         client_version: config.client_version.clone(),
         initial_uploaded: config.initial_uploaded,
         initial_downloaded: config.initial_downloaded,
