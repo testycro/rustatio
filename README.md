@@ -1,5 +1,14 @@
 > [!IMPORTANT]
-> This fork include a daemon for advanced automation (docker only) with default rules and preset.
+> This fork includes:
+> - Embedded admin daemon with menu integration (demo available on WASM), with default rules and a new preset.
+> - Configurable BitTorrent client definitions.
+> - Tracker errors no longer stop the torrent: it switches to a degraded mode and retries automatically.
+> - Overall progress shown in the grid view instead of download progress.
+> - Old dark and old light theme families.
+> - Multiple security fixes and bug fixes (presets, seed time, torrent names in logs, trackers down...).
+> - Micromanagement, updates and restarts are no longer a problem :)
+>
+> **To do:** serve the web UI behind a reverse proxy and subpath, test on macOS.
 
 <div align="center">
   <img src="rustatio-desktop/icons/icon.png" alt="Rustatio Logo" width="128" height="128">
