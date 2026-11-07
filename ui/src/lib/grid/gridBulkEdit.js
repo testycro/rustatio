@@ -77,6 +77,7 @@ export function createBulkEditState(instances = []) {
     idleWhenNoLeechers: inst.idleWhenNoLeechers,
     idleWhenNoSeeders: inst.idleWhenNoSeeders,
     postStopAction: inst.postStopAction,
+    trackerErrorAction: inst.trackerErrorAction ?? 'retry',
   }));
 
   const sections = {
@@ -197,7 +198,8 @@ export function applyPresetToBulkState(state, preset) {
     settings.stopAtSeedTimeHours != null ||
     settings.idleWhenNoLeechers != null ||
     settings.idleWhenNoSeeders != null ||
-    settings.postStopAction != null
+    settings.postStopAction != null ||
+    settings.trackerErrorAction != null
   ) {
     next.sections.stopConditions.apply = true;
     next.sections.stopConditions.value = {
@@ -239,6 +241,9 @@ export function applyPresetToBulkState(state, preset) {
         ? { idleWhenNoSeeders: settings.idleWhenNoSeeders }
         : {}),
       ...(settings.postStopAction != null ? { postStopAction: settings.postStopAction } : {}),
+      ...(settings.trackerErrorAction != null
+        ? { trackerErrorAction: settings.trackerErrorAction }
+        : {}),
     };
   }
 

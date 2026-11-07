@@ -40,6 +40,7 @@ export const FIELDS = [
   'config.target_download_rate',
   'config.progressive_duration',
   'config.post_stop_action',
+  'config.tracker_error_action',
   'stats.uploaded',
   'stats.downloaded',
   'stats.ratio',
@@ -102,6 +103,7 @@ export const CONFIG_TYPES = {
   'config.target_download_rate': 'number',
   'config.progressive_duration': 'number',
   'config.post_stop_action': 'string',
+  'config.tracker_error_action': 'string',
 };
 
 export const CONFIG_KEYS = Object.keys(CONFIG_TYPES);

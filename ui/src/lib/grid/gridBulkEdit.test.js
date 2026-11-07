@@ -170,3 +170,21 @@ test('buildBulkUpdateEntries builds one payload per instance', () => {
     { id: 'b', config: { upload_rate: 70, download_rate: 90 } },
   ]);
 });
+
+test('tracker error action is part of the stop conditions section', () => {
+  const state = createBulkEditState([makeInstance({ trackerErrorAction: 'stop' })]);
+  assert.equal(state.sections.stopConditions.value.trackerErrorAction, 'stop');
+
+  const legacy = createBulkEditState([makeInstance()]);
+  assert.equal(legacy.sections.stopConditions.value.trackerErrorAction, 'retry');
+
+  const next = applyPresetToBulkState(legacy, {
+    id: 'stopping',
+    settings: { trackerErrorAction: 'stop' },
+  });
+  assert.equal(next.sections.stopConditions.apply, true);
+  assert.equal(next.sections.stopConditions.value.trackerErrorAction, 'stop');
+
+  const merged = mergeBulkSectionsIntoInstance(makeInstance(), next.sections);
+  assert.equal(merged.trackerErrorAction, 'stop');
+});

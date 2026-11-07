@@ -17,6 +17,7 @@ pub use config::{AppConfig, ClientSettings, ConfigError, FakerSettings, UiSettin
 pub use faker::RatioFakerHandle;
 pub use faker::{
     FakerConfig, FakerError, FakerState, FakerStats, PostStopAction, PresetSettings, RatioFaker,
+    TrackerErrorAction,
 };
 pub use grid::{primary_tracker_host, GridImportSettings, GridMode, InstanceSummary};
 #[cfg(not(target_arch = "wasm32"))]

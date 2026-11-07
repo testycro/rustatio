@@ -865,6 +865,7 @@ HTML_TEMPLATE = """
         <option value="default_config.target_download_rate"></option>
         <option value="default_config.progressive_duration"></option>
         <option value="default_config.post_stop_action"></option>
+        <option value="default_config.tracker_error_action"></option>
     </datalist>
 
     <script>
@@ -977,6 +978,7 @@ HTML_TEMPLATE = """
             "config.stop_at_seed_time", "config.idle_when_no_leechers", "config.idle_when_no_seeders",
             "config.scrape_interval", "config.progressive_rates", "config.target_upload_rate",
             "config.target_download_rate", "config.progressive_duration", "config.post_stop_action",
+            "config.tracker_error_action",
             "stats.uploaded", "stats.downloaded", "stats.ratio", "stats.left", "stats.torrent_completion",
             "stats.seeders", "stats.leechers", "stats.state", "stats.is_idling", "stats.idling_reason",
             "stats.session_uploaded", "stats.session_downloaded", "stats.session_ratio",
@@ -1000,7 +1002,8 @@ HTML_TEMPLATE = """
             "config.idle_when_no_leechers": "boolean", "config.idle_when_no_seeders": "boolean",
             "config.scrape_interval": "number", "config.progressive_rates": "boolean",
             "config.target_upload_rate": "number", "config.target_download_rate": "number",
-            "config.progressive_duration": "number", "config.post_stop_action": "string"
+            "config.progressive_duration": "number", "config.post_stop_action": "string",
+            "config.tracker_error_action": "string"
         };
 
         const OPERATORS = [":", "=", "<", ">", "!=", "<=", ">=", "~"];

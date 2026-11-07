@@ -11,6 +11,7 @@
     Pause,
     Settings,
     Shuffle,
+    ServerCrash,
   } from '@lucide/svelte';
 
   let {
@@ -28,6 +29,7 @@
     idleWhenNoLeechers = $bindable(false),
     idleWhenNoSeeders = $bindable(false),
     postStopAction = $bindable('idle'),
+    trackerErrorAction = $bindable('retry'),
     completionPercent = 100,
     disabled = false,
     onchange,
@@ -336,4 +338,30 @@
       </select>
     </div>
   {/if}
+
+  <!-- Tracker error -->
+  <div class="flex items-center gap-2 border-t border-border px-2 py-1.5">
+    <ServerCrash
+      size={13}
+      class={trackerErrorAction === 'stop' ? 'text-destructive' : 'text-muted-foreground'}
+    />
+    <Label
+      for="tracker-error-action"
+      class="flex-1 text-[0.6875rem] font-medium"
+      title={trackerErrorAction === 'stop'
+        ? 'The instance stops. "Tracker unavailable" is retried automatically (30s, 60s, 120s, then every 5 min); "Torrent not found" stays stopped.'
+        : 'The instance keeps running (rates at 0, seed time keeps counting) and re-announces every 30s until the tracker answers.'}
+      >On tracker error</Label
+    >
+    <select
+      id="tracker-error-action"
+      bind:value={trackerErrorAction}
+      {disabled}
+      class="h-7 border border-input bg-background px-2 text-[0.6875rem] text-foreground focus:border-ring focus:outline-none"
+      onchange={() => onchange?.({ trackerErrorAction })}
+    >
+      <option value="retry">Keep running, retry every 30s</option>
+      <option value="stop">Stop</option>
+    </select>
+  </div>
 </div>

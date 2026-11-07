@@ -293,7 +293,7 @@ mod tests {
     #[test]
     fn test_parse_rejects_deep_nesting_without_overflowing() {
         let mut data = vec![b'l'; 100_000];
-        data.extend_from_slice(&[b'e'; 100_000]);
+        data.resize(data.len() + 100_000, b'e');
         assert!(matches!(parse(&data), Err(BencodeError::ParseError(_))));
 
         let mut ok = vec![b'l'; MAX_NESTING_DEPTH];

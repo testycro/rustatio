@@ -121,6 +121,10 @@ function createDefaultInstance(id, defaults = {}) {
     // Post stop action
     postStopAction: defaults.postStopAction !== undefined ? defaults.postStopAction : 'idle',
 
+    // Tracker error behaviour: 'retry' (keep running) or 'stop'
+    trackerErrorAction:
+      defaults.trackerErrorAction !== undefined ? defaults.trackerErrorAction : 'retry',
+
     // Scrape interval
     scrapeInterval: defaults.scrapeInterval !== undefined ? defaults.scrapeInterval : 60,
 
@@ -262,6 +266,7 @@ function loadSessionFromStorage(config = null) {
         idleWhenNoLeechers: inst.idle_when_no_leechers || false,
         idleWhenNoSeeders: inst.idle_when_no_seeders || false,
         postStopAction: inst.post_stop_action || 'idle',
+        trackerErrorAction: inst.tracker_error_action || 'retry',
         progressiveRatesEnabled: inst.progressive_rates_enabled,
         targetUploadRate: inst.target_upload_rate,
         targetDownloadRate: inst.target_download_rate,
@@ -343,6 +348,7 @@ function buildInstanceDefaultsFromServer(serverInst) {
     idleWhenNoLeechers: config.idle_when_no_leechers || false,
     idleWhenNoSeeders: config.idle_when_no_seeders || false,
     postStopAction: config.post_stop_action || 'idle',
+    trackerErrorAction: config.tracker_error_action || 'retry',
     progressiveRatesEnabled: config.progressive_rates || false,
     targetUploadRate: config.target_upload_rate || 100,
     targetDownloadRate: config.target_download_rate || 200,
@@ -951,6 +957,7 @@ export const instanceActions = {
           idleWhenNoLeechers: serverDefaults.idleWhenNoLeechers,
           idleWhenNoSeeders: serverDefaults.idleWhenNoSeeders,
           postStopAction: serverDefaults.postStopAction,
+          trackerErrorAction: serverDefaults.trackerErrorAction,
           scrapeInterval: serverDefaults.scrapeInterval,
         });
         if (

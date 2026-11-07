@@ -18,6 +18,7 @@
     idleWhenNoLeechers,
     idleWhenNoSeeders,
     postStopAction,
+    trackerErrorAction = 'retry',
     completionPercent = 100,
     isRunning,
     onUpdate,
@@ -37,6 +38,7 @@
   let localIdleWhenNoLeechers = $state(false);
   let localIdleWhenNoSeeders = $state(false);
   let localPostStopAction = $state('idle');
+  let localTrackerErrorAction = $state('retry');
 
   // Track if we're currently editing to prevent external updates from interfering
   let isEditing = $state(false);
@@ -58,6 +60,7 @@
       localIdleWhenNoLeechers = idleWhenNoLeechers;
       localIdleWhenNoSeeders = idleWhenNoSeeders;
       localPostStopAction = postStopAction;
+      localTrackerErrorAction = trackerErrorAction || 'retry';
     }
   });
 
@@ -120,6 +123,7 @@
       bind:idleWhenNoLeechers={localIdleWhenNoLeechers}
       bind:idleWhenNoSeeders={localIdleWhenNoSeeders}
       bind:postStopAction={localPostStopAction}
+      bind:trackerErrorAction={localTrackerErrorAction}
       {completionPercent}
       disabled={isRunning}
       onchange={updates => {

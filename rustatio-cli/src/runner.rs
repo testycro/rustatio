@@ -302,6 +302,7 @@ pub fn create_faker_config(config: &RunnerConfig) -> FakerConfig {
         scrape_interval: 60,
         update_interval_seconds: 5,
         post_stop_action: config.post_stop_action.into(),
+        tracker_error_action: rustatio_core::TrackerErrorAction::default(),
         progressive_rates: config.progressive,
         target_upload_rate: config.target_upload,
         target_download_rate: config.target_download,

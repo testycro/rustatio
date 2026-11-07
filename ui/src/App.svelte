@@ -1817,6 +1817,7 @@
                   idleWhenNoLeechers={$activeInstance.idleWhenNoLeechers}
                   idleWhenNoSeeders={$activeInstance.idleWhenNoSeeders}
                   postStopAction={$activeInstance.postStopAction}
+                  trackerErrorAction={$activeInstance.trackerErrorAction}
                   completionPercent={$activeInstance.completionPercent}
                   isRunning={$activeInstance.isRunning || false}
                   onUpdate={updates => {

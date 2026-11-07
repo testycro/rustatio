@@ -41,6 +41,7 @@ function makeInstance() {
     idleWhenNoLeechers: true,
     idleWhenNoSeeders: false,
     postStopAction: 'pause',
+    trackerErrorAction: 'stop',
   };
 }
 
@@ -60,6 +61,8 @@ test('buildCustomPreset creates a storable custom preset', () => {
   assert.equal(preset.created_at, '2026-03-27T12:00:00.000Z');
   assert.equal(preset.settings.selectedClient, 'qbittorrent');
   assert.equal(preset.settings.postStopAction, 'pause');
+  assert.equal(preset.settings.trackerErrorAction, 'stop');
+  assert.equal(presetInstanceSettings(preset.settings).trackerErrorAction, 'stop');
 });
 
 test('buildPresetExportData wraps preset data for file export', () => {

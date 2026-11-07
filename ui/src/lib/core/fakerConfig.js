@@ -45,6 +45,7 @@ export function buildFakerConfig(instance, clientVersions = {}, opts = {}) {
     idle_when_no_leechers: instance.idleWhenNoLeechers ?? false,
     idle_when_no_seeders: instance.idleWhenNoSeeders ?? false,
     post_stop_action: instance.postStopAction || 'idle',
+    tracker_error_action: instance.trackerErrorAction || 'retry',
     progressive_rates: instance.progressiveRatesEnabled ?? false,
     target_upload_rate: instance.progressiveRatesEnabled
       ? parseFloat(instance.targetUploadRate ?? 100)

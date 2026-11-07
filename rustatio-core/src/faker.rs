@@ -134,6 +134,10 @@ pub struct FakerConfig {
     /// What to do when stop conditions are met
     #[serde(default)]
     pub post_stop_action: PostStopAction,
+
+    /// What to do when the tracker returns an error (default: keep running and retry)
+    #[serde(default)]
+    pub tracker_error_action: TrackerErrorAction,
 }
 
 /// UI-friendly preset settings format (matches frontend)
@@ -177,6 +181,8 @@ pub struct PresetSettings {
     /// whole preset unreadable.
     pub scrape_interval: Option<f64>,
     pub post_stop_action: Option<String>,
+    /// "retry" (default) or "stop"
+    pub tracker_error_action: Option<String>,
     // Progressive rates
     pub progressive_rates_enabled: Option<bool>,
     pub target_upload_rate: Option<f64>,
@@ -239,6 +245,10 @@ impl From<PresetSettings> for FakerConfig {
                 Some("stop_seeding") => PostStopAction::StopSeeding,
                 Some("delete_instance") => PostStopAction::DeleteInstance,
                 _ => PostStopAction::Idle,
+            },
+            tracker_error_action: match p.tracker_error_action.as_deref() {
+                Some("stop") => TrackerErrorAction::Stop,
+                _ => TrackerErrorAction::Retry,
             },
             progressive_rates: p.progressive_rates_enabled.unwrap_or(false),
             target_upload_rate: p.target_upload_rate,
@@ -304,6 +314,7 @@ impl Default for FakerConfig {
             target_download_rate: None,
             progressive_duration: 3600,
             post_stop_action: PostStopAction::Idle,
+            tracker_error_action: TrackerErrorAction::Retry,
         }
     }
 }
@@ -315,6 +326,20 @@ pub enum PostStopAction {
     Idle,
     StopSeeding,
     DeleteInstance,
+}
+
+/// Behaviour when the tracker returns an error (announce or scrape)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrackerErrorAction {
+    /// The faker keeps running (seed time keeps counting, rates at 0) and re-announces every
+    /// 30s until the tracker answers again, whatever the error
+    #[default]
+    Retry,
+    /// Original behaviour: the faker is stopped. "Tracker unavailable" is recovered
+    /// automatically with a growing delay (30s, 60s, 120s, then every 5 min); "Torrent not found
+    /// on tracker" stays stopped until restarted by hand
+    Stop,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -477,7 +502,10 @@ struct TickInputs {
     config: FakerConfig,
 }
 
+/// Re-announce delay while the faker keeps running ([`TrackerErrorAction::Retry`])
 const TRACKER_RETRY_SCHEDULE_SECS: [u64; 1] = [30];
+/// Recovery delays of a faker stopped by a tracker error ([`TrackerErrorAction::Stop`])
+const TRACKER_RECOVERY_SCHEDULE_SECS: [u64; 4] = [30, 60, 120, 300];
 
 struct AnnouncePlan {
     tracker_client: Arc<TrackerClient>,
@@ -530,17 +558,21 @@ impl RatioFaker {
         message == "Tracker unavailable"
     }
 
-    fn tracker_retry_delay_secs(attempt: u32) -> u64 {
+    fn tracker_retry_delay_secs(action: TrackerErrorAction, attempt: u32) -> u64 {
+        let schedule: &[u64] = match action {
+            TrackerErrorAction::Retry => &TRACKER_RETRY_SCHEDULE_SECS,
+            TrackerErrorAction::Stop => &TRACKER_RECOVERY_SCHEDULE_SECS,
+        };
         let idx = attempt.saturating_sub(1) as usize;
-        TRACKER_RETRY_SCHEDULE_SECS
-            .get(idx)
-            .copied()
-            .unwrap_or_else(|| *TRACKER_RETRY_SCHEDULE_SECS.last().unwrap_or(&30))
+        schedule.get(idx).copied().unwrap_or_else(|| *schedule.last().unwrap_or(&30))
     }
 
     fn arm_tracker_retry(&mut self) {
         self.stats.tracker_retry_attempt = self.stats.tracker_retry_attempt.saturating_add(1);
-        let delay_secs = Self::tracker_retry_delay_secs(self.stats.tracker_retry_attempt);
+        let delay_secs = Self::tracker_retry_delay_secs(
+            self.config.tracker_error_action,
+            self.stats.tracker_retry_attempt,
+        );
         self.stats.tracker_retry_at_ms =
             Some(Self::current_timestamp_millis().saturating_add(delay_secs.saturating_mul(1000)));
     }
@@ -593,7 +625,10 @@ impl RatioFaker {
         self.stats.tracker_error = Some(message.to_string());
         self.arm_tracker_retry();
 
-        let delay_secs = Self::tracker_retry_delay_secs(self.stats.tracker_retry_attempt);
+        let delay_secs = Self::tracker_retry_delay_secs(
+            self.config.tracker_error_action,
+            self.stats.tracker_retry_attempt,
+        );
         self.stats.next_announce = Some(Instant::now() + Duration::from_secs(delay_secs));
         self.stats.is_idling = false;
         self.stats.idling_reason = None;
@@ -607,11 +642,35 @@ impl RatioFaker {
         );
     }
 
+    /// Original behaviour ([`TrackerErrorAction::Stop`]): the faker is stopped. A retryable error
+    /// arms an automatic recovery (see `recover_tracker`), the others need a manual restart.
+    fn mark_tracker_invalid(&mut self, message: &str) {
+        self.stats.tracker_error = Some(message.to_string());
+        if Self::tracker_error_is_retryable(message) {
+            self.arm_tracker_retry();
+        } else {
+            self.clear_tracker_retry();
+        }
+        self.stats.state = FakerState::Stopped;
+        self.stats.is_idling = false;
+        self.stats.idling_reason = None;
+        self.stats.current_upload_rate = 0.0;
+        self.stats.current_download_rate = 0.0;
+        self.stats.next_announce = None;
+        self.stats.last_announce = None;
+        log_warn!("Stopping faker because tracker issue requires attention: {}", message);
+    }
+
     fn apply_tracker_error(&mut self, error: &FakerError) {
         if let FakerError::TrackerError(tracker_error) = error {
             let message = Self::tracker_error_message(tracker_error);
-            log_warn!("Tracker issue requires attention: {}", message);
-            self.mark_tracker_degraded(&message);
+            match self.config.tracker_error_action {
+                TrackerErrorAction::Retry => {
+                    log_warn!("Tracker issue requires attention: {}", message);
+                    self.mark_tracker_degraded(&message);
+                }
+                TrackerErrorAction::Stop => self.mark_tracker_invalid(&message),
+            }
         }
     }
 
@@ -916,9 +975,13 @@ impl RatioFaker {
             }
             Err(e) => {
                 self.apply_tracker_error(&e);
-                log_warn!("Initial announce failed, will retry on next cycle: {}", e);
-                if self.stats.tracker_error.is_none() {
-                    self.stats.next_announce = Some(Instant::now() + Duration::from_secs(30));
+                if matches!(self.stats.state, FakerState::Stopped) {
+                    log_warn!("Initial announce failed, stopping faker: {}", e);
+                } else {
+                    log_warn!("Initial announce failed, will retry on next cycle: {}", e);
+                    if self.stats.tracker_error.is_none() {
+                        self.stats.next_announce = Some(Instant::now() + Duration::from_secs(30));
+                    }
                 }
             }
         }
@@ -1019,13 +1082,16 @@ impl RatioFaker {
             self.apply_scrape_result(&result, now);
         }
 
-        if outcome.announce_due {
+        // A scrape error may have stopped the faker (TrackerErrorAction::Stop)
+        let stopped = matches!(self.stats.state, FakerState::Stopped);
+
+        if outcome.announce_due && !stopped {
             let plan = self.build_periodic_announce_plan();
             let result = plan.execute().await;
             self.apply_periodic_announce_result(result);
         }
 
-        if outcome.stop {
+        if outcome.stop && !stopped {
             self.apply_post_stop_action().await?;
         }
 
@@ -1039,6 +1105,16 @@ impl RatioFaker {
         if self.stats.tracker_error.is_some() {
             self.stats.current_upload_rate = 0.0;
             self.stats.current_download_rate = 0.0;
+            // Stopped by the tracker error (TrackerErrorAction::Stop): nothing runs, no seed time
+            // and no announce until `recover_tracker` or a manual start
+            if matches!(self.stats.state, FakerState::Stopped) {
+                return UpdateOutcome {
+                    completed: false,
+                    stop: false,
+                    scrape_due: false,
+                    announce_due: false,
+                };
+            }
             let inputs = self.build_tick_inputs(elapsed);
             Self::apply_derived_updates(&mut self.stats, now, &inputs);
             let announce_due = self.stats.next_announce.is_none_or(|next| now >= next);
@@ -1290,6 +1366,11 @@ impl RatioFaker {
                 );
             }
             Err(e) => {
+                // Original behaviour: a scrape error stops the faker too. In retry mode the
+                // faker only stops scraping, the announces carry on.
+                if self.config.tracker_error_action == TrackerErrorAction::Stop {
+                    self.apply_tracker_error(e);
+                }
                 log_warn!("Scrape failed, disabling periodic scrape: {}", e);
                 self.scrape_supported = false;
             }
@@ -1315,9 +1396,13 @@ impl RatioFaker {
             }
             Err(e) => {
                 self.apply_tracker_error(&e);
-                log_warn!("Periodic announce failed, will retry next cycle: {}", e);
-                if self.stats.tracker_error.is_none() {
-                    self.stats.next_announce = Some(Instant::now() + Duration::from_secs(30));
+                if matches!(self.stats.state, FakerState::Stopped) {
+                    log_warn!("Periodic announce failed, stopping faker: {}", e);
+                } else {
+                    log_warn!("Periodic announce failed, will retry next cycle: {}", e);
+                    if self.stats.tracker_error.is_none() {
+                        self.stats.next_announce = Some(Instant::now() + Duration::from_secs(30));
+                    }
                 }
             }
         }
@@ -1375,7 +1460,7 @@ impl RatioFaker {
             self.apply_scrape_result(&result, now);
         }
 
-        if outcome.stop {
+        if outcome.stop && !matches!(self.stats.state, FakerState::Stopped) {
             self.apply_post_stop_action().await?;
         }
 
@@ -2013,7 +2098,13 @@ impl RatioFakerHandle {
             guard.apply_scrape_result(&result, now);
         }
 
-        if outcome.announce_due {
+        // A scrape error may have stopped the faker (TrackerErrorAction::Stop)
+        let stopped = {
+            let guard = self.inner.lock().await;
+            matches!(guard.stats.state, FakerState::Stopped)
+        };
+
+        if outcome.announce_due && !stopped {
             let plan = {
                 let guard = self.inner.lock().await;
                 guard.build_periodic_announce_plan()
@@ -2023,7 +2114,7 @@ impl RatioFakerHandle {
             guard.apply_periodic_announce_result(result);
         }
 
-        if outcome.stop {
+        if outcome.stop && !stopped {
             self.apply_post_stop_action().await?;
         }
 
@@ -2066,7 +2157,11 @@ impl RatioFakerHandle {
             guard.apply_scrape_result(&result, now);
         }
 
-        if outcome.stop {
+        let stopped = {
+            let guard = self.inner.lock().await;
+            matches!(guard.stats.state, FakerState::Stopped)
+        };
+        if outcome.stop && !stopped {
             self.apply_post_stop_action().await?;
         }
 
@@ -2646,7 +2741,10 @@ mod tests {
     #[test]
     fn tracker_retry_delay_is_fixed() {
         for attempt in [1, 2, 3, 4, 5, 50] {
-            assert_eq!(RatioFaker::tracker_retry_delay_secs(attempt), 30);
+            assert_eq!(
+                RatioFaker::tracker_retry_delay_secs(TrackerErrorAction::Retry, attempt),
+                30
+            );
         }
     }
 
@@ -3009,5 +3107,219 @@ mod tests {
         assert_eq!(faker.stats.elapsed_time, Duration::from_mins(30));
         assert_eq!(faker.session_base, Duration::from_mins(30));
         assert!(!faker.check_stop_conditions(&faker.stats));
+    }
+
+    // === TrackerErrorAction::Stop (original behaviour) ===
+
+    fn stop_mode_config() -> FakerConfig {
+        FakerConfig { tracker_error_action: TrackerErrorAction::Stop, ..FakerConfig::default() }
+    }
+
+    #[test]
+    fn stop_mode_tracker_invalid_stops_faker_and_clears_runtime_rates() {
+        let mut faker = sample_faker(60, stop_mode_config());
+
+        faker.stats.state = FakerState::Running;
+        faker.stats.is_idling = true;
+        faker.stats.idling_reason = Some("no_leechers".to_string());
+        faker.stats.current_upload_rate = 123.0;
+        faker.stats.current_download_rate = 45.0;
+        faker.stats.last_announce = Some(Instant::now());
+        faker.stats.next_announce = Some(Instant::now() + Duration::from_mins(1));
+
+        faker.apply_tracker_error(&FakerError::TrackerError(TrackerError::InvalidResponse(
+            "Torrent deleted".to_string(),
+        )));
+
+        assert!(matches!(faker.stats.state, FakerState::Stopped));
+        assert_eq!(faker.stats.tracker_error.as_deref(), Some("Torrent not found on tracker"));
+        assert!(!faker.stats.is_idling);
+        assert!(faker.stats.idling_reason.is_none());
+        assert_eq!(faker.stats.current_upload_rate, 0.0);
+        assert_eq!(faker.stats.current_download_rate, 0.0);
+        assert!(faker.stats.last_announce.is_none());
+        assert!(faker.stats.next_announce.is_none());
+    }
+
+    #[test]
+    fn stop_mode_tracker_unreachable_stops_faker_and_arms_recovery() {
+        let mut faker = sample_faker(61, stop_mode_config());
+
+        faker.stats.state = FakerState::Running;
+        faker.stats.current_upload_rate = 123.0;
+        faker.stats.next_announce = Some(Instant::now() + Duration::from_mins(1));
+
+        faker.apply_tracker_error(&http_error());
+
+        assert!(matches!(faker.stats.state, FakerState::Stopped));
+        assert_eq!(faker.stats.tracker_error.as_deref(), Some("Tracker unavailable"));
+        assert_eq!(faker.stats.tracker_retry_attempt, 1);
+        assert!(faker.stats.tracker_retry_at_ms.is_some());
+        assert_eq!(faker.stats.current_upload_rate, 0.0);
+        assert!(faker.stats.next_announce.is_none());
+        assert!(faker.can_retry_tracker());
+    }
+
+    #[test]
+    fn stop_mode_tracker_missing_does_not_arm_recovery() {
+        let mut faker = sample_faker(62, stop_mode_config());
+
+        faker.apply_tracker_error(&FakerError::TrackerError(TrackerError::TrackerFailure(
+            "Torrent deleted".to_string(),
+        )));
+
+        assert_eq!(faker.stats.tracker_error.as_deref(), Some("Torrent not found on tracker"));
+        assert_eq!(faker.stats.tracker_retry_attempt, 0);
+        assert!(faker.stats.tracker_retry_at_ms.is_none());
+        assert!(!faker.can_retry_tracker());
+    }
+
+    #[test]
+    fn stop_mode_start_failure_keeps_faker_stopped() {
+        let mut faker = sample_faker(63, stop_mode_config());
+
+        faker.begin_start();
+        faker.apply_start_result(Err(http_error()));
+
+        assert!(matches!(faker.stats.state, FakerState::Stopped));
+        assert_eq!(faker.stats.tracker_error.as_deref(), Some("Tracker unavailable"));
+        assert!(faker.stats.next_announce.is_none());
+    }
+
+    #[test]
+    fn stop_mode_periodic_announce_failure_stops_faker() {
+        let mut faker = sample_faker(64, stop_mode_config());
+        faker.stats.state = FakerState::Running;
+
+        faker.apply_periodic_announce_result(Err(http_error()));
+
+        assert!(matches!(faker.stats.state, FakerState::Stopped));
+        assert!(faker.stats.next_announce.is_none());
+    }
+
+    #[test]
+    fn stop_mode_scrape_failure_stops_faker() {
+        let mut faker = sample_faker(65, stop_mode_config());
+        faker.stats.state = FakerState::Running;
+
+        faker.apply_scrape_result(&Err(http_error()), Instant::now());
+
+        assert!(matches!(faker.stats.state, FakerState::Stopped));
+        assert!(!faker.scrape_supported);
+    }
+
+    #[test]
+    fn retry_mode_scrape_failure_keeps_faker_running() {
+        let mut faker = sample_faker(66, FakerConfig::default());
+        faker.stats.state = FakerState::Running;
+
+        faker.apply_scrape_result(&Err(http_error()), Instant::now());
+
+        assert!(matches!(faker.stats.state, FakerState::Running));
+        assert!(faker.stats.tracker_error.is_none());
+        assert!(!faker.scrape_supported);
+    }
+
+    #[test]
+    fn stop_mode_recovery_backoff_grows_then_caps() {
+        for (attempt, expected) in [(1, 30), (2, 60), (3, 120), (4, 300), (5, 300), (50, 300)] {
+            assert_eq!(
+                RatioFaker::tracker_retry_delay_secs(TrackerErrorAction::Stop, attempt),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn stop_mode_recovery_failures_increase_backoff_attempts() {
+        let mut faker = sample_faker(67, stop_mode_config());
+
+        faker.apply_tracker_error(&http_error());
+        assert_eq!(faker.stats.tracker_retry_attempt, 1);
+
+        faker.recover_tracker().unwrap_or_else(|_| panic!("failed to arm recovery"));
+        faker.apply_start_result(Err(http_error()));
+        assert!(matches!(faker.stats.state, FakerState::Stopped));
+        assert_eq!(faker.stats.tracker_retry_attempt, 2);
+
+        faker.recover_tracker().unwrap_or_else(|_| panic!("failed to arm recovery"));
+        faker.apply_start_result(Err(http_error()));
+        assert_eq!(faker.stats.tracker_retry_attempt, 3);
+        let delay_ms = faker
+            .stats
+            .tracker_retry_at_ms
+            .unwrap_or_default()
+            .saturating_sub(RatioFaker::current_timestamp_millis());
+        assert!(delay_ms > 60_000 && delay_ms <= 120_000);
+    }
+
+    #[test]
+    fn stop_mode_successful_recovery_clears_tracker_state() {
+        let mut faker = sample_faker(68, stop_mode_config());
+
+        faker.apply_tracker_error(&http_error());
+        faker.recover_tracker().unwrap_or_else(|_| panic!("failed to arm recovery"));
+        faker.apply_start_result(Ok(announce_ok()));
+
+        assert!(matches!(faker.stats.state, FakerState::Running));
+        assert!(faker.stats.tracker_error.is_none());
+        assert_eq!(faker.stats.tracker_retry_attempt, 0);
+        assert!(faker.stats.tracker_retry_at_ms.is_none());
+    }
+
+    #[test]
+    fn stop_mode_stopped_faker_does_not_count_seed_time_or_announce() {
+        let mut faker = sample_faker(69, stop_mode_config());
+        faker.stats.state = FakerState::Running;
+        faker.stats.elapsed_time = Duration::from_mins(10);
+
+        faker.apply_tracker_error(&http_error());
+        faker.start_time =
+            faker.start_time.checked_sub(Duration::from_mins(5)).unwrap_or_else(Instant::now);
+
+        let outcome = faker.tick(Instant::now());
+
+        assert!(!outcome.announce_due);
+        assert!(!outcome.stop);
+        assert_eq!(faker.stats.elapsed_time, Duration::from_mins(10));
+    }
+
+    #[test]
+    fn stop_mode_recovery_keeps_cumulative_seed_time() {
+        let mut faker = sample_faker(70, stop_mode_config());
+        faker.stats.state = FakerState::Running;
+        faker.stats.elapsed_time = Duration::from_mins(42);
+
+        faker.apply_tracker_error(&http_error());
+        faker.recover_tracker().unwrap_or_else(|_| panic!("failed to arm recovery"));
+
+        assert_eq!(faker.stats.elapsed_time, Duration::from_mins(42));
+        assert_eq!(faker.session_base, Duration::from_mins(42));
+    }
+
+    #[test]
+    fn preset_settings_read_tracker_error_action() {
+        let stop = PresetSettings {
+            tracker_error_action: Some("stop".to_string()),
+            ..PresetSettings::default()
+        };
+        assert_eq!(FakerConfig::from(stop).tracker_error_action, TrackerErrorAction::Stop);
+
+        let unset = PresetSettings::default();
+        assert_eq!(FakerConfig::from(unset).tracker_error_action, TrackerErrorAction::Retry);
+    }
+
+    #[test]
+    fn faker_config_without_tracker_error_action_defaults_to_retry() {
+        let mut value = serde_json::to_value(FakerConfig::default()).unwrap_or_default();
+        if let Some(map) = value.as_object_mut() {
+            map.remove("tracker_error_action");
+        }
+        let config: FakerConfig =
+            serde_json::from_value(value).unwrap_or_else(|_| panic!("config should deserialize"));
+        assert_eq!(config.tracker_error_action, TrackerErrorAction::Retry);
+
+        let value = serde_json::to_value(stop_mode_config()).unwrap_or_default();
+        assert_eq!(value["tracker_error_action"], "stop");
     }
 }

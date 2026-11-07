@@ -135,6 +135,7 @@ export function serializeSessionInstances(instances) {
     idle_when_no_leechers: inst.idleWhenNoLeechers,
     idle_when_no_seeders: inst.idleWhenNoSeeders,
     post_stop_action: inst.postStopAction,
+    tracker_error_action: inst.trackerErrorAction || 'retry',
     progressive_rates_enabled: inst.progressiveRatesEnabled,
     target_upload_rate: parseFloat(inst.targetUploadRate),
     target_download_rate: parseFloat(inst.targetDownloadRate),

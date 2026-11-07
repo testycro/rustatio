@@ -1,4 +1,4 @@
-use crate::faker::PostStopAction;
+use crate::faker::{PostStopAction, TrackerErrorAction};
 use crate::torrent::{set_client_definitions, ClientDefinition, ClientType};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -80,6 +80,8 @@ pub struct InstanceConfig {
     pub idle_when_no_seeders: bool,
     #[serde(default)]
     pub post_stop_action: PostStopAction,
+    #[serde(default)]
+    pub tracker_error_action: TrackerErrorAction,
     pub progressive_rates_enabled: bool,
     pub target_upload_rate: f64,
     pub target_download_rate: f64,

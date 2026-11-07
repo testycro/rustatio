@@ -45,6 +45,7 @@ export const PRESET_INSTANCE_KEYS = Object.freeze([
   'idleWhenNoLeechers',
   'idleWhenNoSeeders',
   'postStopAction',
+  'trackerErrorAction',
 ]);
 
 // Keys kept in a saved preset: the instance settings, the preset-only options and the legacy
@@ -147,6 +148,7 @@ export function buildCustomPreset(
       idleWhenNoLeechers: instance.idleWhenNoLeechers,
       idleWhenNoSeeders: instance.idleWhenNoSeeders,
       postStopAction: instance.postStopAction,
+      trackerErrorAction: instance.trackerErrorAction,
     },
   };
 }

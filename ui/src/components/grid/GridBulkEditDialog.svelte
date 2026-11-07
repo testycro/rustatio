@@ -75,6 +75,7 @@
   let idleWhenNoLeechers = $state(false);
   let idleWhenNoSeeders = $state(false);
   let postStopAction = $state('idle');
+  let trackerErrorAction = $state('retry');
 
   let selectedCount = $derived(selectedIds.length);
   let allPresets = $derived([...builtInPresets, ...normalizePresets(customPresets)]);
@@ -156,6 +157,7 @@
     idleWhenNoLeechers = stopConditions.idleWhenNoLeechers ?? false;
     idleWhenNoSeeders = stopConditions.idleWhenNoSeeders ?? false;
     postStopAction = stopConditions.postStopAction || 'idle';
+    trackerErrorAction = stopConditions.trackerErrorAction || 'retry';
   });
 
   function autoEnable(sectionKey, updates) {
@@ -210,6 +212,7 @@
       idleWhenNoLeechers: config.idle_when_no_leechers || false,
       idleWhenNoSeeders: config.idle_when_no_seeders || false,
       postStopAction: config.post_stop_action || 'idle',
+      trackerErrorAction: config.tracker_error_action || 'retry',
       progressiveRatesEnabled: config.progressive_rates || false,
       targetUploadRate: config.target_upload_rate || 100,
       targetDownloadRate: config.target_download_rate || 200,
@@ -248,6 +251,7 @@
       idleWhenNoLeechers: false,
       idleWhenNoSeeders: false,
       postStopAction: 'idle',
+      trackerErrorAction: 'retry',
       progressiveRatesEnabled: false,
       targetUploadRate: 100,
       targetDownloadRate: 200,
@@ -286,6 +290,7 @@
       idleWhenNoLeechers: instance.idleWhenNoLeechers,
       idleWhenNoSeeders: instance.idleWhenNoSeeders,
       postStopAction: instance.postStopAction,
+      trackerErrorAction: instance.trackerErrorAction || 'retry',
       progressiveRatesEnabled: instance.progressiveRatesEnabled,
       targetUploadRate: instance.targetUploadRate,
       targetDownloadRate: instance.targetDownloadRate,
@@ -813,6 +818,7 @@
               bind:idleWhenNoLeechers
               bind:idleWhenNoSeeders
               bind:postStopAction
+              bind:trackerErrorAction
               {completionPercent}
               onchange={updates => autoEnable('stopConditions', updates)}
             />
