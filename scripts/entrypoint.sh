@@ -64,7 +64,8 @@ if [ "$(id -u)" = "0" ]; then
     # Check watch directory permissions if it exists (mounted volume)
     if [ -d "$WATCH_DIR" ]; then
         # Test if we can write to the directory
-        if ! su rustatio -s /bin/sh -c "test -w '$WATCH_DIR'" 2>/dev/null; then
+        # gosu runs test without a shell: WATCH_DIR is never interpreted
+        if ! gosu rustatio test -w "$WATCH_DIR" 2>/dev/null; then
             echo "============================================================"
             echo "WARNING: Watch folder '$WATCH_DIR' is not writable!"
             echo ""

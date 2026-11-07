@@ -14,8 +14,92 @@ pub enum BencodeError {
 
 pub type Result<T> = std::result::Result<T, BencodeError>;
 
+/// Max list/dict nesting accepted by [`parse`] (deeper input overflows the stack).
+pub const MAX_NESTING_DEPTH: usize = 64;
+
+#[derive(Debug, PartialEq, Eq)]
+enum ScanError {
+    TooDeep,
+    Malformed,
+}
+
+/// Index just past the bencoded value starting at `start` (iterative, no recursion).
+fn value_end(data: &[u8], start: usize) -> std::result::Result<usize, ScanError> {
+    let mut pos = start;
+    let mut depth = 0usize;
+    loop {
+        match *data.get(pos).ok_or(ScanError::Malformed)? {
+            b'i' => {
+                let rest = data.get(pos + 1..).ok_or(ScanError::Malformed)?;
+                let rel = rest.iter().position(|&b| b == b'e').ok_or(ScanError::Malformed)?;
+                pos += rel + 2;
+            }
+            b'l' | b'd' => {
+                depth += 1;
+                if depth > MAX_NESTING_DEPTH {
+                    return Err(ScanError::TooDeep);
+                }
+                pos += 1;
+                continue;
+            }
+            b'e' => {
+                if depth == 0 {
+                    return Err(ScanError::Malformed);
+                }
+                depth -= 1;
+                pos += 1;
+            }
+            b'0'..=b'9' => {
+                let (len, content_start) = string_header(data, pos).ok_or(ScanError::Malformed)?;
+                pos = content_start.checked_add(len).ok_or(ScanError::Malformed)?;
+                if pos > data.len() {
+                    return Err(ScanError::Malformed);
+                }
+            }
+            _ => return Err(ScanError::Malformed),
+        }
+        if depth == 0 {
+            return Ok(pos);
+        }
+    }
+}
+
+/// Parses the `<len>:` string header at `pos`: (length, content start).
+fn string_header(data: &[u8], pos: usize) -> Option<(usize, usize)> {
+    let rest = data.get(pos..)?;
+    let colon = rest.iter().take(21).position(|&b| b == b':')?;
+    let len = std::str::from_utf8(&rest[..colon]).ok()?.parse::<usize>().ok()?;
+    Some((len, pos + colon + 1))
+}
+
+/// Raw bytes of the value of `key` in the top-level dictionary of `data`, as written.
+pub fn dict_value_bytes<'a>(data: &'a [u8], key: &[u8]) -> Option<&'a [u8]> {
+    if data.first() != Some(&b'd') {
+        return None;
+    }
+    let mut pos = 1;
+    loop {
+        if *data.get(pos)? == b'e' {
+            return None;
+        }
+        let (key_len, key_start) = string_header(data, pos)?;
+        let key_end = key_start.checked_add(key_len)?;
+        let current_key = data.get(key_start..key_end)?;
+        let value_stop = value_end(data, key_end).ok()?;
+        if current_key == key {
+            return data.get(key_end..value_stop);
+        }
+        pos = value_stop;
+    }
+}
+
 /// Parse bencode data from bytes
 pub fn parse(data: &[u8]) -> Result<serde_bencode::value::Value> {
+    if value_end(data, 0) == Err(ScanError::TooDeep) {
+        return Err(BencodeError::ParseError(format!(
+            "nesting deeper than {MAX_NESTING_DEPTH} levels"
+        )));
+    }
     serde_bencode::from_bytes(data).map_err(|e| BencodeError::ParseError(e.to_string()))
 }
 
@@ -204,6 +288,28 @@ mod tests {
         let dict = HashMap::new();
         let result = get_bytes_len(&dict, "data");
         assert!(matches!(result, Err(BencodeError::InvalidStructure(_))));
+    }
+
+    #[test]
+    fn test_parse_rejects_deep_nesting_without_overflowing() {
+        let mut data = vec![b'l'; 100_000];
+        data.extend_from_slice(&[b'e'; 100_000]);
+        assert!(matches!(parse(&data), Err(BencodeError::ParseError(_))));
+
+        let mut ok = vec![b'l'; MAX_NESTING_DEPTH];
+        ok.extend_from_slice(&[b'e'; MAX_NESTING_DEPTH]);
+        assert!(parse(&ok).is_ok());
+    }
+
+    #[test]
+    fn test_dict_value_bytes_returns_raw_span() {
+        // "4:info" appears in a value before the real key; info keys are unsorted.
+        let data = b"d7:comment6:4:info4:infod4:name1:a6:lengthi3ee3:zzzi1ee";
+        assert_eq!(dict_value_bytes(data, b"info"), Some(&b"d4:name1:a6:lengthi3ee"[..]));
+        assert_eq!(dict_value_bytes(data, b"zzz"), Some(&b"i1e"[..]));
+        assert_eq!(dict_value_bytes(data, b"missing"), None);
+        assert_eq!(dict_value_bytes(b"l4:infoe", b"info"), None);
+        assert_eq!(dict_value_bytes(b"d4:info", b"info"), None);
     }
 
     #[test]

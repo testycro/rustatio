@@ -1960,10 +1960,19 @@ class ASTEvaluator:
     # Limits that keep a rule from freezing the daemon (e.g. 9**9**9 or "a" * 10**9)
     MAX_EXPONENT = 1000
     MAX_SEQUENCE_LEN = 100_000
+    MAX_RESULT_BITS = 100_000
 
     def _check_operands(self, op_type, left, right):
         if op_type is ast.Pow and isinstance(right, (int, float)) and abs(right) > self.MAX_EXPONENT:
             raise ValueError("Exponent too large")
+        # Also cap the result size: ((9**1000)**1000)**1000 is huge
+        if (
+            op_type is ast.Pow
+            and isinstance(left, int) and isinstance(right, int)
+            and right > 0 and abs(left) > 1
+            and abs(left).bit_length() * right > self.MAX_RESULT_BITS
+        ):
+            raise ValueError("Result too large")
         if op_type is ast.Mult:
             for seq, count in ((left, right), (right, left)):
                 if (

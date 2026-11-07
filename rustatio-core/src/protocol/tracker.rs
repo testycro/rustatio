@@ -52,11 +52,44 @@ pub struct ReqwestHttpClient {
 impl HttpClient for ReqwestHttpClient {
     async fn get(&self, url: String, agent: String) -> HttpResult {
         let req = self.client.get(url).header(reqwest::header::USER_AGENT, agent);
-        let res = req.send().await.map_err(|err| proxy::describe(&err))?;
+        #[allow(unused_mut)]
+        let mut res = req.send().await.map_err(|err| proxy::describe(&err))?;
         let status = res.status();
-        let body = res.bytes().await.map_err(|err| proxy::describe(&err))?;
-        Ok(HttpResponse { status, body: body.to_vec() })
+
+        if res.content_length().is_some_and(|len| len > MAX_TRACKER_RESPONSE_BYTES as u64) {
+            return Err(too_large_response());
+        }
+
+        // Read in chunks to bound memory use.
+        #[cfg(not(target_arch = "wasm32"))]
+        let body = {
+            let mut body = Vec::new();
+            while let Some(chunk) = res.chunk().await.map_err(|err| proxy::describe(&err))? {
+                if body.len() + chunk.len() > MAX_TRACKER_RESPONSE_BYTES {
+                    return Err(too_large_response());
+                }
+                body.extend_from_slice(&chunk);
+            }
+            body
+        };
+        #[cfg(target_arch = "wasm32")]
+        let body = {
+            let body = res.bytes().await.map_err(|err| proxy::describe(&err))?;
+            if body.len() > MAX_TRACKER_RESPONSE_BYTES {
+                return Err(too_large_response());
+            }
+            body.to_vec()
+        };
+
+        Ok(HttpResponse { status, body })
     }
+}
+
+/// Max tracker response size (real answers are a few KB at most).
+const MAX_TRACKER_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+
+fn too_large_response() -> String {
+    format!("Tracker response larger than {} KB, ignored", MAX_TRACKER_RESPONSE_BYTES / 1024)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

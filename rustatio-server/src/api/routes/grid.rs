@@ -89,6 +89,9 @@ fn is_torrent_upload_field(name: Option<&str>, file_name: Option<&str>) -> bool 
     matches!(name, Some("files" | "file")) || file_name.is_some()
 }
 
+/// Max `.torrent` size read by a folder import.
+const MAX_FOLDER_TORRENT_BYTES: u64 = 50 * 1024 * 1024;
+
 const fn has_grid_import_items(
     torrents: &[(String, TorrentSummary)],
     duplicates: &[String],
@@ -255,6 +258,23 @@ pub async fn grid_import_folder(
         }
 
         let filename = file_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+
+        // Skip non-regular files (FIFO, device...) and oversized ones.
+        match std::fs::metadata(&file_path) {
+            Ok(meta) if meta.is_file() && meta.len() <= MAX_FOLDER_TORRENT_BYTES => {}
+            Ok(meta) if meta.is_file() => {
+                errors.push(format!("{filename}: file too large ({} bytes)", meta.len()));
+                continue;
+            }
+            Ok(_) => {
+                errors.push(format!("{filename}: not a regular file"));
+                continue;
+            }
+            Err(e) => {
+                errors.push(format!("{filename}: failed to read: {e}"));
+                continue;
+            }
+        }
 
         match std::fs::read(&file_path) {
             Ok(bytes) => match TorrentSummary::from_bytes(&bytes) {

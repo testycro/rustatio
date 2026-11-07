@@ -512,34 +512,12 @@ impl TorrentSummary {
 
 /// Calculate the SHA1 `info_hash` from torrent bytes
 fn calculate_info_hash(torrent_data: &[u8]) -> Result<[u8; 20]> {
-    // Parse the torrent to find the info dictionary
-    let value = bencode::parse(torrent_data)?;
-    let serde_bencode::value::Value::Dict(_dict) = &value else {
-        return Err(TorrentError::InvalidStructure("Root is not a dictionary".into()));
-    };
+    // SHA1 of the info dictionary bytes exactly as written (no re-encoding).
+    let info_bytes = bencode::dict_value_bytes(torrent_data, b"info")
+        .ok_or_else(|| TorrentError::InvalidStructure("Could not find info dictionary".into()))?;
 
-    // We need to find the raw bytes of the info dictionary in the original data
-    // This is a bit tricky because we need the exact bencoded representation
-
-    // Find "4:info" in the data to locate the info dict
-    let info_marker = b"4:info";
-    let info_start = torrent_data
-        .windows(info_marker.len())
-        .position(|window| window == info_marker)
-        .ok_or_else(|| TorrentError::InvalidStructure("Could not find info dictionary".into()))?
-        + info_marker.len();
-
-    // Parse just the info dictionary to get its bencoded representation
-    let info_value =
-        serde_bencode::from_bytes::<serde_bencode::value::Value>(&torrent_data[info_start..])
-            .map_err(|e| BencodeError::ParseError(e.to_string()))?;
-
-    let info_bytes = serde_bencode::to_bytes(&info_value)
-        .map_err(|e| BencodeError::ParseError(e.to_string()))?;
-
-    // Calculate SHA1
     let mut hasher = Sha1::new();
-    hasher.update(&info_bytes);
+    hasher.update(info_bytes);
     let result = hasher.finalize();
 
     let mut hash = [0u8; 20];
@@ -1048,6 +1026,33 @@ mod tests {
         let mut expected = [0u8; 20];
         expected.copy_from_slice(&result);
         assert_eq!(parsed, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_info_hash_uses_original_bytes() -> Result<()> {
+        // "4:info" appears in a value before the real key; info keys are unsorted.
+        let info = b"d6:lengthi3e4:name1:a12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaae";
+        let unsorted =
+            b"d4:name1:a6:lengthi3e12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaae";
+        let mut data = b"d8:announce10:http://t/a7:comment4:info4:info".to_vec();
+        data.extend_from_slice(unsorted);
+        data.push(b'e');
+
+        let mut hasher = Sha1::new();
+        hasher.update(unsorted);
+        let mut expected = [0u8; 20];
+        expected.copy_from_slice(&hasher.finalize());
+
+        assert_eq!(info_hash(&data)?, expected);
+        assert_eq!(TorrentInfo::from_bytes(&data)?.info_hash, expected);
+        assert_ne!(info_hash(&data)?, {
+            let mut sorted = Sha1::new();
+            sorted.update(info);
+            let mut out = [0u8; 20];
+            out.copy_from_slice(&sorted.finalize());
+            out
+        });
         Ok(())
     }
 

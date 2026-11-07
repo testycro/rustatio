@@ -7,11 +7,13 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, watch, Semaphore};
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 const KEEP_OPEN_DELAY: Duration = Duration::from_secs(2);
 const BIND_RETRY_DELAY: Duration = Duration::from_millis(500);
+/// Max peer connections handled at once; extra connections are dropped.
+const MAX_CONCURRENT_PEERS: usize = 128;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PeerListenerStatus {
@@ -95,6 +97,7 @@ async fn run_listener_loop(
 ) {
     let mut bound_port: Option<u16> = None;
     let mut listener: Option<TcpListener> = None;
+    let peer_slots = Arc::new(Semaphore::new(MAX_CONCURRENT_PEERS));
 
     loop {
         let desired = *desired_port_rx.borrow();
@@ -164,12 +167,17 @@ async fn run_listener_loop(
                     accepted = sock.accept() => {
                         match accepted {
                             Ok((stream, addr)) => {
-                                let task_catalog = catalog.clone();
-                                tokio::spawn(async move {
-                                    if let Err(err) = handle_peer(stream, task_catalog).await {
-                                        log_debug!("Peer connection from {} closed: {}", addr, err);
-                                    }
-                                });
+                                if let Ok(slot) = Arc::clone(&peer_slots).try_acquire_owned() {
+                                    let task_lookup = Arc::clone(&lookup);
+                                    tokio::spawn(async move {
+                                        let _slot = slot;
+                                        if let Err(err) = handle_peer(stream, task_lookup.as_ref()).await {
+                                            log_debug!("Peer connection from {} closed: {}", addr, err);
+                                        }
+                                    });
+                                } else {
+                                    log_debug!("Peer connection from {} dropped: too many connections", addr);
+                                }
                             }
                             Err(err) => {
                                 log_warn!("Peer listener accept failed: {}", err);
@@ -199,7 +207,7 @@ async fn run_listener_loop(
     }
 }
 
-async fn handle_peer(mut stream: TcpStream, catalog: PeerCatalog) -> Result<(), String> {
+async fn handle_peer(mut stream: TcpStream, lookup: &dyn PeerLookup) -> Result<(), String> {
     let mut buf = [0u8; 68];
     tokio::time::timeout(HANDSHAKE_TIMEOUT, stream.read_exact(&mut buf))
         .await
@@ -207,6 +215,8 @@ async fn handle_peer(mut stream: TcpStream, catalog: PeerCatalog) -> Result<(), 
         .map_err(|e| e.to_string())?;
 
     let hs = PeerHandshake::from_bytes(&buf).map_err(|e| e.to_string())?;
+    // Fresh snapshot: torrents started since the last connection must be known.
+    let catalog = lookup.snapshot().await;
     let Some(faker) = catalog.get(&hs.info_hash) else {
         return Err("unknown info_hash".to_string());
     };

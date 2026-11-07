@@ -2,7 +2,7 @@
 
 use axum::{
     extract::Request,
-    http::{header::AUTHORIZATION, Method, StatusCode},
+    http::{header::AUTHORIZATION, HeaderMap, Method, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
     Json,
@@ -41,6 +41,18 @@ impl AuthError {
             .into_response()
     }
 
+    fn cross_site() -> Response {
+        (
+            StatusCode::FORBIDDEN,
+            Json(Self {
+                success: false,
+                error: "Cross-site request refused (set CORS_ALLOWED_ORIGINS to allow it).".into(),
+                auth_required: false,
+            }),
+        )
+            .into_response()
+    }
+
     fn forbidden() -> Response {
         (
             StatusCode::FORBIDDEN,
@@ -57,6 +69,10 @@ impl AuthError {
 /// Validates Authorization header or query token against `AUTH_TOKEN`.
 /// If `AUTH_TOKEN` is not set, all requests are allowed.
 pub async fn auth_middleware(request: Request, next: Next) -> Response {
+    if is_blocked_cross_site(request.headers()) {
+        return AuthError::cross_site();
+    }
+
     let Some(expected_token) = get_auth_token() else {
         return next.run(request).await;
     };
@@ -88,6 +104,22 @@ pub async fn auth_middleware(request: Request, next: Next) -> Response {
     }
 
     AuthError::unauthorized()
+}
+
+/// Blocks `Sec-Fetch-Site: cross-site` requests unless `CORS_ALLOWED_ORIGINS` is set.
+fn is_blocked_cross_site(headers: &HeaderMap) -> bool {
+    static CORS_OPEN: OnceLock<bool> = OnceLock::new();
+    let cors_open = *CORS_OPEN.get_or_init(|| {
+        std::env::var("CORS_ALLOWED_ORIGINS").is_ok_and(|origins| !origins.trim().is_empty())
+    });
+    !cors_open && is_cross_site(headers)
+}
+
+fn is_cross_site(headers: &HeaderMap) -> bool {
+    headers
+        .get("sec-fetch-site")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.eq_ignore_ascii_case("cross-site"))
 }
 
 /// Query-string tokens are only accepted for the SSE endpoints, because
@@ -125,6 +157,16 @@ mod tests {
         assert!(!constant_time_eq(b"hello", b"hell"));
         assert!(!constant_time_eq(b"", b"a"));
         assert!(constant_time_eq(b"", b""));
+    }
+
+    #[test]
+    fn test_cross_site_detection() {
+        let mut headers = HeaderMap::new();
+        assert!(!is_cross_site(&headers));
+        headers.insert("sec-fetch-site", "same-origin".parse().unwrap_or_else(|_| unreachable!()));
+        assert!(!is_cross_site(&headers));
+        headers.insert("sec-fetch-site", "cross-site".parse().unwrap_or_else(|_| unreachable!()));
+        assert!(is_cross_site(&headers));
     }
 
     #[test]
