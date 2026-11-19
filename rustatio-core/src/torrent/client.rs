@@ -478,124 +478,403 @@ impl PadString for str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::{Map, Value};
+    use std::collections::HashSet;
+
+    // `clients.default.json` is the single source of truth. No client, version or
+    // value is hard-coded in the tests below: every expectation is read from the
+    // file, and the file itself is checked against a strict schema so that a bad
+    // edit fails CI instead of shipping.
+
+    /// Client that must always be shipped (it is also the last-resort placeholder).
+    const MANDATORY_CLIENT: &str = "qbittorrent";
+
+    /// Collects every problem so that a single run lists all of them.
+    #[derive(Default)]
+    struct Report(Vec<String>);
+
+    impl Report {
+        fn fail(&mut self, problem: String) {
+            self.0.push(problem);
+        }
+
+        fn check(&mut self, ok: bool, problem: impl FnOnce() -> String) {
+            if !ok {
+                self.fail(problem());
+            }
+        }
+
+        fn assert_clean(&self) {
+            assert!(
+                self.0.is_empty(),
+                "clients.default.json is invalid:\n  - {}",
+                self.0.join("\n  - ")
+            );
+        }
+    }
+
+    /// Raw entries of the file, exactly as written (no serde default applied).
+    fn raw_entries() -> Vec<Map<String, Value>> {
+        let root: Value = serde_json::from_str(BUILTIN_CLIENTS_JSON)
+            .unwrap_or_else(|e| panic!("clients.default.json is not valid JSON: {e}"));
+        let Value::Array(entries) = root else {
+            panic!("clients.default.json must be a JSON array");
+        };
+        entries
+            .into_iter()
+            .enumerate()
+            .map(|(index, entry)| match entry {
+                Value::Object(map) => map,
+                other => panic!("entry #{index} must be a JSON object, got: {other}"),
+            })
+            .collect()
+    }
+
+    /// Definitions parsed from the file. Parsed here rather than through
+    /// `builtin_client_definitions`, which silently returns an empty list on error,
+    /// and without going through the global registry, which other tests may change.
+    fn definitions() -> Vec<ClientDefinition> {
+        serde_json::from_str(BUILTIN_CLIENTS_JSON).unwrap_or_else(|e| {
+            panic!("clients.default.json does not match `ClientDefinition`: {e}")
+        })
+    }
+
+    /// Any client id present in the file.
+    fn any_id() -> String {
+        definitions().into_iter().next().map_or_else(String::new, |d| d.id)
+    }
+
+    /// Id of the client flagged `is_default` in the file.
+    fn json_default_id() -> String {
+        definitions().into_iter().find(|d| d.is_default).map_or_else(String::new, |d| d.id)
+    }
+
+    /// Numeric components of a version ("4.1.3" -> [4, 1, 3]), `None` when malformed.
+    fn version_numbers(version: &str) -> Option<Vec<u64>> {
+        let parts: Vec<&str> = version.split('.').collect();
+        if parts.len() < 2 {
+            return None;
+        }
+        parts
+            .iter()
+            .map(|part| {
+                let digits = !part.is_empty() && part.chars().all(|c| c.is_ascii_digit());
+                digits.then(|| part.parse().ok()).flatten()
+            })
+            .collect()
+    }
+
+    /// Independent (test-side) computation of the 4-character version code.
+    fn expected_version_code(definition: &ClientDefinition, version: &str) -> String {
+        let parts: Vec<&str> = version.split('.').collect();
+        let fallback =
+            || definition.fallback_version_code.clone().unwrap_or_else(|| "0000".to_string());
+        let code = match definition.version_scheme {
+            VersionScheme::Digits => version.replace('.', ""),
+            VersionScheme::MajorMinorPad2 if parts.len() >= 2 => {
+                let minor: String = format!("{:0<2}", parts[1]).chars().take(2).collect();
+                format!("{}{minor}", parts[0])
+            }
+            VersionScheme::MajorMinorPatch if parts.len() >= 3 => {
+                format!("{}{}{}", parts[0], parts[1], parts[2])
+            }
+            _ => fallback(),
+        };
+        format!("{code:0<4}").chars().take(4).collect()
+    }
+
+    fn expected_prefix(definition: &ClientDefinition, version: &str) -> String {
+        format!("-{}{}-", definition.peer_id_code, expected_version_code(definition, version))
+    }
+
+    // ---------------------------------------------------------------------
+    // Strict schema of clients.default.json
+    // ---------------------------------------------------------------------
 
     #[test]
-    fn test_peer_id_generation_qbittorrent() {
-        let config = ClientConfig::get(&ClientType::new("qbittorrent"), None);
-        let peer_id = config.generate_peer_id();
-        assert_eq!(peer_id.len(), 20, "Peer ID must be exactly 20 characters");
-        assert!(peer_id.starts_with("-qB"), "qBittorrent peer ID should start with -qB");
+    fn test_json_parses_and_is_the_builtin_list() {
+        let definitions = definitions();
+        assert!(!definitions.is_empty(), "clients.default.json defines no client");
+        assert_eq!(definitions, builtin_client_definitions());
+    }
 
-        // Test with specific version
-        let config = ClientConfig::get(&ClientType::new("qbittorrent"), Some("5.2.0".to_string()));
-        let peer_id = config.generate_peer_id();
-        assert!(peer_id.starts_with("-qB5200-"), "Peer ID should include version 5.2.0");
-
-        let config = ClientConfig::get(&ClientType::new("qbittorrent"), Some("5.3.0".to_string()));
-        let peer_id = config.generate_peer_id();
-        assert!(peer_id.starts_with("-qB5300-"), "Peer ID should include version 5.3.0");
+    /// Every field of `ClientDefinition` must be written explicitly (a missing key
+    /// would be silently replaced by a serde default), no unknown key is allowed,
+    /// and every value must read back unchanged.
+    #[test]
+    fn test_json_has_every_key_and_no_unknown_key() {
+        let mut report = Report::default();
+        for (index, (entry, definition)) in raw_entries().iter().zip(&definitions()).enumerate() {
+            let Value::Object(expected) = serde_json::to_value(definition).unwrap() else {
+                unreachable!("a ClientDefinition always serializes to an object")
+            };
+            let label = format!("entry #{index} ({})", definition.id);
+            for key in expected.keys() {
+                report.check(entry.contains_key(key), || format!("{label}: missing key '{key}'"));
+            }
+            for (key, value) in entry {
+                match expected.get(key) {
+                    None => report.fail(format!("{label}: unknown key '{key}'")),
+                    Some(read) => report.check(read == value, || {
+                        format!("{label}: '{key}' is {value} but is read as {read}")
+                    }),
+                }
+            }
+        }
+        report.assert_clean();
     }
 
     #[test]
-    fn test_qbittorrent_info() {
-        let info = ClientType::new("qbittorrent").info();
-        assert_eq!(info.id, "qbittorrent");
-        assert_eq!(info.default_version, "5.3.0");
-        assert_eq!(info.versions.first(), Some(&info.default_version));
-        assert!(info.versions.contains(&"5.2.4".to_string()));
+    fn test_json_has_one_default_client_and_the_mandatory_one() {
+        let definitions = definitions();
+        let mut report = Report::default();
+
+        let defaults: Vec<&str> =
+            definitions.iter().filter(|d| d.is_default).map(|d| d.id.as_str()).collect();
+        report.check(defaults.len() == 1, || {
+            format!("exactly one client must have \"is_default\": true, found {defaults:?}")
+        });
+        report.check(definitions.iter().any(|d| d.id == MANDATORY_CLIENT), || {
+            format!("client '{MANDATORY_CLIENT}' is mandatory")
+        });
+
+        let ids: Vec<String> = definitions.iter().map(|d| d.id.clone()).collect();
+        let names: Vec<String> = definitions.iter().map(|d| d.name.to_lowercase()).collect();
+        let codes: Vec<String> = definitions.iter().map(|d| d.peer_id_code.clone()).collect();
+        report_duplicates(&mut report, "id", &ids);
+        report_duplicates(&mut report, "name", &names);
+        report_duplicates(&mut report, "peer_id_code", &codes);
+        report.assert_clean();
+    }
+
+    fn report_duplicates(report: &mut Report, field: &str, values: &[String]) {
+        let mut seen = HashSet::new();
+        for value in values {
+            report.check(seen.insert(value), || format!("duplicate {field} '{value}'"));
+        }
     }
 
     #[test]
-    fn test_peer_id_generation_utorrent() {
-        let config = ClientConfig::get(&ClientType::new("utorrent"), None);
-        let peer_id = config.generate_peer_id();
-        assert_eq!(peer_id.len(), 20);
-        assert!(peer_id.starts_with("-UT"), "µTorrent peer ID should start with -UT");
+    fn test_json_every_client_is_well_formed() {
+        let mut report = Report::default();
+        for definition in &definitions() {
+            if let Err(reason) = definition.validate() {
+                report.fail(reason);
+            }
+            check_text_fields(&mut report, definition);
+            check_versions(&mut report, definition);
+            check_numbers(&mut report, definition);
+            check_fallback(&mut report, definition);
+        }
+        report.assert_clean();
+    }
 
-        // Test with specific version
-        let config = ClientConfig::get(&ClientType::new("utorrent"), Some("3.5.5".to_string()));
-        let peer_id = config.generate_peer_id();
-        assert!(peer_id.starts_with("-UT355"), "Peer ID should include version 3.5.5");
+    #[allow(clippy::literal_string_with_formatting_args)]
+    fn check_text_fields(report: &mut Report, definition: &ClientDefinition) {
+        let id = &definition.id;
+        let agent = &definition.user_agent;
+        report.check(definition.name.trim() == definition.name, || {
+            format!("{id}: name has leading or trailing spaces")
+        });
+        report.check(agent.matches("{version}").count() == 1, || {
+            format!("{id}: user_agent must contain {{version}} exactly once")
+        });
+        report.check(
+            agent.trim() == agent.as_str()
+                && agent.chars().all(|c| c.is_ascii_graphic() || c == ' '),
+            || format!("{id}: user_agent must be trimmed printable ASCII (HTTP header)"),
+        );
+    }
 
-        let config = ClientConfig::get(&ClientType::new("utorrent"), Some("3.6.0".to_string()));
-        let peer_id = config.generate_peer_id();
-        assert!(peer_id.starts_with("-UT3600-"), "Peer ID should include version 3.6.0");
+    fn check_versions(report: &mut Report, definition: &ClientDefinition) {
+        let id = &definition.id;
+        report.check(definition.versions.first() == Some(&definition.default_version), || {
+            format!("{id}: default_version must be the first (newest) entry of versions")
+        });
+        let mut previous: Option<Vec<u64>> = None;
+        for version in &definition.versions {
+            let Some(numbers) = version_numbers(version) else {
+                report.fail(format!("{id}: version '{version}' must be numbers separated by dots"));
+                continue;
+            };
+            if let Some(newer) = &previous {
+                report.check(numbers.as_slice() < newer.as_slice(), || {
+                    format!(
+                        "{id}: versions must be unique and newest first ('{version}' is misplaced)"
+                    )
+                });
+            }
+            previous = Some(numbers);
+        }
+    }
+
+    fn check_numbers(report: &mut Report, definition: &ClientDefinition) {
+        let id = &definition.id;
+        report.check(definition.default_port >= 1024, || {
+            format!("{id}: default_port {} is a privileged port", definition.default_port)
+        });
+        report.check(definition.num_want > 0, || format!("{id}: num_want must be at least 1"));
+    }
+
+    fn check_fallback(report: &mut Report, definition: &ClientDefinition) {
+        let id = &definition.id;
+        let scheme = definition.version_scheme;
+        match (&definition.fallback_version_code, scheme) {
+            (None, VersionScheme::Digits) => {}
+            (Some(_), VersionScheme::Digits) => {
+                report.fail(format!(
+                    "{id}: fallback_version_code is unused with {scheme:?}, use null"
+                ));
+            }
+            (None, _) => {
+                report.fail(format!("{id}: fallback_version_code is required with {scheme:?}"));
+            }
+            (Some(code), _) => report.check(
+                (1..=4).contains(&code.len()) && code.chars().all(|c| c.is_ascii_digit()),
+                || format!("{id}: fallback_version_code '{code}' must be 1 to 4 digits"),
+            ),
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Behaviour, driven by every client and every version of the file
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn test_json_peer_id_for_every_client_and_version() {
+        for definition in &definitions() {
+            let requested =
+                std::iter::once(None).chain(definition.versions.iter().cloned().map(Some));
+            for version in requested {
+                let config = definition.to_config(version.clone());
+                let used = version.unwrap_or_else(|| definition.default_version.clone());
+                let label = format!("{} {used}", definition.id);
+                let prefix = &config.peer_id_prefix;
+
+                assert_eq!(config.version, used, "{label}");
+                assert_eq!(*prefix, expected_prefix(definition, &used), "{label}");
+                assert_eq!(prefix.chars().count(), 8, "{label}: {prefix}");
+                assert!(
+                    prefix.starts_with('-')
+                        && prefix.ends_with('-')
+                        && prefix.chars().skip(1).take(6).all(|c| c.is_ascii_alphanumeric()),
+                    "{label}: malformed peer ID prefix {prefix}"
+                );
+
+                let peer_id = config.generate_peer_id();
+                assert_eq!(peer_id.len(), 20, "{label}");
+                assert!(peer_id.is_ascii(), "{label}");
+            }
+        }
     }
 
     #[test]
-    fn test_utorrent_info() {
-        let info = ClientType::new("utorrent").info();
-        assert_eq!(info.id, "utorrent");
-        assert_eq!(info.default_version, "3.6.0");
-        assert_eq!(info.versions.first(), Some(&info.default_version));
-        assert!(info.versions.contains(&"3.5.5".to_string()));
+    #[allow(clippy::literal_string_with_formatting_args)]
+    fn test_json_client_config_for_every_client() {
+        for definition in &definitions() {
+            let config = definition.to_config(None);
+            let label = &definition.id;
+            let agent = definition.user_agent.replacen("{version}", &definition.default_version, 1);
+
+            assert_eq!(config.client_type, ClientType::new(definition.id.clone()), "{label}");
+            assert_eq!(config.version, definition.default_version, "{label}");
+            assert_eq!(config.user_agent, agent, "{label}");
+            assert_eq!(config.num_want, definition.num_want, "{label}");
+            assert_eq!(config.supports_compact, definition.supports_compact, "{label}");
+            assert_eq!(config.supports_crypto, definition.supports_crypto, "{label}");
+            assert_eq!(config.http_version, definition.http_version, "{label}");
+        }
     }
 
     #[test]
-    fn test_peer_id_generation_transmission() {
-        let config = ClientConfig::get(&ClientType::new("transmission"), None);
-        let peer_id = config.generate_peer_id();
-        assert_eq!(peer_id.len(), 20);
-        assert!(peer_id.starts_with("-TR"), "Transmission peer ID should start with -TR");
+    fn test_registry_serves_the_json_definitions() {
+        let definitions = definitions();
+        let ids: Vec<String> = definitions.iter().map(|d| d.id.clone()).collect();
+        assert_eq!(ClientType::all_ids(), ids);
 
-        let config = ClientConfig::get(&ClientType::new("transmission"), Some("4.1.3".to_string()));
-        let peer_id = config.generate_peer_id();
-        assert!(peer_id.starts_with("-TR4100-"), "Peer ID should include version 4.1.3");
+        for definition in &definitions {
+            let client = ClientType::new(definition.id.clone());
+            assert_eq!(ClientType::from_id(&definition.id), Some(client.clone()));
+
+            let info = client.info();
+            assert_eq!(info.name, definition.name);
+            assert_eq!(info.default_version, definition.default_version);
+            assert_eq!(info.versions, definition.versions);
+            assert_eq!(info.default_port, definition.default_port);
+
+            let config = ClientConfig::get(&client, None);
+            assert_eq!(config.peer_id_prefix, definition.to_config(None).peer_id_prefix);
+        }
+        assert_eq!(default_client_definition().id, json_default_id());
+    }
+
+    // ---------------------------------------------------------------------
+    // Self-contained checks (custom definitions, independent of the file)
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn test_client_config_with_custom_version() {
+        let config = ClientConfig::get(&ClientType::new(any_id()), Some("9.8.7".to_string()));
+        assert_eq!(config.version, "9.8.7");
+        assert!(config.user_agent.contains("9.8.7"));
     }
 
     #[test]
-    fn test_transmission_info() {
-        let info = ClientType::new("transmission").info();
-        assert_eq!(info.id, "transmission");
-        assert_eq!(info.default_version, "4.1.4");
-        assert_eq!(info.versions.first(), Some(&info.default_version));
-        assert!(info.versions.contains(&"4.1.3".to_string()));
+    fn test_definition_drives_config() {
+        let mut definition = custom("my-client");
+        definition.peer_id_code = "zZ".to_string();
+        definition.user_agent = "Custom/{version} (test)".to_string();
+        definition.num_want = 42;
+
+        let config = definition.to_config(Some("5.2.0".to_string()));
+        assert_eq!(config.client_type, ClientType::new("my-client"));
+        assert_eq!(config.peer_id_prefix, "-zZ5200-");
+        assert_eq!(config.user_agent, "Custom/5.2.0 (test)");
+        assert_eq!(config.num_want, 42);
+        assert_eq!(config.generate_peer_id().len(), 20);
     }
 
     #[test]
-    fn test_deluge_info() {
-        let info = ClientType::new("deluge").info();
-        assert_eq!(info.id, "deluge");
-        assert_eq!(info.default_version, "2.2.0");
-        assert_eq!(info.versions.first(), Some(&info.default_version));
+    fn test_version_scheme_fallbacks() {
+        let mut definition = custom("my-client");
+
+        definition.version_scheme = VersionScheme::MajorMinorPatch;
+        definition.fallback_version_code = Some("0161".to_string());
+        assert_eq!(definition.to_config(Some("1".to_string())).peer_id_prefix, "-CU0161-");
+
+        definition.version_scheme = VersionScheme::MajorMinorPad2;
+        definition.fallback_version_code = None;
+        assert_eq!(definition.to_config(Some("4".to_string())).peer_id_prefix, "-CU0000-");
+
+        definition.version_scheme = VersionScheme::Digits;
+        assert_eq!(definition.to_config(Some("4".to_string())).peer_id_prefix, "-CU4000-");
     }
 
     #[test]
-    fn test_peer_id_generation_deluge() {
-        let config = ClientConfig::get(&ClientType::new("deluge"), None);
-        let peer_id = config.generate_peer_id();
-        assert_eq!(peer_id.len(), 20);
-        assert!(peer_id.starts_with("-DE"), "Deluge peer ID should start with -DE");
-    }
+    fn test_json_checks_catch_bad_entries() {
+        // Guards the guards: the strict checks must reject typical mistakes.
+        let mut report = Report::default();
+        let mut definition = custom("my-client");
+        definition.versions = vec!["1.2.3".to_string(), "1.10.0".to_string(), "x.1".to_string()];
+        definition.user_agent = "Custom".to_string();
+        definition.default_port = 80;
+        definition.num_want = 0;
+        check_versions(&mut report, &definition);
+        check_text_fields(&mut report, &definition);
+        check_numbers(&mut report, &definition);
+        check_fallback(&mut report, &definition);
+        // misplaced 1.10.0, malformed x.1, missing {version}, port, num_want, fallback
+        assert_eq!(report.0.len(), 6, "{:?}", report.0);
 
-    #[test]
-    fn test_peer_id_generation_bittorrent() {
-        let config = ClientConfig::get(&ClientType::new("bittorrent"), None);
-        let peer_id = config.generate_peer_id();
-        assert_eq!(peer_id.len(), 20);
-        assert!(peer_id.starts_with("-BT"), "BitTorrent peer ID should start with -BT");
-
-        // Test with specific version
-        let config = ClientConfig::get(&ClientType::new("bittorrent"), Some("7.11.0".to_string()));
-        let peer_id = config.generate_peer_id();
-        assert!(peer_id.starts_with("-BT7110-"), "Peer ID should include version 7.11.0");
-    }
-
-    #[test]
-    fn test_peer_id_generation_rtorrent() {
-        let config = ClientConfig::get(&ClientType::new("rtorrent"), None);
-        let peer_id = config.generate_peer_id();
-        assert_eq!(peer_id.len(), 20);
-        assert!(peer_id.starts_with("-RT"), "rTorrent peer ID should start with -RT");
-
-        let config = ClientConfig::get(&ClientType::new("rtorrent"), Some("0.16.12".to_string()));
-        let peer_id = config.generate_peer_id();
-        assert!(peer_id.starts_with("-RT0161-"), "Peer ID should include version 0.16.12");
+        let mut report = Report::default();
+        let names = ["a".to_string(), "b".to_string(), "a".to_string()];
+        report_duplicates(&mut report, "id", &names);
+        assert_eq!(report.0.len(), 1);
     }
 
     #[test]
     fn test_peer_id_uniqueness() {
-        let config = ClientConfig::get(&ClientType::new("qbittorrent"), None);
+        let config = ClientConfig::get(&ClientType::new(any_id()), None);
         let peer_id1 = config.generate_peer_id();
         let peer_id2 = config.generate_peer_id();
 
@@ -605,7 +884,7 @@ mod tests {
 
     #[test]
     fn test_peer_id_valid_characters() {
-        let config = ClientConfig::get(&ClientType::new("qbittorrent"), None);
+        let config = ClientConfig::get(&ClientType::new(any_id()), None);
         let peer_id = config.generate_peer_id();
 
         // All characters should be valid (alphanumeric or -)
@@ -636,65 +915,6 @@ mod tests {
     }
 
     #[test]
-    fn test_client_config_qbittorrent() {
-        let config = ClientConfig::get(&ClientType::new("qbittorrent"), None);
-        assert_eq!(config.client_type, ClientType::new("qbittorrent"));
-        assert!(config.user_agent.contains("qBittorrent"));
-        assert_eq!(config.http_version, HttpVersion::Http11);
-        assert!(config.supports_compact);
-        assert!(config.supports_crypto);
-    }
-
-    #[test]
-    fn test_client_config_utorrent() {
-        let config = ClientConfig::get(&ClientType::new("utorrent"), None);
-        assert_eq!(config.client_type, ClientType::new("utorrent"));
-        assert!(config.user_agent.contains("uTorrent") || config.user_agent.contains("µTorrent"));
-        assert_eq!(config.http_version, HttpVersion::Http11);
-    }
-
-    #[test]
-    fn test_client_config_transmission() {
-        let config = ClientConfig::get(&ClientType::new("transmission"), None);
-        assert_eq!(config.client_type, ClientType::new("transmission"));
-        assert!(config.user_agent.contains("Transmission"));
-    }
-
-    #[test]
-    fn test_client_config_deluge() {
-        let config = ClientConfig::get(&ClientType::new("deluge"), None);
-        assert_eq!(config.client_type, ClientType::new("deluge"));
-        assert!(config.user_agent.contains("Deluge"));
-    }
-
-    #[test]
-    fn test_client_config_bittorrent() {
-        let config = ClientConfig::get(&ClientType::new("bittorrent"), None);
-        assert_eq!(config.client_type, ClientType::new("bittorrent"));
-        assert!(config.user_agent.contains("BitTorrent"));
-        assert_eq!(config.http_version, HttpVersion::Http11);
-        assert!(config.supports_compact);
-        assert!(config.supports_crypto);
-    }
-
-    #[test]
-    fn test_client_config_rtorrent() {
-        let config = ClientConfig::get(&ClientType::new("rtorrent"), None);
-        assert_eq!(config.client_type, ClientType::new("rtorrent"));
-        assert!(config.user_agent.contains("rTorrent"));
-        assert_eq!(config.http_version, HttpVersion::Http11);
-        assert!(config.supports_compact);
-        assert!(config.supports_crypto);
-    }
-
-    #[test]
-    fn test_client_config_with_version() {
-        let config = ClientConfig::get(&ClientType::new("qbittorrent"), Some("4.5.0".to_string()));
-        assert_eq!(config.version, "4.5.0");
-        assert!(config.user_agent.contains("4.5.0"));
-    }
-
-    #[test]
     fn test_pad_string_trait() {
         assert_eq!("12".pad_to_width_with_char(4, '0'), "1200");
         assert_eq!("1234".pad_to_width_with_char(4, '0'), "1234");
@@ -702,25 +922,8 @@ mod tests {
         assert_eq!("1".pad_to_width_with_char(3, 'x'), "1xx");
     }
 
-    #[test]
-    fn test_rtorrent_info() {
-        let info = ClientType::new("rtorrent").info();
-        assert_eq!(info.id, "rtorrent");
-        assert_eq!(info.name, "rTorrent");
-        assert_eq!(info.default_version, "0.16.26");
-        assert_eq!(info.versions.first(), Some(&info.default_version));
-        assert_eq!(info.default_port, 6881);
-    }
-
-    #[test]
-    fn test_rtorrent_in_all_and_from_id() {
-        let all = ClientType::all();
-        assert!(all.contains(&ClientType::new("rtorrent")));
-        assert_eq!(ClientType::from_id("rtorrent"), Some(ClientType::new("rtorrent")));
-    }
-
-    fn def(id: &str) -> ClientDefinition {
-        client_definition(id).unwrap_or_else(|| unreachable!("missing client {id}"))
+    fn any_def() -> ClientDefinition {
+        definitions().into_iter().next().unwrap_or_else(|| unreachable!("no client in the JSON"))
     }
 
     fn custom(id: &str) -> ClientDefinition {
@@ -743,63 +946,22 @@ mod tests {
     }
 
     #[test]
-    fn test_builtin_definitions_are_valid_and_have_one_default() {
-        let builtin = builtin_client_definitions();
-        assert_eq!(builtin.len(), 6);
-        for definition in builtin {
-            assert!(
-                definition.validate().is_ok(),
-                "invalid built-in definition: {}",
-                definition.id
-            );
-            assert_eq!(definition.versions.first(), Some(&definition.default_version));
-        }
-        let defaults: Vec<_> = builtin.iter().filter(|d| d.is_default).collect();
-        assert_eq!(defaults.len(), 1);
-        assert_eq!(defaults[0].id, "qbittorrent");
-    }
-
-    #[test]
-    fn test_definition_drives_config() {
-        let mut definition = def("qbittorrent");
-        definition.peer_id_code = "zZ".to_string();
-        definition.user_agent = "Custom/{version} (test)".to_string();
-        definition.num_want = 42;
-
-        let config = definition.to_config(Some("5.2.0".to_string()));
-        assert_eq!(config.client_type, ClientType::new("qbittorrent"));
-        assert_eq!(config.peer_id_prefix, "-zZ5200-");
-        assert_eq!(config.user_agent, "Custom/5.2.0 (test)");
-        assert_eq!(config.num_want, 42);
-        assert_eq!(config.generate_peer_id().len(), 20);
-    }
-
-    #[test]
-    fn test_version_scheme_fallbacks() {
-        let config = def("transmission").to_config(Some("4".to_string()));
-        assert!(config.peer_id_prefix.starts_with("-TR4000-"));
-
-        let config = def("rtorrent").to_config(Some("1".to_string()));
-        assert!(config.peer_id_prefix.starts_with("-RT0161-"));
-    }
-
-    #[test]
     fn test_validate_rejects_bad_definitions() {
-        assert!(def("deluge").validate().is_ok());
+        assert!(any_def().validate().is_ok());
 
-        let mut definition = def("deluge");
+        let mut definition = any_def();
         definition.peer_id_code = "DEL".to_string();
         assert!(definition.validate().is_err());
 
-        let mut definition = def("deluge");
+        let mut definition = any_def();
         definition.id = "Not Valid".to_string();
         assert!(definition.validate().is_err());
 
-        let mut definition = def("deluge");
+        let mut definition = any_def();
         definition.id = String::new();
         assert!(definition.validate().is_err());
 
-        let mut definition = def("deluge");
+        let mut definition = any_def();
         definition.versions.clear();
         assert!(definition.validate().is_err());
     }
@@ -839,11 +1001,11 @@ mod tests {
         let list = builtin_client_definitions().to_vec();
         let count = list.len();
 
-        let list = without_client(list, "deluge").unwrap_or_else(|_| unreachable!());
+        let list = without_client(list, &any_id()).unwrap_or_else(|_| unreachable!());
         assert_eq!(list.len(), count - 1);
-        assert!(list.iter().all(|d| d.id != "deluge"));
+        assert!(list.iter().all(|d| d.id != any_id()));
 
-        assert!(without_client(list, "deluge").is_err());
+        assert!(without_client(list, &any_id()).is_err());
 
         let single = vec![custom("only-one")];
         assert!(without_client(single, "only-one").is_err());
@@ -851,8 +1013,9 @@ mod tests {
 
     #[test]
     fn test_client_type_serializes_as_plain_string() {
-        let client = ClientType::new("qbittorrent");
-        assert_eq!(serde_json::to_string(&client).unwrap_or_default(), "\"qbittorrent\"");
+        let id = any_id();
+        let client = ClientType::new(id.clone());
+        assert_eq!(serde_json::to_string(&client).unwrap_or_default(), format!("\"{id}\""));
 
         // Unknown ids must not break deserialization of saved configs
         let parsed: ClientType =
@@ -864,13 +1027,15 @@ mod tests {
     fn test_unknown_client_falls_back_to_default() {
         let config = ClientConfig::get(&ClientType::new("deleted-client"), None);
         assert_eq!(config.client_type, ClientType::default());
-        assert_eq!(ClientType::default(), ClientType::new("qbittorrent"));
+        assert_eq!(ClientType::default(), ClientType::new(json_default_id()));
     }
 
     #[test]
     fn test_unknown_client_ignores_the_version_of_the_deleted_client() {
-        let config =
-            ClientConfig::get(&ClientType::new("deleted-client"), Some("2.1.1".to_string()));
+        let config = ClientConfig::get(
+            &ClientType::new("deleted-client"),
+            Some("0.0.0-deleted".to_string()),
+        );
         let default = default_client_definition();
         assert_eq!(config.client_type, ClientType::new(default.id.clone()));
         assert_eq!(config.version, default.default_version);
@@ -878,7 +1043,7 @@ mod tests {
 
     #[test]
     fn test_version_code_with_non_ascii_characters_does_not_panic() {
-        let config = ClientConfig::get(&ClientType::new("utorrent"), Some("abcé.1".to_string()));
+        let config = ClientConfig::get(&ClientType::new(any_id()), Some("abcé.1".to_string()));
         assert_eq!(config.peer_id_prefix.chars().count(), 8);
 
         assert_eq!("abcé1".pad_to_width_with_char(4, '0'), "abcé");
